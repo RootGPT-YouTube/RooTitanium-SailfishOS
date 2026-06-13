@@ -1,0 +1,10 @@
+# Clone upstream di terze parti (riproducibile, ~3.6 GB con submodule Chromium)
+# git clone --recursive https://github.com/sailfishos-chum/qt6-qtwebengine
+/qt6-qtwebengine/
+
+# Alberi di build per-arch (generati con sfdk/mb2)
+/harbour-rootmium_*/
+
+# Artefatti
+*.rpm
+RPMS/
