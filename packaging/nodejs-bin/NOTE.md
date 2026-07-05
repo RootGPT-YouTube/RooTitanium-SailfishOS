@@ -30,11 +30,11 @@ verificato contro `SHASUMS256.txt` ufficiale.
 
 1. **Overhead qemu-user**: `node` viene invocato ripetutamente dagli script di
    code-gen di Chromium/gn sotto emulazione — misurare l'impatto sui tempi.
-2. **Simbolo libstdc++**: confermare `GLIBCXX_3.4.25` nel sysroot target 5.1:
-   `strings libstdc++.so.6 | grep GLIBCXX`.
-3. **Kernel host per qemu-user**: il requisito "kernel ≥ 4.18" dei prebuilt
-   riguarda l'host x86_64 del Platform SDK (ok: Fedora recente); verificare che
-   qemu-user gestisca tutte le syscall del binario.
+2. ~~Simbolo libstdc++~~ ✅ (5 lug 2026) l'RPM buildato richiede al massimo
+   `GLIBCXX_3.4.21` e `GLIBC_2.28` (meno del previsto); installato e verificato
+   nel target sb2.
+3. ~~Kernel host per qemu-user~~ ✅ (5 lug 2026) `node --version` e esecuzione
+   JS funzionano sotto qemu-user nel target aarch64 del Platform SDK.
 4. **npm/npx richiesti?**: verificare nei log di configure/build di qtwebengine
    6.8.3 se servono `npm`/`npx` oltre a `node` puro — in tal caso estendere il
    repack.

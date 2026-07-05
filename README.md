@@ -64,16 +64,46 @@ glibc ≥ 2.28 e SFOS 5.1 ha glibc 2.41. → **`packaging/nodejs-bin/`**: spec p
 (Node 22.23.1 LTS, SHA256 pinnato, solo `/usr/bin/node`, niente npm). Dettagli e
 rischi aperti in `packaging/nodejs-bin/NOTE.md`.
 
-### Prossimi passi
-1. Riparare il clone del submodule Chromium (`upstream/src/3rdparty`).
-2. ~~Verificare che `qt6sb2` copra tutti i `BuildRequires` di qtwebengine.~~ ✅ Fatto
-   (vedi sopra): unico ostacolo vero è **nodejs**.
-3. ~~Scegliere la strategia di build.~~ ✅ Locale sb2 `-j16` (vedi sopra).
-4. ~~Pacchettizzare `nodejs` per SFOS.~~ ✅ Bozza `nodejs-bin` pronta (vedi sopra);
-   resta il build/test del pacchetto in sb2.
-5. Pacchettizzare `python3-html5lib` + macro `qt6-srpm-macros`; adattare lo spec
-   (rimuovere BR qtquickcontrols2, provare senza snappy-devel).
-6. Configurare il target sb2 con kernel-headers da `nemo:devel:hw:native-common`.
+### Fase 0/1 completate il 5 lug 2026
+- **Submodule Chromium**: verificato OK (122.0.6261.171 = QtWebEngine 6.8.3,
+  repo completo, fsck pulito) — la riparazione segnata a giugno non serviva più.
+- **SDK**: il tooling 5.1 non è ancora pubblicato da Jolla → si builda sul target
+  5.0.0.62 **clonato in `RooTitanium-5.1-aarch64`** e aggiornato a 5.1.0.11 via
+  `ssu re` + `zypper dup` (il target 5.0 condiviso resta intatto per gli altri
+  progetti). Motivo: i pacchetti qt6sb2 richiedono GLIBC_2.34/GLIBCXX_3.4.29+,
+  assenti nel 5.0.
+- **Pacchetti buildati e testati in sb2** (`packaging/*/build/RPMS/`):
+  `nodejs-bin-22.23.1` (node OK sotto qemu), `python3-webencodings-0.5.1`,
+  `python3-html5lib-1.1` (import OK nel target).
+- **Spec qtwebengine adattato**: overlay in `packaging/qt6-qtwebengine-sfos/`
+  (via qt6-srpm-macros e qtquickcontrols2, snappy commentato — dettagli in NOTE).
+
+### Nottata 5→6 lug 2026: target 5.1 — trovato il vero blocco
+Cronologia: (a) `sfdk tools clone` è **bacato** coi target che hanno snapshot
+(livelock di 5,5 h, bug segnalato dai SOFT ASSERT `targetHasSnapshots`) — ucciso;
+(b) scoperto che su releases.sailfishos.org esistono **tooling+target 5.1.0.11
+ufficiali** (catalogo sfdk indietro) — tooling installato OK; (c) la creazione del
+target fallisce: il cross-gcc del tooling 5.1 **richiede GLIBC_2.38 sull'engine**,
+troppo vecchio; (d) il fallback tooling 5.0 è inutilizzabile per Chromium:
+**gcc 10.3.1**, serve gcc 12+ (C++20). → **Conclusione: va aggiornato l'SDK**
+(engine incluso) prima di poter creare il target 5.1. Da fare col PC presidiato
+(tocca anche le pipeline RooTelegram/RooThub).
+
+Preparato intanto: tarball Source0 non compresso
+(`packaging/qt6-qtwebengine-sfos/build/SOURCES/qt6-qtwebengine-6.8.3.tar`,
+escluso da git) e Source0 adattato nello spec overlay.
+
+### Prossimi passi (mattina del 6 lug)
+1. **Aggiornare il Sailfish SDK** (SDKMaintenanceTool / sfdk): engine nuovo con
+   glibc ≥ 2.38. Poi ricreare il tooling 5.1.0.11 se serve e il target
+   `SailfishOS-5.1.0.11-aarch64` (tarball già scaricato in `~/sdk-tarballs/`).
+2. Nel target 5.1: repo qt6sb2 + `linux-glibc-devel` (nemo:devel:hw:native-common),
+   installare i 3 RPM locali (`packaging/*/build/RPMS/`) e i BuildRequires.
+3. Configure di qtwebengine (checkpoint: %%cmake_qt6, npm/npx, snappy).
+4. **Fase 2**: build completo `-j16` di giorno (PPT 65 W → ~8-12 h) con guardia
+   termica VRM 90° (stop automatico, ripresa < 82°).
+5. **Fase 3**: smoke test `WebEngineView` su device (gate decisivo GPU/hybris).
+6. **Fase 4**: UI QML/Silica-like di RooTitanium.
 
 > La cartella `qt6-qtwebengine/` (clone upstream, ~3.6 GB) è esclusa da git: riproducibile
 > con `git clone --recursive https://github.com/sailfishos-chum/qt6-qtwebengine`.
