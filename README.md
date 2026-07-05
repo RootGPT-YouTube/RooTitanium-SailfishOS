@@ -56,12 +56,21 @@ libstdc++-static (subpackage di gcc).
   sono lenti (8-15 h) e rischiano i limiti risorse — plausibilmente il motivo per cui
   nessuno ha mai pubblicato qt6-qtwebengine compilato.
 
+### nodejs: risolto con repack (5 lug 2026)
+QtWebEngine 6.8 richiede solo **Node ≥ 14 come tool host** a build-time. Il build
+da sorgente in sb2 è bloccato dai tool V8 (mksnapshot/Torque devono girare nativi
+x86_64); il repack dei prebuilt ufficiali `linux-arm64` invece è pulito: richiedono
+glibc ≥ 2.28 e SFOS 5.1 ha glibc 2.41. → **`packaging/nodejs-bin/`**: spec pronto
+(Node 22.23.1 LTS, SHA256 pinnato, solo `/usr/bin/node`, niente npm). Dettagli e
+rischi aperti in `packaging/nodejs-bin/NOTE.md`.
+
 ### Prossimi passi
 1. Riparare il clone del submodule Chromium (`upstream/src/3rdparty`).
 2. ~~Verificare che `qt6sb2` copra tutti i `BuildRequires` di qtwebengine.~~ ✅ Fatto
    (vedi sopra): unico ostacolo vero è **nodejs**.
 3. ~~Scegliere la strategia di build.~~ ✅ Locale sb2 `-j16` (vedi sopra).
-4. Pacchettizzare `nodejs` per SFOS (percorso critico).
+4. ~~Pacchettizzare `nodejs` per SFOS.~~ ✅ Bozza `nodejs-bin` pronta (vedi sopra);
+   resta il build/test del pacchetto in sb2.
 5. Pacchettizzare `python3-html5lib` + macro `qt6-srpm-macros`; adattare lo spec
    (rimuovere BR qtquickcontrols2, provare senza snappy-devel).
 6. Configurare il target sb2 con kernel-headers da `nemo:devel:hw:native-common`.
