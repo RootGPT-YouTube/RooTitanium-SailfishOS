@@ -468,7 +468,7 @@ export NINJAFLAGS="%{__ninja_common_opts}"
 export NINJA_PATH=%{__ninja}
 
 %cmake_qt6 \
-  -DCMAKE_TOOLCHAIN_FILE:STRING="%{_libdir}/cmake/Qt6/qt.toolchain.cmake" \
+  -DCMAKE_TOOLCHAIN_FILE:STRING="/usr/lib64/cmake/Qt6/qt.toolchain.cmake" \
   -DFEATURE_qtpdf_build:BOOL=ON \
   -DFEATURE_webengine_developer_build:BOOL=OFF \
   -DFEATURE_webengine_embedded_build:BOOL=OFF \

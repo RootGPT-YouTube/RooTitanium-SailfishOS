@@ -93,15 +93,33 @@ Preparato intanto: tarball Source0 non compresso
 (`packaging/qt6-qtwebengine-sfos/build/SOURCES/qt6-qtwebengine-6.8.3.tar`,
 escluso da git) e Source0 adattato nello spec overlay.
 
-### Prossimi passi (mattina del 6 lug)
-1. **Aggiornare il Sailfish SDK** (SDKMaintenanceTool / sfdk): engine nuovo con
-   glibc ≥ 2.38. Poi ricreare il tooling 5.1.0.11 se serve e il target
-   `SailfishOS-5.1.0.11-aarch64` (tarball già scaricato in `~/sdk-tarballs/`).
-2. Nel target 5.1: repo qt6sb2 + `linux-glibc-devel` (nemo:devel:hw:native-common),
-   installare i 3 RPM locali (`packaging/*/build/RPMS/`) e i BuildRequires.
-3. Configure di qtwebengine (checkpoint: %%cmake_qt6, npm/npx, snappy).
-4. **Fase 2**: build completo `-j16` di giorno (PPT 65 W → ~8-12 h) con guardia
-   termica VRM 90° (stop automatico, ripresa < 82°).
+### Stato al 6 lug 2026 (~13:20) — CONFIGURE PASSATA ✅
+1. ~~Aggiornare il Sailfish SDK~~ **FATTO**: install pulita SDK **3.13.5** da
+   installer offline (il silentUpdate 3.12.5→3.13.5 crasha: bad_alloc in
+   runUndoOperations). Engine docker glibc **2.41**, tooling 5.1 con
+   **gcc 13.4.0**, target `SailfishOS-5.1.0.11-{aarch64,armv7hl,i486}`
+   sdk-provided. Vecchio SDK in `~/SailfishOS-3.12.5-bak` (+ immagine docker
+   `:RootGPT-3.12.5-bak`). Target 5.0.0.62 ricreati user-defined per le
+   pipeline (validati con build RooTelegram 2.8.9 aarch64; aggiunto
+   pulseaudio-devel che i target vergini non hanno).
+2. ~~Preparazione target 5.1~~ **FATTO**: repo qt6sb2 + nemo-native, nodejs-bin
+   installato, python3-webencodings/html5lib **ribuildati per python 3.11**
+   (`build51/`), tutti i BuildRequires installati (jsoncpp/re2/zombie-imp non
+   servono: dietro flag `use_system_*=0` e `%%if fedora`; gbm →
+   `mesa-llvmpipe-libgbm-devel`).
+3. ~~Configure qtwebengine~~ **PASSATA**: `%%prep` ok (tar+patch), cmake
+   configure ok in 179 s. `config.summary`: QtWebEngineCore **yes**, Quick yes,
+   QtPdf yes, proprietary codecs + WebRTC yes, snappy bundled. Fix necessario
+   (committato): `CMAKE_TOOLCHAIN_FILE` con path target-side
+   `/usr/lib64/...` — il `%%{_libdir}` iniettato da sfdk espande al path host
+   della copia sincronizzata, che NON contiene i binari (syncqt mancante).
+4. **Fase 2 (PROSSIMA)**: build completa SOLO `-j16` (⚠️ i default del target
+   sono `-j32`: sia `%%__ninja_common_opts` sia `%%cmake_build`), di giorno,
+   guardia VRM 90° (stop automatico, ripresa < 82°). Build dir già configurata:
+   `packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-6.8.3/upstream`
+   → `cmake --build . -j16` via `sfdk tools exec SailfishOS-5.1.0.11-aarch64`
+   (o rifare configure+build da spec). NOTA: `sfdk config --global target=` ora
+   punta a 5.1 (le pipeline lo reimpostano da sole a ogni build).
 5. **Fase 3**: smoke test `WebEngineView` su device (gate decisivo GPU/hybris).
 6. **Fase 4**: UI QML/Silica-like di RooTitanium.
 
