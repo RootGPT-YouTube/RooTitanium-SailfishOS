@@ -115,11 +115,18 @@ escluso da git) e Source0 adattato nello spec overlay.
    della copia sincronizzata, che NON contiene i binari (syncqt mancante).
 4. **Fase 2 (PROSSIMA)**: build completa SOLO `-j16` (⚠️ i default del target
    sono `-j32`: sia `%%__ninja_common_opts` sia `%%cmake_build`), di giorno,
-   guardia VRM 90° (stop automatico, ripresa < 82°). Build dir già configurata:
-   `packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-6.8.3/upstream`
-   → `cmake --build . -j16` via `sfdk tools exec SailfishOS-5.1.0.11-aarch64`
-   (o rifare configure+build da spec). NOTA: `sfdk config --global target=` ora
-   punta a 5.1 (le pipeline lo reimpostano da sole a ogni build).
+   guardia VRM **85°** (throttle automatico, ripresa ≤ **60°**). Script pronto:
+   `packaging/qt6-qtwebengine-sfos/build/build-j16-con-guardia.sh` — lancia la
+   build (build dir già configurata in `build/BUILD/qt6-qtwebengine-6.8.3/upstream`)
+   e a 85° strozza l'engine docker a 2 core con `docker update --cpus` (NON
+   SIGSTOP/docker pause: congelerebbero sshd e la sessione sfdk cadrebbe
+   uccidendo la build), ripristinando tutti i core a 60°. Anti-stallo: ogni
+   15 min verifica che il log cresca e che l'avanzamento `[n/m]` si muova;
+   se fermo → allarme nel log + diagnostica (CPU processi engine) +
+   notify-send. Non uccide mai la build da solo (un falso positivo, es. link
+   finale lungo, costerebbe ore). Log in `build-j16.log` + `guardia-vrm.log`.
+   NOTA: `sfdk config --global target=` ora punta a 5.1 (le pipeline lo
+   reimpostano da sole a ogni build).
 5. **Fase 3**: smoke test `WebEngineView` su device (gate decisivo GPU/hybris).
 6. **Fase 4**: UI QML/Silica-like di RooTitanium.
 

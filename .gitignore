@@ -8,3 +8,6 @@
 # Artefatti
 *.rpm
 RPMS/
+
+# Cartella di lavoro (artefatti riproducibili, backup SDK, bundle) — mai committare
+/scratch/
