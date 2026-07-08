@@ -8,11 +8,13 @@ reale, multiprocesso.
 ## File
 - `main.cpp` — launcher C++: `QtWebEngineQuick::initialize()` + `QQmlApplicationEngine`
   che carica `test.qml`. Compilato nativo via sb2 (`sb2 -t <target> g++ ... -lQt6WebEngineQuick -lQt6WebEngineCore`).
-- `test.qml` — `WebEngineView` con barra di pulsanti (niente tastiera: manca il
-  plugin Qt6↔Maliit nel target); parte su `chrome://gpu`.
+- `test.qml` — `WebEngineView` con **barra indirizzi in alto** (URL/ricerca) +
+  pulsanti back/forward/reload, finestra FullScreen con scaling UI, e **tastiera
+  QtVirtualKeyboard in-app** (`InputPanel`). Parte su DuckDuckGo lite.
 - `run.sh` — script di lancio con env: `QT_QPA_PLATFORM=wayland`,
-  `WAYLAND_DISPLAY=../../display/wayland-0`, `XDG_RUNTIME_DIR=/run/user/100000`,
-  path Qt/WebEngine del bundle, flag Chromium (`--no-sandbox --use-gl=egl`).
+  path Qt/WebEngine del bundle, flag Chromium (`--no-sandbox --use-gl=egl`),
+  `QT_IM_MODULE=qtvirtualkeyboard`, `LANG` device. (Alternativa in studio: Maliit
+  nativo via wayland `zwp_text_input_v2` — vedi memoria `rootitanium-browser-backlog`.)
 
 ## Come gira (bundle self-contained in /home, niente install di sistema)
 Il bundle completo (Qt6 runtime + WebEngine + risorse, ~376 MB, assemblato dal

@@ -20,6 +20,13 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland-egl}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 
+# --- tastiera: QtVirtualKeyboard (in-app, via InputPanel nel QML) ---
+export QT_IM_MODULE=qtvirtualkeyboard
+# [Alternativa in studio: Maliit nativo → NON impostare QT_IM_MODULE e provare
+#  export QT_WAYLAND_TEXT_INPUT_PROTOCOL=v2 (maliit SFOS parla zwp_text_input_v2)]
+# lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo)
+export LANG="${LANG:-it_IT.UTF-8}"
+
 # --- Chromium: niente sandbox (bundle non installato, no helper setuid); usa EGL ---
 export QTWEBENGINE_DISABLE_SANDBOX=1
 export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0}"
