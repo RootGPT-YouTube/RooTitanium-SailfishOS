@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RooTitanium
+Comment=Browser WebEngine (PoC)
+Exec=/home/defaultuser/webengine-smoke/run.sh
+Icon=icon-launcher-browser
+Categories=Network;WebBrowser;

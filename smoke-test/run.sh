@@ -22,8 +22,10 @@ export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 
 # --- tastiera: QtVirtualKeyboard (in-app, via InputPanel nel QML) ---
 export QT_IM_MODULE=qtvirtualkeyboard
-# [Alternativa in studio: Maliit nativo → NON impostare QT_IM_MODULE e provare
-#  export QT_WAYLAND_TEXT_INPUT_PROTOCOL=v2 (maliit SFOS parla zwp_text_input_v2)]
+# stile tastiera custom (glifi armonizzati, look Sailfish/ItalianoX) + layout con "/"
+export QT_VIRTUALKEYBOARD_STYLE="${QT_VIRTUALKEYBOARD_STYLE:-rt}"
+export QT_VIRTUALKEYBOARD_LAYOUT_PATH="${QT_VIRTUALKEYBOARD_LAYOUT_PATH:-$HERE/kbd-layouts}"
+# [Maliit nativo SCARTATO: lipstick non espone wayland text-input, plugin maliit e' Qt5-only]
 # lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo)
 export LANG="${LANG:-it_IT.UTF-8}"
 
