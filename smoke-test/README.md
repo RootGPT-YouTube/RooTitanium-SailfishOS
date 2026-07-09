@@ -9,17 +9,26 @@ tastiera QtVirtualKeyboard e toggle mobile/desktop.
 - `main.cpp` — launcher C++: `QtWebEngineQuick::initialize()` + `QQmlApplicationEngine`
   che carica `test.qml`. Compilato nativo via sb2.
 - `test.qml` — UI del browser:
-  - **Toolbar stile Chrome mobile**: home ⌂, pill indirizzo arrotondata (lucchetto
-    + URL colorato con schema in verde), contatore tab, menu ⋮.
-  - **Menu ⋮ stile Sailfish Browser** (icone disegnate a Canvas): Nuova scheda,
-    Scheda anonima, Cerca nella pagina, Aggiungi alla griglia, Condividi, Salva
-    come PDF, **Versione desktop** (toggle), Segnalibri, Cronologia, Download,
-    Impostazioni. Funzionali: *Versione desktop* e *Salva come PDF*; le altre sono
-    placeholder (servono sistema a schede / storage).
-  - **Toggle mobile/desktop** (backlog #2): profile `WebEngineProfile` con
-    `httpUserAgent` bindato a `desktopMode` + **`zoomFactor`** che in mobile riduce
-    il viewport CSS a ~412px (SFOS forza DPI 96 → devicePixelRatio ≈ 1 → senza zoom
-    i siti responsive scelgono il layout desktop). Default = **mobile**.
+  - **Toolbar stile Chrome mobile**: home ⌂, pill indirizzo arrotondata (lucchetto/
+    incognito + URL colorato con schema verde, placeholder "Cerca o inserisci un
+    indirizzo"), contatore schede, menu ⋮.
+  - **Sistema a schede (multi-tab)**: `ListModel` `tabsModel` + una `WebEngineView`
+    per scheda (solo l'attiva visibile), profili **normale** (persistente) e
+    **incognito** (off-the-record, isolato). Contatore schede → **switcher** stile
+    Cromite (filtro Schede/Incognito, card con ✕ per chiudere, + per nuova, tap per
+    passare). Chiudendo l'ultima scheda si torna alla **HOME**.
+  - **Pagina HOME / nuova scheda** (`homeHtml()`): logo, **Preferiti** (tile-link
+    predefiniti) + **Cronologia** (placeholder). Scheda anonima → landing
+    **"Stai navigando in incognito"** (`incognitoHtml()`).
+  - **Menu ⋮ stile Sailfish Browser** (icone Canvas): Nuova scheda, Scheda anonima,
+    Cerca nella pagina, Condividi, Salva come PDF, **Versione desktop** (toggle),
+    Segnalibri, Cronologia, Download, Impostazioni. Funzionali: *Nuova scheda*,
+    *Scheda anonima*, *Versione desktop*, *Salva come PDF*, **Condividi** (copia URL
+    negli appunti + toast); le altre sono placeholder.
+  - **Toggle mobile/desktop** (backlog #2): `httpUserAgent` bindato a `desktopMode`
+    + **`zoomFactor`** che in mobile riduce il viewport CSS a ~412px (SFOS forza
+    DPI 96 → devicePixelRatio ≈ 1 → senza zoom i siti responsive scelgono il layout
+    desktop). Default = **mobile**.
   - **Tastiera QtVirtualKeyboard in-app** (`InputPanel`).
 - `run.sh` — launcher con env: platform wayland-egl, path Qt/WebEngine del bundle,
   flag Chromium, `QT_IM_MODULE=qtvirtualkeyboard`, **`QT_VIRTUALKEYBOARD_STYLE=rt`**,
