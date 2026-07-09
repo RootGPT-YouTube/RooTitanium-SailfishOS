@@ -3,5 +3,5 @@ Type=Application
 Name=RooTitanium
 Comment=Browser WebEngine (PoC)
 Exec=/home/defaultuser/webengine-smoke/run.sh
-Icon=icon-launcher-browser
+Icon=/home/defaultuser/webengine-smoke/rootitanium.png
 Categories=Network;WebBrowser;
