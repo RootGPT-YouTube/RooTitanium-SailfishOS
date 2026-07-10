@@ -11,6 +11,10 @@ int main(int argc, char **argv)
 {
     QtWebEngineQuick::initialize();
     QGuiApplication app(argc, argv);
+    // app_id Wayland = basename del .desktop (rootitanium.desktop): senza questo
+    // lipstick non aggancia la finestra alla cover del launcher e mostra una
+    // cover-segnaposto "in avvio" che va in timeout e si chiude da sola.
+    app.setDesktopFileName(QStringLiteral("rootitanium"));
 
     // carica test.qml dalla stessa cartella dell'eseguibile
     const QString base = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();

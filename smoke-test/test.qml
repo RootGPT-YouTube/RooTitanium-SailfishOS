@@ -95,17 +95,128 @@ Window {
     }
     TextInput { id: clipHelper; visible: false }
 
+    // ===================== CONTEXT MENU (longpress) =====================
+    // apre una scheda su un URL specifico (per "apri link in nuova scheda")
+    function newTabUrl(priv, u) {
+        menu.open = false
+        tabsModel.append({ priv: priv, start: "" + u, murl: "" + u, mtitle: "…" })
+        currentTab = tabsModel.count - 1
+        switcher.open = false
+        Qt.callLater(refreshCurrent)
+    }
+
+    property var ctxView: null
+    property string ctxLink: ""
+    property string ctxImg: ""
+    property var ctxModel: []
+
+    function showContext(view, req) {
+        menu.open = false
+        ctxView = view
+        ctxLink = "" + (req.linkUrl || "")
+        ctxImg  = (req.mediaType === ContextMenuRequest.MediaTypeImage) ? ("" + req.mediaUrl) : ""
+        var sel = "" + (req.selectedText || "")
+        var editable = req.isContentEditable === true
+
+        var items = []
+        if (ctxLink !== "") {
+            items.push({ l: "Apri in nuova scheda",   a: "link_newtab" })
+            items.push({ l: "Apri in scheda anonima",  a: "link_private" })
+            items.push({ l: "Copia indirizzo link",    a: "link_copy" })
+            items.push({ l: "Salva link",              a: "link_save" })
+        }
+        if (ctxImg !== "") {
+            if (items.length) items.push({ sep: true })
+            items.push({ l: "Apri immagine in nuova scheda", a: "img_newtab" })
+            items.push({ l: "Copia immagine",                a: "img_copy" })
+            items.push({ l: "Salva immagine",                a: "img_save" })
+        }
+        if (sel !== "") {
+            if (items.length) items.push({ sep: true })
+            items.push({ l: "Copia", a: "copy" })
+            if (editable) items.push({ l: "Taglia", a: "cut" })
+        }
+        if (editable) {
+            if (items.length) items.push({ sep: true })
+            items.push({ l: "Incolla", a: "paste" })
+            items.push({ l: "Seleziona tutto", a: "selall" })
+        }
+        if (items.length) items.push({ sep: true })
+        items.push({ l: "Indietro", a: "back",    dis: !view.canGoBack })
+        items.push({ l: "Avanti",   a: "forward", dis: !view.canGoForward })
+        items.push({ l: "Ricarica", a: "reload" })
+        ctxModel = items
+
+        // req.position è relativo alla WebEngineView (che sta sotto la toolbar)
+        ctxMenu.px = req.position.x
+        ctxMenu.py = req.position.y + toolbar.height
+        ctxMenu.open = true
+    }
+
+    // menù longpress della barra indirizzi (TextInput QML, non WebEngine)
+    function showUrlbarMenu() {
+        menu.open = false
+        ctxView = null
+        ctxModel = [
+            { l: "Seleziona tutto", a: "ub_selall" },
+            { l: "Copia",           a: "ub_copy",  dis: urlbar.text.length === 0 },
+            { l: "Incolla",         a: "ub_paste", dis: !urlbar.canPaste }
+        ]
+        ctxMenu.px = 60 * u
+        ctxMenu.py = toolbar.height + 4 * u
+        ctxMenu.open = true
+    }
+
+    function ctxAction(a) {
+        ctxMenu.open = false
+        if (a === "ub_selall") { urlbar.forceActiveFocus(); urlbar.selectAll(); return }
+        if (a === "ub_copy")   { if (urlbar.selectedText.length === 0) urlbar.selectAll(); urlbar.copy(); toast.show("Copiato negli appunti"); return }
+        if (a === "ub_paste")  { urlbar.forceActiveFocus(); urlbar.paste(); return }
+        var v = ctxView
+        if (!v) return
+        if (a === "link_newtab")      newTabUrl(false, ctxLink)
+        else if (a === "link_private") newTabUrl(true, ctxLink)
+        else if (a === "link_copy")   { clipHelper.text = ctxLink; clipHelper.selectAll(); clipHelper.copy(); toast.show("Link copiato negli appunti") }
+        else if (a === "link_save")   v.triggerWebAction(WebEngineView.DownloadLinkToDisk)
+        else if (a === "img_newtab")  newTabUrl(v.priv, ctxImg)
+        else if (a === "img_copy")    v.triggerWebAction(WebEngineView.CopyImageToClipboard)
+        else if (a === "img_save")    v.triggerWebAction(WebEngineView.DownloadImageToDisk)
+        else if (a === "copy")        v.triggerWebAction(WebEngineView.Copy)
+        else if (a === "cut")         v.triggerWebAction(WebEngineView.Cut)
+        else if (a === "paste")       v.triggerWebAction(WebEngineView.Paste)
+        else if (a === "selall")      v.triggerWebAction(WebEngineView.SelectAll)
+        else if (a === "back")        v.goBack()
+        else if (a === "forward")     v.goForward()
+        else if (a === "reload")      v.reload()
+    }
+
     // profilo NORMALE: persistente (cookie/login/cronologia salvati su disco)
     WebEngineProfile {
         id: normalProfile
         storageName: "rootitanium"
         persistentStoragePath: "/home/defaultuser/.rootitanium"
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        onDownloadRequested: function(download) { win.handleDownload(download) }
     }
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
         id: incognitoProfile
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        onDownloadRequested: function(download) { win.handleDownload(download) }
+    }
+
+    // senza questo handler i download (Salva link/immagine) muoiono in silenzio:
+    // il profilo emette downloadRequested ma nessuno chiama accept()
+    function handleDownload(download) {
+        download.downloadDirectory = "/home/defaultuser/Downloads"
+        download.accept()
+        toast.show("Download avviato: " + download.downloadFileName)
+        download.stateChanged.connect(function() {
+            if (download.state === WebEngineDownloadRequest.DownloadCompleted)
+                toast.show("Scaricato in Downloads: " + download.downloadFileName)
+            else if (download.state === WebEngineDownloadRequest.DownloadInterrupted)
+                toast.show("Download fallito: " + download.downloadFileName)
+        })
     }
 
     // landing incognito (stile Chrome/Cromite)
@@ -253,9 +364,18 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     selectByMouse: true
                     onActiveFocusChanged: if (activeFocus && win.currentView) { var u = "" + win.currentView.url; text = (u === "about:blank" ? "" : u); selectAll() }
                     onAccepted: { win.go(text); focus = false }
+                    // TextInput NON ha il segnale pressAndHold (solo MouseArea):
+                    // overlay che gestisce longpress e riposiziona il cursore al tap
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: function(mouse) { urlbar.cursorPosition = urlbar.positionAt(mouse.x, mouse.y) }
+                        onPressAndHold: win.showUrlbarMenu()
+                    }
                 }
 
-                MouseArea { anchors.fill: parent; enabled: !urlbar.activeFocus; onClicked: urlbar.forceActiveFocus() }
+                MouseArea { anchors.fill: parent; enabled: !urlbar.activeFocus
+                    onClicked: urlbar.forceActiveFocus()
+                    onPressAndHold: { urlbar.forceActiveFocus(); win.showUrlbarMenu() } }
             }
         }
 
@@ -283,6 +403,10 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     }
                     onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
                     onTitleChanged: tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
+                    onContextMenuRequested: function(request) {
+                        request.accepted = true          // sopprime il menù nativo (minuscolo, non scalato)
+                        win.showContext(this, request)
+                    }
                 }
             }
         }
@@ -331,6 +455,53 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                 width: 16*win.u; height: 16*win.u; radius: width/2; visible: entry && entry.toggle === true
                 color: win.desktopMode ? "#4ea866" : "transparent"; border.color: "#7a7a82"; border.width: 2*win.u }
             MouseArea { id: rma; anchors.fill: parent; onClicked: win.doAction(entry.a) }
+        }
+    }
+
+    // ===================== CONTEXT MENU (visuale) =====================
+    MouseArea { anchors.fill: parent; z: 59; enabled: ctxMenu.open; onClicked: ctxMenu.open = false }
+
+    Rectangle {
+        id: ctxMenu
+        property bool open: false
+        property real px: 0
+        property real py: 0
+        width: 320 * win.u
+        height: ctxCol.height + 16 * win.u
+        x: Math.max(8*win.u, Math.min(px, win.width  - width  - 8*win.u))
+        y: Math.max(8*win.u, Math.min(py, win.height - height - 8*win.u))
+        color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1; radius: 6 * win.u
+        visible: open; z: 60
+        Column {
+            id: ctxCol; width: parent.width; y: 8 * win.u
+            Repeater {
+                model: win.ctxModel
+                delegate: Loader {
+                    width: ctxCol.width
+                    sourceComponent: modelData.sep === true ? sepComp : ctxRowComp
+                    onLoaded: if (modelData.sep !== true) item.entry = modelData
+                }
+            }
+        }
+    }
+
+    Component {
+        id: ctxRowComp
+        Rectangle {
+            property var entry
+            height: 58 * win.u
+            color: (entry && entry.dis === true) ? "transparent" : (crma.pressed ? "#3a3a44" : "transparent")
+            Text {
+                anchors.left: parent.left; anchors.leftMargin: 24*win.u
+                anchors.right: parent.right; anchors.rightMargin: 20*win.u
+                anchors.verticalCenter: parent.verticalCenter
+                text: entry ? entry.l : ""
+                color: (entry && entry.dis === true) ? "#6a6a72" : "#eaeaf0"
+                font.pixelSize: 21*win.u; elide: Text.ElideRight
+            }
+            MouseArea { id: crma; anchors.fill: parent
+                enabled: !(entry && entry.dis === true)
+                onClicked: win.ctxAction(entry.a) }
         }
     }
 
