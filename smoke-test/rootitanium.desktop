@@ -5,3 +5,6 @@ Comment=Browser WebEngine (PoC)
 Exec=/home/defaultuser/webengine-smoke/run.sh
 Icon=/home/defaultuser/webengine-smoke/rootitanium.png
 Categories=Network;WebBrowser;
+# Nota: invoker è inevitabile (libcontentaction lo forza; "no-invoker" è
+# sinonimo di "generic"). Il match della cover di jolla-home avviene per
+# cmdline vs riga Exec: risolto in run.sh con `exec -a` (argv[0] forgiato).

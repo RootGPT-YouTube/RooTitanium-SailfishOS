@@ -1,6 +1,7 @@
-#!/bin/sh
+#!/bin/bash
 # RooTitanium — lancio smoke test WebEngine da bundle self-contained in /home.
 # Nessuna installazione di sistema. Cancellabile con rm -rf della cartella.
+# bash (non busybox sh): serve `exec -a` in fondo per il match cover di jolla-home.
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 # --- Qt6 + WebEngine dal bundle (le lib GPU/wayland/hybris restano quelle del device) ---
@@ -38,4 +39,10 @@ export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"
 
 echo "== env =="; echo "QT_QPA_PLATFORM=$QT_QPA_PLATFORM  WAYLAND_DISPLAY=$WAYLAND_DISPLAY  XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
 echo "== avvio webengine-smoke =="
-exec "$HERE/webengine-smoke" "$@"
+# argv[0] forgiato = path di questo script: jolla-home (StartupWatcher.qml)
+# aggancia la cover del launcher cercando un processo la cui cmdline combaci con
+# la riga Exec del .desktop (JollaSystemInfo.matchingPidForCommand). Senza -a la
+# cmdline diventerebbe .../webengine-smoke, il match fallirebbe e la cover
+# segnaposto girerebbe a vuoto per ~30s ("cover fantasma").
+# main.cpp risolve test.qml dalla dir di argv[0]: stessa cartella, quindi ok.
+exec -a "$0" "$HERE/webengine-smoke" "$@"
