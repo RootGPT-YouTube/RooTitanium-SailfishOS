@@ -355,6 +355,51 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
 </body></html>`
     }
 
+    // --- spoof metriche schermo per la rotazione interna ---
+    // la rotazione è nostra (appRoot), quindi per Chromium lo SCHERMO resta
+    // portrait 1080x2520: i player (YouTube!) dimensionano il fullscreen su
+    // screen.width/height e orientation → video piazzato fuori viewport
+    // (rect y=(2520-608)/2=956, verificato via CDP). Qui: getter di Screen/
+    // ScreenOrientation scambiati quando siamo in landscape + evento
+    // orientationchange, come una rotazione fisica vera.
+    readonly property string screenSpoofJs: `(function(){
+        if (window.__rtSpoof) return; window.__rtSpoof = true;
+        var land = false;
+        function swapGet(proto, wName, hName) {
+            var dw = Object.getOwnPropertyDescriptor(proto, wName), dh = Object.getOwnPropertyDescriptor(proto, hName);
+            if (!dw || !dh || !dw.get || !dh.get) return;
+            Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.max(w,h) : Math.min(w,h); } });
+            Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.min(w,h) : Math.max(w,h); } });
+        }
+        try { swapGet(Screen.prototype, 'width', 'height'); swapGet(Screen.prototype, 'availWidth', 'availHeight'); } catch(e){}
+        try {
+            var ot = Object.getOwnPropertyDescriptor(ScreenOrientation.prototype, 'type');
+            var oa = Object.getOwnPropertyDescriptor(ScreenOrientation.prototype, 'angle');
+            Object.defineProperty(ScreenOrientation.prototype, 'type',  { configurable: true, get: function(){ return land ? 'landscape-primary' : ot.get.call(this); } });
+            Object.defineProperty(ScreenOrientation.prototype, 'angle', { configurable: true, get: function(){ return land ? 90 : oa.get.call(this); } });
+        } catch(e){}
+        try { Object.defineProperty(window, 'orientation', { configurable: true, get: function(){ return land ? 90 : 0; } }); } catch(e){}
+        // su Android Chrome outer == inner (CSS px); qui di default sono px fisici
+        try {
+            Object.defineProperty(window, 'outerWidth',  { configurable: true, get: function(){ return window.innerWidth; } });
+            Object.defineProperty(window, 'outerHeight', { configurable: true, get: function(){ return window.innerHeight; } });
+        } catch(e){}
+        window.__rtSetLandscape = function(v){
+            v = !!v; if (v === land) return; land = v;
+            try { screen.orientation.dispatchEvent(new Event('change')); } catch(e){}
+            try { window.dispatchEvent(new Event('orientationchange')); } catch(e){}
+        };
+    })();`
+
+    function pushOrientation() {
+        var land = orient !== 0
+        for (var i = 0; i < tabsRepeater.count; i++) {
+            var v = tabsRepeater.itemAt(i)
+            if (v) v.runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(" + land + ")")
+        }
+    }
+    onOrientChanged: pushOrientation()
+
     ListModel { id: tabsModel }
     Component.onCompleted: newTab(false)
 
@@ -540,10 +585,22 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, Math.min(win.width, win.height) / 412)
                     settings.fullScreenSupportEnabled: true
                     Component.onCompleted: {
+                        userScripts.collection = [{
+                            name: "rtScreenSpoof",
+                            sourceCode: win.screenSpoofJs,
+                            injectionPoint: WebEngineScript.DocumentCreation,
+                            worldId: WebEngineScript.MainWorld,
+                            runsOnSubFrames: true
+                        }]
                         if (model.start === "incognito") loadHtml(win.incognitoHtml(), "about:blank")
                         else if (model.start === "home") loadHtml(win.homeHtml(), "about:blank")
                         else url = model.start
                         win.refreshCurrent()
+                    }
+                    // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
+                    onLoadingChanged: function(li) {
+                        if (li.status === WebEngineView.LoadSucceededStatus && win.orient !== 0)
+                            runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
                     }
                     onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
                     onTitleChanged: tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
