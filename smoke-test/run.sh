@@ -37,7 +37,19 @@ export QTWEBENGINE_DISABLE_SANDBOX=1
 # desktop col mouse e i controlli touch fanno toggle doppio (compaiono e
 # spariscono subito). Valori bitfield mojom: PointerType coarse=2, HoverType
 # none=1. ApplyCommandLineToSettings riapplica gli override DOPO ogni sync prefs.
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1}"
+# --force-device-scale-factor=2.6214 (=1080/412): SFOS forza DPI 96 → DSF 1 e
+# Chromium riportava screen.* in px FISICI (2520x1080). Con la flag screen.*
+# diventa nativamente in DIP=px CSS (412x961) come su Android — richiesto dal
+# player YouTube (vedi spoof in test.qml). NB: NON cambia il DSF della view
+# (QtWebEngine usa il dpr della QQuickWindow): il viewport resta gestito dallo
+# zoomFactor 2.62 nel QML.
+# --touch-slop-distance=28: il gesture detector (aura) lavora in px della VIEW
+# (=FISICI qui, DSF view 1): lo slop default ≈15px vale ~1,4mm su questo
+# pannello ~450dpi → un dito che scivola di 2mm ANNULLA il click (pointercancel
+# → scroll; verificato con tap iniettati da /dev/input: jitter 15px = niente
+# click, tap fermo = ok). Android usa 8dp ≈ 21px fisici; 28px ≈ 2,6mm. Migliora
+# anche longpress (stesso slop) e pinch (span_slop = 2x questo valore).
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 --force-device-scale-factor=2.6214 --touch-slop-distance=28}"
 
 # log utile per diagnosi
 export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"

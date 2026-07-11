@@ -458,18 +458,17 @@ ${histCss}
     readonly property string screenSpoofJs: `(function(){
         if (window.__rtSpoof) return; window.__rtSpoof = true;
         var land = false;
-        // screen.* in px CSS (÷devicePixelRatio) come su Android Chrome, NON fisici:
-        // il player YouTube (base.js pK()) confronta outerW*outerH (px CSS) con
-        // max storico che include screen.w*screen.h — con screen in px fisici il
-        // rapporto era ~0.14 → "player minimizzato" a ogni resize → hTq→F3 =
-        // exitFullscreen+pausa dopo ~200ms (verificato via CDP: con screen in px
-        // CSS zero chiamate a exitFullscreen e il video resta in play).
+        // NB: screen.* deve restare in px CSS come su Android Chrome (ora ci pensa
+        // --force-device-scale-factor in run.sh: Chromium riporta già DIP=px CSS).
+        // Il player YouTube (base.js pK()) confronta outerW*outerH (px CSS) col
+        // max storico che include screen.w*screen.h — quando screen era in px
+        // FISICI il rapporto ~0.14 → "player minimizzato" a ogni resize → hTq→F3
+        // = exitFullscreen+pausa dopo ~200ms (verificato via CDP).
         function swapGet(proto, wName, hName) {
             var dw = Object.getOwnPropertyDescriptor(proto, wName), dh = Object.getOwnPropertyDescriptor(proto, hName);
             if (!dw || !dh || !dw.get || !dh.get) return;
-            function css(v){ return Math.round(v / (window.devicePixelRatio || 1)); }
-            Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return css(land ? Math.max(w,h) : Math.min(w,h)); } });
-            Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return css(land ? Math.min(w,h) : Math.max(w,h)); } });
+            Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.max(w,h) : Math.min(w,h); } });
+            Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.min(w,h) : Math.max(w,h); } });
         }
         try { swapGet(Screen.prototype, 'width', 'height'); swapGet(Screen.prototype, 'availWidth', 'availHeight'); } catch(e){}
         try {
@@ -708,7 +707,10 @@ ${histCss}
                     property bool priv: model.priv
                     profile: priv ? incognitoProfile : normalProfile
                     // zoom sul lato corto della FINESTRA (costante in landscape):
-                    // viewport CSS ~412px in portrait, ~960px in landscape
+                    // viewport CSS ~412px in portrait, ~960px in landscape.
+                    // NB: --force-device-scale-factor NON cambia il DSF della view
+                    // (QtWebEngine usa il dpr della QQuickWindow = 1) ma corregge
+                    // screen.* (in DIP) e le soglie gesture del display
                     zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, Math.min(win.width, win.height) / 412)
                     settings.fullScreenSupportEnabled: true
                     Component.onCompleted: {
