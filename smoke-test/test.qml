@@ -379,15 +379,38 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
             Object.defineProperty(ScreenOrientation.prototype, 'angle', { configurable: true, get: function(){ return land ? 90 : oa.get.call(this); } });
         } catch(e){}
         try { Object.defineProperty(window, 'orientation', { configurable: true, get: function(){ return land ? 90 : 0; } }); } catch(e){}
+        // lock() qui NON esiste (NotSupportedError) ma YouTube ci CONTA: su
+        // Android è il lock a ruotare lo schermo, e se fallisce esce dal
+        // fullscreen (visto via CDP: lock RIFIUTATO → exitFullscreen da base.js).
+        // Spoof: il lock landscape commuta subito lo spoof e risolve la promise.
+        try {
+            ScreenOrientation.prototype.lock = function(o){
+                var L = ('' + o).indexOf('landscape') === 0;
+                window.__rtSetLandscape(L);
+                return Promise.resolve();
+            };
+            ScreenOrientation.prototype.unlock = function(){};
+        } catch(e){}
         // su Android Chrome outer == inner (CSS px); qui di default sono px fisici
         try {
             Object.defineProperty(window, 'outerWidth',  { configurable: true, get: function(){ return window.innerWidth; } });
             Object.defineProperty(window, 'outerHeight', { configurable: true, get: function(){ return window.innerHeight; } });
         } catch(e){}
+        // valori SUBITO, eventi DOPO: se orientationchange arriva durante la
+        // transizione fullscreen (prima di fullscreenchange), il watchdog di
+        // YouTube (base.js hTq→F3) esce dal fullscreen e PAUSA il video — visto
+        // via CDP: exit a +23ms dall'evento, con fullscreenElement ancora null.
+        // Con gli eventi a transizione assestata il layout nasce già coi valori
+        // nuovi e l'orientationchange tardivo è solo una conferma innocua.
+        var pend = null;
         window.__rtSetLandscape = function(v){
             v = !!v; if (v === land) return; land = v;
-            try { screen.orientation.dispatchEvent(new Event('change')); } catch(e){}
-            try { window.dispatchEvent(new Event('orientationchange')); } catch(e){}
+            if (pend) clearTimeout(pend);
+            pend = setTimeout(function(){
+                pend = null;
+                try { screen.orientation.dispatchEvent(new Event('change')); } catch(e){}
+                try { window.dispatchEvent(new Event('orientationchange')); } catch(e){}
+            }, 600);
         };
     })();`
 
@@ -570,7 +593,11 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
             id: pageArea
             width: parent.width
             height: appRoot.height - (toolbar.visible ? toolbar.height : 0) - (inputPanel.active ? inputPanel.height : 0)
-            Behavior on height { NumberAnimation { duration: 150 } }
+            // animazione SOLO per la tastiera: durante fullscreen/rotazione il
+            // resize deve essere atomico — il viewport intermedio (larghezza già
+            // ruotata, altezza ancora in animazione) faceva credere al watchdog
+            // di YouTube di essere minimizzato → exitFullscreen + pausa (via CDP)
+            Behavior on height { enabled: inputPanel.active; NumberAnimation { duration: 150 } }
 
             Repeater {
                 id: tabsRepeater
