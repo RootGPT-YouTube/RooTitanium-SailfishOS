@@ -9,7 +9,17 @@ Window {
     visibility: Window.FullScreen
     color: "#101014"
 
-    readonly property real u: width / 540
+    // u basato sul lato corto: resta costante quando il contenuto ruota in landscape
+    readonly property real u: Math.min(width, height) / 540
+
+    // --- rotazione landscape ---
+    // lipstick NON ruota le superfici wayland (le app SFOS si ruotano da sole):
+    // ruotiamo il contenitore root (appRoot). Sensori non disponibili in Qt6 sul
+    // device → landscape manuale dal menù + automatico per video a tutto schermo.
+    // rotation 90 = si gira il telefono in senso antiorario (tacca in alto a sinistra)
+    property bool videoFS: false
+    property bool manualLandscape: false
+    readonly property int orient: (videoFS || manualLandscape) ? 90 : 0
 
     // --- schede ---
     property int currentTab: 0
@@ -66,6 +76,7 @@ Window {
         { t: "item", ic: "pdf",      l: "Salva pagina come PDF", a: "pdf" },
         { t: "sep" },
         { t: "item", ic: "desktop",  l: "Versione desktop",      a: "desktop", toggle: true },
+        { t: "item", ic: "rotate",   l: "Ruota in orizzontale",  a: "rotate",  toggle: true },
         { t: "sep" },
         { t: "item", ic: "star",     l: "Segnalibri",            a: "bookmarks" },
         { t: "item", ic: "history",  l: "Cronologia",            a: "history" },
@@ -78,6 +89,7 @@ Window {
         if (a === "newtab") newTab(false)
         else if (a === "private") newTab(true)
         else if (a === "desktop") setDesktop(!win.desktopMode)
+        else if (a === "rotate") manualLandscape = !manualLandscape
         else if (a === "pdf") { if (currentView) currentView.printToPdf("/home/defaultuser/pagina.pdf") }
         else if (a === "share") shareUrl()
         else console.log("menu action (placeholder): " + a)
@@ -149,7 +161,7 @@ Window {
 
         // req.position è relativo alla WebEngineView (che sta sotto la toolbar)
         ctxMenu.px = req.position.x
-        ctxMenu.py = req.position.y + toolbar.height
+        ctxMenu.py = req.position.y + (toolbar.visible ? toolbar.height : 0)
         ctxMenu.open = true
     }
 
@@ -167,7 +179,7 @@ Window {
         ctxModel = items
         // selectionBounds è relativo alla WebEngineView; il menù sotto la selezione
         ctxMenu.px = req.selectionBounds.x
-        ctxMenu.py = req.selectionBounds.y + req.selectionBounds.height + toolbar.height + 8 * u
+        ctxMenu.py = req.selectionBounds.y + req.selectionBounds.height + (toolbar.visible ? toolbar.height : 0) + 8 * u
         ctxMenu.open = true
     }
 
@@ -306,6 +318,15 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
     ListModel { id: tabsModel }
     Component.onCompleted: newTab(false)
 
+    // contenitore ruotabile: TUTTA la UI vive qui dentro; in landscape si
+    // scambiano larghezza/altezza e si ruota attorno al centro della finestra
+    Item {
+        id: appRoot
+        anchors.centerIn: parent
+        rotation: win.orient
+        width: win.orient % 180 === 0 ? win.width : win.height
+        height: win.orient % 180 === 0 ? win.height : win.width
+
     Column {
         anchors.fill: parent
 
@@ -314,6 +335,7 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
             id: toolbar
             width: parent.width
             height: 78 * win.u
+            visible: !win.videoFS     // video a tutto schermo → via la toolbar
             color: win.currentPrivate ? "#2a2233" : "#16161c"
 
             Item {
@@ -423,7 +445,7 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
         Item {
             id: pageArea
             width: parent.width
-            height: win.height - toolbar.height - (inputPanel.active ? inputPanel.height : 0)
+            height: appRoot.height - (toolbar.visible ? toolbar.height : 0) - (inputPanel.active ? inputPanel.height : 0)
             Behavior on height { NumberAnimation { duration: 150 } }
 
             Repeater {
@@ -434,7 +456,10 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     visible: index === win.currentTab
                     property bool priv: model.priv
                     profile: priv ? incognitoProfile : normalProfile
-                    zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, width / 412)
+                    // zoom sul lato corto della FINESTRA (costante in landscape):
+                    // viewport CSS ~412px in portrait, ~960px in landscape
+                    zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, Math.min(win.width, win.height) / 412)
+                    settings.fullScreenSupportEnabled: true
                     Component.onCompleted: {
                         if (model.start === "incognito") loadHtml(win.incognitoHtml(), "about:blank")
                         else if (model.start === "home") loadHtml(win.homeHtml(), "about:blank")
@@ -459,6 +484,12 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                         win.showJsDialog(request)
                     }
                     onTooltipRequested: function(request) { request.accepted = true }  // niente tooltip nativi minuscoli
+                    // video a tutto schermo: senza accept() la richiesta JS viene
+                    // rifiutata e il player resta inline. Accettata → landscape auto
+                    onFullScreenRequested: function(request) {
+                        request.accept()
+                        win.videoFS = request.toggleOn
+                    }
                 }
             }
         }
@@ -507,7 +538,8 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                 anchors.verticalCenter: parent.verticalCenter; text: entry ? entry.l : ""; color: "#eaeaf0"; font.pixelSize: 21*win.u; elide: Text.ElideRight }
             Rectangle { id: toggleDot; anchors.right: parent.right; anchors.rightMargin: 22*win.u; anchors.verticalCenter: parent.verticalCenter
                 width: 16*win.u; height: 16*win.u; radius: width/2; visible: entry && entry.toggle === true
-                color: win.desktopMode ? "#4ea866" : "transparent"; border.color: "#7a7a82"; border.width: 2*win.u }
+                color: (entry && entry.a === "rotate" ? win.manualLandscape : win.desktopMode) ? "#4ea866" : "transparent"
+                border.color: "#7a7a82"; border.width: 2*win.u }
             MouseArea { id: rma; anchors.fill: parent; onClicked: win.doAction(entry.a) }
         }
     }
@@ -522,8 +554,8 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
         property real py: 0
         width: 320 * win.u
         height: ctxCol.height + 16 * win.u
-        x: Math.max(8*win.u, Math.min(px, win.width  - width  - 8*win.u))
-        y: Math.max(8*win.u, Math.min(py, win.height - height - 8*win.u))
+        x: Math.max(8*win.u, Math.min(px, appRoot.width  - width  - 8*win.u))
+        y: Math.max(8*win.u, Math.min(py, appRoot.height - height - 8*win.u))
         color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1; radius: 6 * win.u
         visible: open; z: 60
         Column {
@@ -682,6 +714,11 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
             } else if (k === "desktop") {
                 rrect(s*0.16,s*0.22,s*0.68,s*0.42,s*0.05); ctx.stroke()
                 ctx.beginPath(); ctx.moveTo(s*0.08,s*0.76); ctx.lineTo(s*0.92,s*0.76); ctx.stroke()
+            } else if (k === "rotate") {
+                rrect(s*0.32,s*0.14,s*0.36,s*0.62,s*0.07); ctx.stroke()
+                ctx.beginPath(); ctx.arc(cx,cy+s*0.06,s*0.42,Math.PI*0.25,Math.PI*0.75); ctx.stroke()
+                var axr=cx+Math.cos(Math.PI*0.25)*s*0.42, ayr=cy+s*0.06+Math.sin(Math.PI*0.25)*s*0.42
+                ctx.beginPath(); ctx.moveTo(axr,ayr); ctx.lineTo(axr-s*0.11,ayr+s*0.01); ctx.moveTo(axr,ayr); ctx.lineTo(axr-s*0.01,ayr-s*0.11); ctx.stroke()
             } else if (k === "star") {
                 ctx.beginPath()
                 for (var t=0;t<10;t++){ var rad = (t%2===0)? s*0.34 : s*0.15; var an = -Math.PI/2 + t*Math.PI/5; var px=cx+rad*Math.cos(an), py=cy+rad*Math.sin(an); if(t===0) ctx.moveTo(px,py); else ctx.lineTo(px,py) }
@@ -716,7 +753,7 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
 
         Rectangle {
             anchors.centerIn: parent
-            width: Math.min(win.width - 48*win.u, 460*win.u)
+            width: Math.min(jsDlg.width - 48*win.u, 460*win.u)
             height: dlgCol.height + 36*win.u
             radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
             Column {
@@ -770,11 +807,16 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
         Timer { id: toastTimer; interval: 1900; onTriggered: toast.opacity = 0 }
     }
 
-    // tastiera QtVirtualKeyboard in-app
+    // tastiera QtVirtualKeyboard in-app; in landscape resta larga come il lato
+    // corto (a tutta larghezza scalerebbe fino a coprire l'intero schermo)
     InputPanel {
         id: inputPanel
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        width: Math.min(parent.width, win.width)
         visible: active
         z: 99
     }
+
+    }   // fine appRoot
 }
