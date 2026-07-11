@@ -365,11 +365,18 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
     readonly property string screenSpoofJs: `(function(){
         if (window.__rtSpoof) return; window.__rtSpoof = true;
         var land = false;
+        // screen.* in px CSS (÷devicePixelRatio) come su Android Chrome, NON fisici:
+        // il player YouTube (base.js pK()) confronta outerW*outerH (px CSS) con
+        // max storico che include screen.w*screen.h — con screen in px fisici il
+        // rapporto era ~0.14 → "player minimizzato" a ogni resize → hTq→F3 =
+        // exitFullscreen+pausa dopo ~200ms (verificato via CDP: con screen in px
+        // CSS zero chiamate a exitFullscreen e il video resta in play).
         function swapGet(proto, wName, hName) {
             var dw = Object.getOwnPropertyDescriptor(proto, wName), dh = Object.getOwnPropertyDescriptor(proto, hName);
             if (!dw || !dh || !dw.get || !dh.get) return;
-            Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.max(w,h) : Math.min(w,h); } });
-            Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.min(w,h) : Math.max(w,h); } });
+            function css(v){ return Math.round(v / (window.devicePixelRatio || 1)); }
+            Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return css(land ? Math.max(w,h) : Math.min(w,h)); } });
+            Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return css(land ? Math.min(w,h) : Math.max(w,h)); } });
         }
         try { swapGet(Screen.prototype, 'width', 'height'); swapGet(Screen.prototype, 'availWidth', 'availHeight'); } catch(e){}
         try {
