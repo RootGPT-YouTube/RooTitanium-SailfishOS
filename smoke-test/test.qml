@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.VirtualKeyboard
 import QtWebEngine
+import QtQuick.LocalStorage
 
 Window {
     id: win
@@ -96,6 +97,7 @@ Window {
         else if (a === "rotate") manualLandscape = !manualLandscape
         else if (a === "pdf") { if (currentView) currentView.printToPdf("/home/defaultuser/pagina.pdf") }
         else if (a === "share") shareUrl()
+        else if (a === "history") { if (currentView) currentView.loadHtml(historyHtml(), "https://history.local/") }
         else console.log("menu action (placeholder): " + a)
     }
 
@@ -328,6 +330,91 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
 </script></body></html>`
     }
 
+    // ===================== CRONOLOGIA (LocalStorage/SQLite, persistente) =====================
+    // registra le visite delle schede NORMALI (mai incognito) su LoadSucceeded;
+    // pagine interne (host *.local, about:blank) escluse. DB in OfflineStorage.
+    // la cronologia non deve MAI impedire il load di HOME/pagine: ogni errore
+    // SQL/LocalStorage viene ingoiato e riportato in _histErr (diagnosi)
+    property string _histErr: ""
+    function histDb() { return LocalStorage.openDatabaseSync("RooTitanium", "1.0", "Dati RooTitanium", 1000000) }
+    function histAdd(url, title) {
+        url = "" + url
+        if (!/^https?:\/\//i.test(url) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(url)) return
+        try {
+            histDb().transaction(function(tx) {
+                tx.executeSql("CREATE TABLE IF NOT EXISTS history(url TEXT PRIMARY KEY, title TEXT, ts INTEGER, visits INTEGER DEFAULT 1)")
+                var t = ("" + title) || url
+                var r = tx.executeSql("UPDATE history SET title=?, ts=?, visits=visits+1 WHERE url=?", [t, Date.now(), url])
+                if (r.rowsAffected === 0) tx.executeSql("INSERT INTO history(url,title,ts) VALUES(?,?,?)", [url, t, Date.now()])
+            })
+        } catch(e) { _histErr = "" + e; console.warn("cronologia add: " + e) }
+    }
+    // il titolo spesso arriva DOPO LoadSucceeded: aggiorna la riga esistente
+    function histTitle(url, title) {
+        url = "" + url; title = "" + title
+        if (title.length === 0 || !/^https?:\/\//i.test(url)) return
+        try {
+            histDb().transaction(function(tx) {
+                tx.executeSql("UPDATE history SET title=? WHERE url=?", [title, url])
+            })
+        } catch(e) {}
+    }
+    function histRecent(n) {
+        var out = []
+        try {
+            histDb().transaction(function(tx) {
+                tx.executeSql("CREATE TABLE IF NOT EXISTS history(url TEXT PRIMARY KEY, title TEXT, ts INTEGER, visits INTEGER DEFAULT 1)")
+                var rs = tx.executeSql("SELECT url,title,ts FROM history ORDER BY ts DESC LIMIT ?", [n])
+                for (var i = 0; i < rs.rows.length; i++) out.push(rs.rows.item(i))
+            })
+        } catch(e) { _histErr = "" + e; console.warn("cronologia read: " + e) }
+        return out
+    }
+    function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} }
+
+    function htmlEsc(s) { return ("" + s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") }
+    function histHost(u) { var m = ("" + u).match(/^[a-z]+:\/\/([^\/]+)/i); return m ? m[1].replace(/^www\./, "") : u }
+
+    // righe cronologia condivise da HOME e vista completa
+    function histRowsHtml(items, withTime) {
+        return items.map(function(h) {
+            var host = win.histHost(h.url)
+            var t = win.htmlEsc(h.title && ("" + h.title).length ? h.title : host)
+            var when = withTime ? '<span class="hw">' + Qt.formatDateTime(new Date(h.ts), "dd/MM hh:mm") + '</span>' : ''
+            return '<a class="hrow" href="' + win.htmlEsc(h.url) + '"><span class="hfav">' + win.htmlEsc(host.charAt(0).toUpperCase()) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span>' + when + '</a>'
+        }).join("")
+    }
+    readonly property string histCss: `
+.hrow{display:flex;align-items:center;gap:14px;text-decoration:none;color:#c8c8d0;padding:10px 2px;border-bottom:1px solid #24242c}
+.hfav{flex:none;width:38px;height:38px;border-radius:50%;background:#2e2e38;color:#e8eaed;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
+.hbody{display:flex;flex-direction:column;min-width:0;flex:1}
+.ht{color:#e8eaed;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hu{color:#8a8a92;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hw{flex:none;color:#6a6a72;font-size:12px;margin-left:8px}
+.hmore{display:block;text-align:right;color:#8ab4f8;font-size:14px;text-decoration:none;padding:12px 2px}`
+
+    // vista completa (menù ⋮ → Cronologia, o link dalla HOME); "svuota" =
+    // link sentinella https://history.local/clear intercettato in onNavigationRequested
+    function historyHtml() {
+        var items = histRecent(200)
+        var body = items.length
+            ? histRowsHtml(items, true)
+            : '<div class="empty">La cronologia è vuota.</div>'
+        var clear = items.length
+            ? '<a class="clear" href="https://history.local/clear">Svuota cronologia</a>'
+            : ''
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cronologia</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px}
+.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
+.clear{display:inline-block;color:#f28b82;font-size:14px;text-decoration:none;margin:6px 0 10px}
+${histCss}
+</style></head><body>
+<h1>Cronologia</h1>${clear}
+${body}
+</body></html>`
+    }
+
     // pagina HOME / nuova scheda (Preferiti + Cronologia)
     function homeHtml() {
         var favs = [
@@ -339,6 +426,11 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
             ["OpenStreetMap","https://www.openstreetmap.org","#7ebc6f","M"]
         ]
         var tiles = favs.map(function(f){ return `<a class="tile" href="${f[1]}"><span class="fav" style="background:${f[2]}">${f[3]}</span><span class="tl">${f[0]}</span></a>` }).join("")
+        var hist = histRecent(8)
+        var histSection = hist.length
+            ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">Tutta la cronologia →</a>'
+            : '<div class="empty">La cronologia apparirà qui.</div>'
+        if (_histErr.length) histSection += '<!-- histErr: ' + htmlEsc(_histErr) + ' -->'
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:26px}
 h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transform:uppercase;letter-spacing:.6px}
@@ -348,10 +440,11 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
 .tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#c8c8d0;gap:9px}
 .fav{width:58px;height:58px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:25px;font-weight:700}
 .tl{font-size:13px} .empty{color:#6a6a72;font-size:14px;padding:6px 2px}
+${histCss}
 </style></head><body>
 <div class="logo">Roo<span>Titanium</span></div>
 <h2>Preferiti</h2><div class="grid">${tiles}</div>
-<h2>Cronologia</h2><div class="empty">La cronologia apparirà qui.</div>
+<h2>Cronologia</h2>${histSection}
 </body></html>`
     }
 
@@ -633,11 +726,26 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     }
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
-                        if (li.status === WebEngineView.LoadSucceededStatus && win.orient !== 0)
-                            runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
+                        if (li.status === WebEngineView.LoadSucceededStatus) {
+                            if (win.orient !== 0)
+                                runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
+                            if (!priv) win.histAdd(url, title)   // cronologia: solo schede normali
+                        }
+                    }
+                    // link interni cronologia (la HOME/vista sono loadHtml: host fittizio .local)
+                    onNavigationRequested: function(request) {
+                        var u = "" + request.url
+                        if (u.indexOf("https://history.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            if (u === "https://history.local/clear") win.histClear()
+                            loadHtml(win.historyHtml(), "https://history.local/")
+                        }
                     }
                     onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
-                    onTitleChanged: tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
+                    onTitleChanged: {
+                        tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
+                        if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
+                    }
                     onContextMenuRequested: function(request) {
                         request.accepted = true          // sopprime il menù nativo (minuscolo, non scalato)
                         win.showContext(this, request)

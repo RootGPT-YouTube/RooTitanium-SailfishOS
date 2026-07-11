@@ -57,4 +57,12 @@ Bundle in `scratch/webengine-bundle/` (non tracciato, riproducibile) → copiato
 `/home/defaultuser/webengine-smoke/` sul device, poi `./run.sh` (o dalla griglia app
 via `rootitanium.desktop`). Reversibile: `rm -rf` della cartella, `/` mai toccato.
 
+Dipendenza aggiunta (11 lug, cronologia): `plugins/sqldrivers/libqsqlite.so`
+(dal target SDK `SailfishOS-5.1.0.11-aarch64.default`, path
+`/usr/lib64/qt6/plugins/sqldrivers/`) — serve a `QtQuick.LocalStorage`
+(cronologia persistente); senza, `openDatabaseSync` fallisce con
+"SQL: Cannot open database". Usa `libsqlite3.so.0` di sistema del device.
+Il DB finisce in `~/.local/share/run.sh/QML/OfflineStorage/` (nome app =
+argv[0] forgiato; path pulito quando si farà il packaging vero).
+
 Roadmap browser vero: memoria `rootitanium-browser-backlog`.
