@@ -153,6 +153,44 @@ Window {
         ctxMenu.open = true
     }
 
+    // menù di selezione touch (sostituisce il quick-menu "Copy | …" di Chromium)
+    function showTouchSelection(view, req) {
+        menu.open = false
+        ctxView = view
+        ctxLink = ""; ctxImg = ""
+        var f = req.touchSelectionCommandFlags
+        var items = []
+        if (f & TouchSelectionMenuRequest.Copy)  items.push({ l: "Copia",   a: "copy" })
+        if (f & TouchSelectionMenuRequest.Cut)   items.push({ l: "Taglia",  a: "cut" })
+        if (f & TouchSelectionMenuRequest.Paste) items.push({ l: "Incolla", a: "paste" })
+        items.push({ l: "Seleziona tutto", a: "selall" })
+        ctxModel = items
+        // selectionBounds è relativo alla WebEngineView; il menù sotto la selezione
+        ctxMenu.px = req.selectionBounds.x
+        ctxMenu.py = req.selectionBounds.y + req.selectionBounds.height + toolbar.height + 8 * u
+        ctxMenu.open = true
+    }
+
+    // dialoghi JS (alert/confirm/prompt/beforeunload) con UI scalata
+    property var jsReq: null
+    function showJsDialog(req) {
+        jsReq = req
+        jsDlg.dtype = req.type
+        jsDlg.host = ("" + req.securityOrigin).replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "")
+        jsDlg.msg = req.type === JavaScriptDialogRequest.DialogTypeBeforeUnload
+            ? "Uscire da questa pagina? Le modifiche potrebbero non essere salvate."
+            : ("" + req.message)
+        jsDlg.input = "" + (req.defaultText || "")
+        jsDlg.open = true
+    }
+    function jsDialogDone(ok) {
+        jsDlg.open = false
+        if (!jsReq) return
+        if (ok) jsReq.dialogAccept(jsDlg.dtype === JavaScriptDialogRequest.DialogTypePrompt ? jsDlg.input : "")
+        else jsReq.dialogReject()
+        jsReq = null
+    }
+
     // menù longpress della barra indirizzi (TextInput QML, non WebEngine)
     function showUrlbarMenu() {
         menu.open = false
@@ -364,18 +402,20 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                     selectByMouse: true
                     onActiveFocusChanged: if (activeFocus && win.currentView) { var u = "" + win.currentView.url; text = (u === "about:blank" ? "" : u); selectAll() }
                     onAccepted: { win.go(text); focus = false }
-                    // TextInput NON ha il segnale pressAndHold (solo MouseArea):
-                    // overlay che gestisce longpress e riposiziona il cursore al tap
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: function(mouse) { urlbar.cursorPosition = urlbar.positionAt(mouse.x, mouse.y) }
-                        onPressAndHold: win.showUrlbarMenu()
-                    }
                 }
 
-                MouseArea { anchors.fill: parent; enabled: !urlbar.activeFocus
-                    onClicked: urlbar.forceActiveFocus()
-                    onPressAndHold: { urlbar.forceActiveFocus(); win.showUrlbarMenu() } }
+                // unica MouseArea sempre attiva su TUTTA la pillola: il TextInput da solo
+                // è una striscia alta quanto il testo e il longpress mancava il bersaglio
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: function(mouse) {
+                        if (urlbar.activeFocus) {
+                            var p = mapToItem(urlbar, mouse.x, mouse.y)
+                            urlbar.cursorPosition = urlbar.positionAt(p.x, p.y)
+                        } else urlbar.forceActiveFocus()
+                    }
+                    onPressAndHold: { urlbar.forceActiveFocus(); win.showUrlbarMenu() }
+                }
             }
         }
 
@@ -407,13 +447,27 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                         request.accepted = true          // sopprime il menù nativo (minuscolo, non scalato)
                         win.showContext(this, request)
                     }
+                    // quick-menu di selezione touch di Chromium ("Copy | …"): canale
+                    // separato da contextMenuRequested, va soppresso a parte
+                    onTouchSelectionMenuRequested: function(request) {
+                        request.accepted = true
+                        win.showTouchSelection(this, request)
+                    }
+                    // alert/confirm/prompt nativi: minuscoli e non scalati → UI nostra
+                    onJavaScriptDialogRequested: function(request) {
+                        request.accepted = true
+                        win.showJsDialog(request)
+                    }
+                    onTooltipRequested: function(request) { request.accepted = true }  // niente tooltip nativi minuscoli
                 }
             }
         }
     }
 
     // ===================== MENU (⋮) =====================
-    MouseArea { anchors.fill: parent; z: 49; enabled: menu.open; onClicked: menu.open = false }
+    // onPressAndHold: dopo un longpress il click NON viene emesso → senza questo
+    // un longpress fuori dal menù lo lasciava aperto (e "mangiava" il gesto)
+    MouseArea { anchors.fill: parent; z: 49; enabled: menu.open; onClicked: menu.open = false; onPressAndHold: menu.open = false }
 
     Rectangle {
         id: menu
@@ -459,7 +513,7 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
     }
 
     // ===================== CONTEXT MENU (visuale) =====================
-    MouseArea { anchors.fill: parent; z: 59; enabled: ctxMenu.open; onClicked: ctxMenu.open = false }
+    MouseArea { anchors.fill: parent; z: 59; enabled: ctxMenu.open; onClicked: ctxMenu.open = false; onPressAndHold: ctxMenu.open = false }
 
     Rectangle {
         id: ctxMenu
@@ -641,6 +695,63 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
             } else if (k === "settings") {
                 ctx.beginPath(); ctx.arc(cx,cy,s*0.16,0,2*Math.PI); ctx.stroke()
                 for (var g2=0; g2<8; g2++){ var a2 = g2*Math.PI/4; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a2)*s*0.22, cy+Math.sin(a2)*s*0.22); ctx.lineTo(cx+Math.cos(a2)*s*0.32, cy+Math.sin(a2)*s*0.32); ctx.stroke() }
+            }
+        }
+    }
+
+    // ===================== DIALOGO JS (alert/confirm/prompt) =====================
+    Rectangle {
+        id: jsDlg
+        property bool open: false
+        property int dtype: 0
+        property string host: ""
+        property string msg: ""
+        property alias input: jsInput.text
+        readonly property bool isPrompt: dtype === JavaScriptDialogRequest.DialogTypePrompt
+        anchors.fill: parent
+        color: "#99000000"
+        visible: open; z: 90
+        onOpenChanged: if (open && isPrompt) jsInput.forceActiveFocus()
+        MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale: blocca i gesti sotto
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(win.width - 48*win.u, 460*win.u)
+            height: dlgCol.height + 36*win.u
+            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            Column {
+                id: dlgCol
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top; anchors.topMargin: 18*win.u
+                width: parent.width - 44*win.u
+                spacing: 14*win.u
+                Text { width: parent.width; text: jsDlg.host; visible: jsDlg.host.length > 0
+                    color: "#9aa0a6"; font.pixelSize: 17*win.u; elide: Text.ElideRight }
+                Text { width: parent.width; text: jsDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
+                Rectangle {
+                    width: parent.width; height: 54*win.u; radius: 8*win.u
+                    visible: jsDlg.isPrompt
+                    color: "#1c1c22"; border.color: jsInput.activeFocus ? "#5a7fd0" : "#3a3a42"; border.width: 1
+                    TextInput { id: jsInput; anchors.fill: parent; anchors.leftMargin: 14*win.u; anchors.rightMargin: 14*win.u
+                        verticalAlignment: TextInput.AlignVCenter; color: "white"; font.pixelSize: 20*win.u; clip: true
+                        onAccepted: win.jsDialogDone(true) }
+                }
+                Row {
+                    anchors.right: parent.right; spacing: 10*win.u
+                    Rectangle {
+                        width: annullaTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
+                        visible: jsDlg.dtype !== JavaScriptDialogRequest.DialogTypeAlert
+                        color: jcma.pressed ? "#3a3a44" : "transparent"
+                        Text { id: annullaTxt; anchors.centerIn: parent; text: "Annulla"; color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        MouseArea { id: jcma; anchors.fill: parent; onClicked: win.jsDialogDone(false) }
+                    }
+                    Rectangle {
+                        width: okTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
+                        color: joma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        Text { id: okTxt; anchors.centerIn: parent; text: "OK"; color: "white"; font.pixelSize: 20*win.u }
+                        MouseArea { id: joma; anchors.fill: parent; onClicked: win.jsDialogDone(true) }
+                    }
+                }
             }
         }
     }
