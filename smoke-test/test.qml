@@ -19,7 +19,10 @@ Window {
     // rotation 90 = si gira il telefono in senso antiorario (tacca in alto a sinistra)
     property bool videoFS: false
     property bool manualLandscape: false
-    readonly property int orient: (videoFS || manualLandscape) ? 90 : 0
+    // diagnosi 11 lug: fullscreen+rotazione OK con <video> normali (probe);
+    // il nero era solo su YouTube → auto-rotate riabilitato
+    property bool autoRotateFS: true
+    readonly property int orient: ((videoFS && autoRotateFS) || manualLandscape) ? 90 : 0
 
     // --- schede ---
     property int currentTab: 0
@@ -52,6 +55,7 @@ Window {
     function go(t) {
         t = t.trim()
         if (t.length === 0 || !currentView) return
+        if (t === "probe") { currentView.loadHtml(probeHtml(), "https://probe.local/"); return }   // pagina diagnostica
         if (/^[a-z]+:\/\//i.test(t)) currentView.url = t
         else if (/^[^ ]+\.[^ ]+$/.test(t)) currentView.url = "https://" + t
         else currentView.url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(t)
@@ -288,6 +292,42 @@ h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:#9aa0a6;line-height:1
 </div></body></html>`
     }
 
+    // pagina DIAGNOSTICA (si apre digitando "probe" nella barra): mostra le media
+    // query pointer/hover viste dalla pagina, logga gli eventi input per ogni tap
+    // e ha un <video> H.264 con bottone fullscreen per isolare il nero da YouTube
+    function probeHtml() {
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{background:#111;color:#eee;font-family:monospace;margin:0;padding:12px;font-size:14px}
+#big{background:#274;padding:30px 0;text-align:center;font-size:20px;border-radius:10px;margin:10px 0;-webkit-user-select:none;user-select:none}
+pre{white-space:pre-wrap;font-size:13px;color:#8f8;min-height:180px}
+video{width:100%;background:#000}
+button{font-size:18px;padding:12px 18px;margin:8px 0}
+#mq{color:#ff8}
+</style></head><body>
+<div id="mq"></div>
+<div id="cp"></div>
+<div id="big">TAP QUI (test eventi)</div>
+<pre id="log"></pre>
+<p>H.264 (mp4):</p>
+<video id="v1" controls preload="metadata" src="https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4"></video>
+<button onclick="fs('v1')">FULLSCREEN H.264</button>
+<p>VP9 (webm):</p>
+<video id="v2" controls preload="metadata" src="https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/720/Big_Buck_Bunny_720_10s_1MB.webm"></video>
+<button onclick="fs('v2')">FULLSCREEN VP9</button>
+<script>
+var t0=0;
+function addl(s){var l=document.getElementById('log');l.textContent=(s+"\\n"+l.textContent).split("\\n").slice(0,22).join("\\n")}
+function fs(id){document.getElementById(id).requestFullscreen().catch(function(e){addl('FS ERR: '+e)})}
+function ev(e){var dt=(t0?Math.round(performance.now()-t0):0);if(e.type==='pointerdown'&&dt>500){t0=performance.now();dt=0;addl('---')}if(!t0){t0=performance.now()}addl('+'+dt+'ms '+e.type+(e.pointerType?' ('+e.pointerType+')':''))}
+['pointerdown','pointerup','touchstart','touchend','mousedown','mouseup','click','contextmenu'].forEach(function(t){document.getElementById('big').addEventListener(t,ev)});
+document.getElementById('mq').textContent='hover:none='+matchMedia('(hover: none)').matches+' pointer:coarse='+matchMedia('(pointer: coarse)').matches+' | ontouchstart='+('ontouchstart' in window)+' maxTouch='+navigator.maxTouchPoints;
+var vt=document.createElement('video');
+document.getElementById('cp').textContent='canPlay avc1='+vt.canPlayType('video/mp4; codecs="avc1.42E01E"')+' aac='+vt.canPlayType('audio/mp4; codecs="mp4a.40.2"')+' vp9='+vt.canPlayType('video/webm; codecs="vp9"')+' opus='+vt.canPlayType('audio/webm; codecs="opus"')+' av1='+vt.canPlayType('video/mp4; codecs="av01.0.05M.08"')+' | MSE='+(!!window.MediaSource);
+document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: '+(document.fullscreenElement?'ON':'OFF'))});
+['v1','v2'].forEach(function(id){var v=document.getElementById(id);v.addEventListener('error',function(){addl(id+' ERR code='+(v.error&&v.error.code)+' msg='+(v.error&&v.error.message))});v.addEventListener('playing',function(){addl(id+' PLAYING '+v.videoWidth+'x'+v.videoHeight)})});
+</script></body></html>`
+    }
+
     // pagina HOME / nuova scheda (Preferiti + Cronologia)
     function homeHtml() {
         var favs = [
@@ -347,6 +387,45 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
                 MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.currentView) win.currentView.url = "https://lite.duckduckgo.com/lite/" } }
             }
 
+            // back button; durante il caricamento diventa cerchio con ✕ (stop)
+            Item {
+                id: backBtn
+                anchors.left: homeBtn.right; anchors.verticalCenter: parent.verticalCenter
+                width: 48 * win.u; height: parent.height
+                readonly property bool loading: win.currentView ? win.currentView.loading === true : false
+                readonly property bool canBack: win.currentView ? win.currentView.canGoBack === true : false
+                opacity: (loading || canBack) ? 1.0 : 0.35
+                onLoadingChanged: backIcon.requestPaint()
+                Canvas {
+                    id: backIcon
+                    anchors.centerIn: parent
+                    width: 30 * win.u; height: 30 * win.u
+                    Component.onCompleted: requestPaint()
+                    onPaint: {
+                        var c = getContext("2d"); c.reset()
+                        var s = width
+                        c.strokeStyle = "#e6e6ea"; c.lineWidth = Math.max(1, s*0.09); c.lineCap = "round"; c.lineJoin = "round"
+                        if (backBtn.loading) {
+                            c.beginPath(); c.arc(s/2, s/2, s*0.44, 0, 2*Math.PI); c.stroke()
+                            c.beginPath(); c.moveTo(s*0.34,s*0.34); c.lineTo(s*0.66,s*0.66)
+                            c.moveTo(s*0.66,s*0.34); c.lineTo(s*0.34,s*0.66); c.stroke()
+                        } else {
+                            c.beginPath(); c.moveTo(s*0.80,s*0.5); c.lineTo(s*0.22,s*0.5)
+                            c.moveTo(s*0.44,s*0.26); c.lineTo(s*0.20,s*0.5); c.lineTo(s*0.44,s*0.74); c.stroke()
+                        }
+                    }
+                }
+                Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: bma.pressed ? 0.10 : 0 }
+                MouseArea {
+                    id: bma; anchors.fill: parent
+                    onClicked: {
+                        if (!win.currentView) return
+                        if (backBtn.loading) win.currentView.stop()
+                        else if (backBtn.canBack) win.currentView.goBack()
+                    }
+                }
+            }
+
             Item {
                 id: menuBtn
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 6 * win.u
@@ -374,7 +453,7 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
 
             Rectangle {
                 id: pill
-                anchors.left: homeBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
+                anchors.left: backBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 4 * win.u; anchors.rightMargin: 4 * win.u
                 height: 54 * win.u; radius: height / 2; clip: true
                 color: urlbar.activeFocus ? "#303039" : (win.currentPrivate ? "#352b44" : "#26262c")

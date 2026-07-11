@@ -32,10 +32,19 @@ export LANG="${LANG:-it_IT.UTF-8}"
 
 # --- Chromium: niente sandbox (bundle non installato, no helper setuid); usa EGL ---
 export QTWEBENGINE_DISABLE_SANDBOX=1
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0}"
+# --touch-events + --blink-settings: QtWebEngine (build non-embedded) forza
+# hover:hover e pointer:fine → i siti (es. player YouTube) ci trattano da
+# desktop col mouse e i controlli touch fanno toggle doppio (compaiono e
+# spariscono subito). Valori bitfield mojom: PointerType coarse=2, HoverType
+# none=1. ApplyCommandLineToSettings riapplica gli override DOPO ogni sync prefs.
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1}"
 
 # log utile per diagnosi
 export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"
+# DevTools remoti (Chromium DevTools Protocol): dal PC via tunnel ssh
+#   ssh -L 9222:localhost:9222 defaultuser@<phone> → http://localhost:9222
+# Solo device di sviluppo: NON lasciare attivo su build di rilascio.
+export QTWEBENGINE_REMOTE_DEBUGGING="${QTWEBENGINE_REMOTE_DEBUGGING:-9222}"
 
 echo "== env =="; echo "QT_QPA_PLATFORM=$QT_QPA_PLATFORM  WAYLAND_DISPLAY=$WAYLAND_DISPLAY  XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
 echo "== avvio webengine-smoke =="
@@ -45,4 +54,5 @@ echo "== avvio webengine-smoke =="
 # cmdline diventerebbe .../webengine-smoke, il match fallirebbe e la cover
 # segnaposto girerebbe a vuoto per ~30s ("cover fantasma").
 # main.cpp risolve test.qml dalla dir di argv[0]: stessa cartella, quindi ok.
-exec -a "$0" "$HERE/webengine-smoke" "$@"
+# log sempre su file: così anche i lanci dall'ICONA (lipstick) sono diagnosticabili
+exec -a "$0" "$HERE/webengine-smoke" "$@" >/tmp/rootitanium.log 2>&1
