@@ -513,6 +513,35 @@ ${histCss}
         };
     })();`
 
+    // --- fix tap YouTube mobile: il tap che RIVELA i controlli non deve cliccare ---
+    // QtWebEngine dopo il touchend sintetizza mousedown/mouseup/click (~20ms dopo);
+    // su m.youtube.com il tap-catcher invisibile (player-controls-background,
+    // opacity:0 + pointer-events:auto) mostra i controlli al touchstart e il click
+    // di coda atterra sul bottone play/pausa appena comparso → pausa spuria +
+    // controlli che appaiono/spariscono (verificato via CDP + tap kernel: ogni
+    // tap a controlli nascosti diventava un play/pausa). Su Android Chrome quel
+    // click viene assorbito da YT; qui lo inghiottiamo noi, SOLO quando il gesto
+    // è iniziato sul player mweb (#player-control-container) coi controlli
+    // nascosti (niente classe fadein sull'overlay) — i tap coi controlli visibili
+    // passano intatti (play/pausa/seek legittimi), gli embed ytp non sono toccati.
+    readonly property string ytTapFixJs: `(function(){
+        if (window.__rtYtTapFix) return; window.__rtYtTapFix = true;
+        var swallow = false, timer = 0;
+        function fadein(){ var o = document.getElementById('player-control-overlay');
+            return !!o && o.className.indexOf('fadein') >= 0; }
+        window.addEventListener('touchstart', function(e){
+            var p = e.target && e.target.closest && e.target.closest('#player-control-container');
+            swallow = !!p && !fadein();
+        }, {capture:true, passive:true});
+        window.addEventListener('touchend', function(){
+            if (!swallow) return;
+            clearTimeout(timer); timer = setTimeout(function(){ swallow = false; }, 400);
+        }, {capture:true, passive:true});
+        function kill(e){ if (swallow) { e.stopImmediatePropagation(); e.preventDefault(); } }
+        var evs = ['mousedown','mouseup','click'];
+        for (var i = 0; i < evs.length; i++) window.addEventListener(evs[i], kill, {capture:true});
+    })();`
+
     function pushOrientation() {
         var land = orient !== 0
         for (var i = 0; i < tabsRepeater.count; i++) {
@@ -717,6 +746,12 @@ ${histCss}
                         userScripts.collection = [{
                             name: "rtScreenSpoof",
                             sourceCode: win.screenSpoofJs,
+                            injectionPoint: WebEngineScript.DocumentCreation,
+                            worldId: WebEngineScript.MainWorld,
+                            runsOnSubFrames: true
+                        }, {
+                            name: "rtYtTapFix",
+                            sourceCode: win.ytTapFixJs,
                             injectionPoint: WebEngineScript.DocumentCreation,
                             worldId: WebEngineScript.MainWorld,
                             runsOnSubFrames: true
