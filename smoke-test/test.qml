@@ -83,7 +83,7 @@ Window {
         { t: "item", ic: "desktop",  l: "Versione desktop",      a: "desktop", toggle: true },
         { t: "item", ic: "rotate",   l: "Ruota in orizzontale",  a: "rotate",  toggle: true },
         { t: "sep" },
-        { t: "item", ic: "staradd",  l: "Aggiungi ai preferiti", a: "addbookmark" },
+        { t: "item", ic: "staradd",  l: "Aggiungi ai segnalibri", a: "addbookmark" },
         { t: "item", ic: "star",     l: "Segnalibri",            a: "bookmarks" },
         { t: "item", ic: "history",  l: "Cronologia",            a: "history" },
         { t: "item", ic: "download", l: "Download",              a: "downloads" },
@@ -376,10 +376,18 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} }
 
     // ===================== SEGNALIBRI (stessa SQLite della cronologia) =====================
-    // i 6 preferiti storici sono il SEED, inserito una volta sola (flag kv
-    // bmSeeded): se l'utente li rimuove non devono risorgere al riavvio
+    // DUE concetti separati (scelta utente 12 lug): la tabella bookmarks è la
+    // RACCOLTA (si cancella solo dalla pagina Segnalibri, ✕); la colonna home=1
+    // marca il sottoinsieme mostrato come Preferiti in HOME (toggle ⌂ nella
+    // pagina Segnalibri; il ✕ della HOME fa solo home=0, il segnalibro resta).
+    // I 6 preferiti storici sono il SEED, inserito una volta sola (flag kv
+    // bmSeeded): se l'utente li rimuove non devono risorgere al riavvio.
     function bmEnsure(tx) {
-        tx.executeSql("CREATE TABLE IF NOT EXISTS bookmarks(url TEXT PRIMARY KEY, title TEXT, color TEXT, letter TEXT, ts INTEGER)")
+        tx.executeSql("CREATE TABLE IF NOT EXISTS bookmarks(url TEXT PRIMARY KEY, title TEXT, color TEXT, letter TEXT, ts INTEGER, home INTEGER DEFAULT 0)")
+        // migrazione DB pre-esistenti (senza colonna home): il DEFAULT 1 mette
+        // in HOME le righe già presenti (erano i tile correnti), i nuovi
+        // inserimenti passano home esplicito
+        try { tx.executeSql("ALTER TABLE bookmarks ADD COLUMN home INTEGER DEFAULT 1") } catch(e) {}
         tx.executeSql("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)")
         if (tx.executeSql("SELECT v FROM kv WHERE k='bmSeeded'").rows.length === 0) {
             var seed = [
@@ -391,21 +399,24 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
                 ["OpenStreetMap","https://www.openstreetmap.org","#7ebc6f","M"]
             ]
             for (var i = 0; i < seed.length; i++)
-                tx.executeSql("INSERT OR IGNORE INTO bookmarks(url,title,color,letter,ts) VALUES(?,?,?,?,?)",
+                tx.executeSql("INSERT OR IGNORE INTO bookmarks(url,title,color,letter,ts,home) VALUES(?,?,?,?,?,1)",
                               [seed[i][1], seed[i][0], seed[i][2], seed[i][3], i])
             tx.executeSql("INSERT INTO kv(k,v) VALUES('bmSeeded','1')")
         }
     }
-    function bmAll() {
+    function bmAll(homeOnly) {
         var out = []
         try {
             histDb().transaction(function(tx) {
                 bmEnsure(tx)
-                var rs = tx.executeSql("SELECT url,title,color,letter FROM bookmarks ORDER BY ts ASC")
+                var rs = tx.executeSql("SELECT url,title,color,letter,home FROM bookmarks" + (homeOnly ? " WHERE home=1" : "") + " ORDER BY ts ASC")
                 for (var i = 0; i < rs.rows.length; i++) out.push(rs.rows.item(i))
             })
         } catch(e) { _histErr = "" + e; console.warn("segnalibri read: " + e) }
         return out
+    }
+    function bmSetHome(url, v) {
+        try { histDb().transaction(function(tx) { bmEnsure(tx); tx.executeSql("UPDATE bookmarks SET home=? WHERE url=?", [v ? 1 : 0, "" + url]) }) } catch(e) {}
     }
     function bmAdd(url, title) {
         url = "" + url
@@ -420,11 +431,12 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
             histDb().transaction(function(tx) {
                 bmEnsure(tx)
                 if (tx.executeSql("SELECT url FROM bookmarks WHERE url=?", [url]).rows.length) {
-                    toast.show("Già nei preferiti")
+                    toast.show("Già nei segnalibri")
                 } else {
-                    tx.executeSql("INSERT INTO bookmarks(url,title,color,letter,ts) VALUES(?,?,?,?,?)",
+                    // home=0: in HOME ci va solo per scelta esplicita (⌂ nella pagina Segnalibri)
+                    tx.executeSql("INSERT INTO bookmarks(url,title,color,letter,ts,home) VALUES(?,?,?,?,?,0)",
                                   [url, t, palette[hsum % palette.length], host.charAt(0).toUpperCase(), Date.now()])
-                    toast.show("Aggiunto ai preferiti")
+                    toast.show("Aggiunto ai segnalibri")
                 }
             })
         } catch(e) { _histErr = "" + e; console.warn("segnalibri add: " + e) }
@@ -433,27 +445,36 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
         try { histDb().transaction(function(tx) { bmEnsure(tx); tx.executeSql("DELETE FROM bookmarks WHERE url=?", ["" + url]) }) } catch(e) {}
     }
 
-    // vista completa segnalibri (menù ⋮ → Segnalibri); rimozione = link
-    // sentinella https://bookmarks.local/del?u=... intercettato in onNavigationRequested
+    // vista completa segnalibri (menù ⋮ → Segnalibri). Per riga: ⌂ = toggle
+    // presenza in HOME (unico posto dove si AGGIUNGE ai preferiti HOME),
+    // ✕ = cancella il segnalibro (unico posto dove si cancella davvero).
+    // Sentinelle https://bookmarks.local/{home,del}?... in onNavigationRequested
     function bookmarksHtml() {
-        var items = bmAll()
+        var items = bmAll(false)
         var body = items.length
             ? items.map(function(b) {
                 var host = win.histHost(b.url)
                 var t = win.htmlEsc(b.title && ("" + b.title).length ? b.title : host)
-                return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a><a class="bdel" href="https://bookmarks.local/del?u=' + encodeURIComponent(b.url) + '">✕</a></div>'
+                var inHome = b.home === 1 || b.home === "1"
+                return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a>'
+                     + '<a class="bhome' + (inHome ? ' on' : '') + '" title="Mostra in HOME" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + encodeURIComponent(b.url) + '">⌂</a>'
+                     + '<a class="bdel" href="https://bookmarks.local/del?u=' + encodeURIComponent(b.url) + '">✕</a></div>'
               }).join("")
-            : '<div class="empty">Nessun preferito. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai preferiti”.</div>'
+            : '<div class="empty">Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.</div>'
+        var hint = items.length ? '<div class="hint">⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro</div>' : ''
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Segnalibri</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .empty{color:#6a6a72;font-size:14px;padding:14px 2px}
+.hint{color:#6a6a72;font-size:12px;margin:2px 0 8px}
 .brow{display:flex;align-items:center;border-bottom:1px solid #24242c}
 .bmain{display:flex;align-items:center;gap:14px;flex:1;min-width:0;text-decoration:none;color:#c8c8d0;padding:10px 2px}
-.bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 16px}
+.bhome{flex:none;color:#4a4a54;font-size:21px;text-decoration:none;padding:10px 8px}
+.bhome.on{color:#4ea866}
+.bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
 ${histCss}
 </style></head><body>
-<h1>Segnalibri</h1>
+<h1>Segnalibri</h1>${hint}
 ${body}
 </body></html>`
     }
@@ -501,16 +522,17 @@ ${body}
 </body></html>`
     }
 
-    // pagina HOME / nuova scheda (Preferiti dal DB + Cronologia). Long-press su
-    // un tile = modalità modifica (badge ✕ per rimuovere): il contextmenu viene
-    // preventDefault-ato in pagina, così il nostro menù QML non si apre sopra
+    // pagina HOME / nuova scheda (Preferiti = segnalibri con home=1 + Cronologia).
+    // Long-press su un tile = modalità modifica (badge ✕ = togli dalla HOME, il
+    // segnalibro RESTA nella raccolta): il contextmenu viene preventDefault-ato
+    // in pagina, così il nostro menù QML non si apre sopra
     function homeHtml() {
-        var favs = bmAll()
+        var favs = bmAll(true)
         var tiles = favs.slice(0, 12).map(function(f) {
             var t = htmlEsc(f.title && ("" + f.title).length ? f.title : histHost(f.url))
             return '<a class="tile" href="' + htmlEsc(f.url) + '"><span class="bx" data-del="https://bookmarks.local/delhome?u=' + encodeURIComponent(f.url) + '">✕</span><span class="fav" style="background:' + f.color + '">' + htmlEsc(f.letter) + '</span><span class="tl">' + t + '</span></a>'
         }).join("")
-        if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">Nessun preferito. Menù ⋮ → “Aggiungi ai preferiti”.</div>'
+        if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">Nessun preferito. Scegli cosa mostrare qui col ⌂ nella pagina Segnalibri (menù ⋮).</div>'
         var favsMore = favs.length > 12 ? '<a class="hmore" href="https://bookmarks.local/">Tutti i segnalibri →</a>' : ''
         var hist = histRecent(8)
         var histSection = hist.length
@@ -887,10 +909,19 @@ ${histCss}
                             loadHtml(win.historyHtml(), "https://history.local/")
                         } else if (u.indexOf("https://bookmarks.local/") === 0) {
                             request.action = WebEngineNavigationRequest.IgnoreRequest
+                            // delhome = togli dalla HOME (il segnalibro resta);
+                            // del = cancella dalla raccolta (solo pagina Segnalibri);
+                            // home?v= = toggle presenza in HOME dalla pagina Segnalibri
                             var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
-                            if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
-                            if (mDel && mDel[1] === "delhome") loadHtml(win.homeHtml(), "about:blank")
-                            else loadHtml(win.bookmarksHtml(), "https://bookmarks.local/")
+                            var mHome = u.match(/^https:\/\/bookmarks\.local\/home\?v=([01])&u=(.*)$/)
+                            if (mDel && mDel[1] === "delhome") {
+                                win.bmSetHome(decodeURIComponent(mDel[2]), 0)
+                                loadHtml(win.homeHtml(), "about:blank")
+                            } else {
+                                if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
+                                else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
+                                loadHtml(win.bookmarksHtml(), "https://bookmarks.local/")
+                            }
                         }
                     }
                     onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
