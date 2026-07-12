@@ -545,6 +545,21 @@ ${body}
     // Long-press su un tile = modalità modifica (badge ✕ = togli dalla HOME, il
     // segnalibro RESTA nella raccolta): il contextmenu viene preventDefault-ato
     // in pagina, così il nostro menù QML non si apre sopra
+    // quante voci di cronologia entrano nella HOME SENZA scrollbar verticale:
+    // altezza viewport CSS (fisica/zoom, meno toolbar) meno le parti fisse
+    // (logo, titoli, link, margini) e le righe della griglia preferiti;
+    // stime in px CSS: riga cronologia ~60, riga griglia 82 + gap 18
+    function homeHistCount(gridRows) {
+        var zoom = desktopMode ? 1.0 : Math.max(1.0, Math.min(width, height) / 412)
+        var viewH = (orient !== 0 ? Math.min(width, height) : Math.max(width, height)) - toolbar.height
+        var vh = viewH / zoom
+        var fixed = 26 + 60 + 58 + 58 + 40 + 50   // padding, logo, 2×h2, hmore, fondo+margine
+        var grid = gridRows > 0 ? gridRows * 82 + (gridRows - 1) * 18 : 20
+        // minimo 6 (scelta utente): con molti preferiti (3-4 righe di griglia)
+        // può tornare la scrollbar, accettato — meglio della cronologia monca
+        return Math.max(6, Math.min(8, Math.floor((vh - fixed - grid) / 60)))
+    }
+
     function homeHtml() {
         var favs = bmAll(true)
         var tiles = favs.slice(0, 12).map(function(f) {
@@ -553,7 +568,8 @@ ${body}
         }).join("")
         if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">Nessun preferito. Scegli cosa mostrare qui col ⌂ nella pagina Segnalibri (menù ⋮).</div>'
         var favsMore = favs.length > 12 ? '<a class="hmore" href="https://bookmarks.local/">Tutti i segnalibri →</a>' : ''
-        var hist = histRecent(8)
+        var gridRows = Math.ceil(Math.min(favs.length, 12) / 3)
+        var hist = histRecent(homeHistCount(gridRows))
         var histSection = hist.length
             ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">Tutta la cronologia →</a>'
             : '<div class="empty">La cronologia apparirà qui.</div>'
