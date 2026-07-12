@@ -56,6 +56,9 @@ export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --
 
 # log utile per diagnosi
 export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"
+# senza questo i console.log/warning QML NON arrivano a stderr (journald/nulla)
+# quando stderr non è una tty (log su file, lanci da icona): visto col probe DBus
+export QT_FORCE_STDERR_LOGGING=1
 # DevTools remoti (Chromium DevTools Protocol): dal PC via tunnel ssh
 #   ssh -L 9222:localhost:9222 defaultuser@<phone> → http://localhost:9222
 # Solo device di sviluppo: NON lasciare attivo su build di rilascio.

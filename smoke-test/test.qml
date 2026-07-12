@@ -69,10 +69,19 @@ Window {
     readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     function setDesktop(on) { desktopMode = on; if (currentView) currentView.reload() }
 
+    // carica una pagina interna su una view marcandola (localPage): loadHtml
+    // non tocca la proprietà url, quindi timer/refresh Download e guardia
+    // Condividi devono basarsi su questo, non su view.url
+    function loadInternal(view, kind, html, base) {
+        if (!view) return
+        view.localPage = kind
+        view.loadHtml(html, base)
+    }
+
     function go(t) {
         t = t.trim()
         if (t.length === 0 || !currentView) return
-        if (t === "probe") { currentView.loadHtml(probeHtml(), "https://probe.local/"); return }   // pagina diagnostica
+        if (t === "probe") { loadInternal(currentView, "probe", probeHtml(), "https://probe.local/"); return }   // pagina diagnostica
         if (/^[a-z]+:\/\//i.test(t)) currentView.url = t
         else if (/^[^ ]+\.[^ ]+$/.test(t)) currentView.url = "https://" + t
         else currentView.url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(t)
@@ -114,9 +123,10 @@ Window {
         else if (a === "rotate") manualLandscape = !manualLandscape
         else if (a === "pdf") savePdf()
         else if (a === "share") shareUrl()
-        else if (a === "history") { if (currentView) currentView.loadHtml(historyHtml(), "https://history.local/") }
+        else if (a === "history") loadInternal(currentView, "history", historyHtml(), "https://history.local/")
         else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
-        else if (a === "bookmarks") { if (currentView) currentView.loadHtml(bookmarksHtml(), "https://bookmarks.local/") }
+        else if (a === "bookmarks") loadInternal(currentView, "bookmarks", bookmarksHtml(), "https://bookmarks.local/")
+        else if (a === "downloads") loadInternal(currentView, "downloads", downloadsHtml(), "https://downloads.local/")
         else if (a === "find") { if (currentView) { findBar.open = true; Qt.callLater(function(){ findInput.forceActiveFocus() }) } }
         else console.log("menu action (placeholder): " + a)
     }
@@ -129,7 +139,9 @@ Window {
     function shareUrl() {
         if (!currentView) return
         var u = "" + currentView.url
-        if (u === "" || u === "about:blank" || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(u)) {
+        // su pagina interna view.url resta quello della pagina PRECEDENTE
+        // (loadHtml non lo aggiorna): localPage decide, mai condividerlo
+        if (currentView.localPage !== "" || u === "" || u === "about:blank" || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(u)) {
             toast.show("Questa pagina non si può condividere"); return
         }
         if (typeof rtNative !== "undefined" && rtNative.shareUrl(u, "" + currentView.title)) return
@@ -291,27 +303,178 @@ Window {
         storageName: "rootitanium"
         persistentStoragePath: "/home/defaultuser/.rootitanium"
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
-        onDownloadRequested: function(download) { win.handleDownload(download) }
+        onDownloadRequested: function(download) { win.handleDownload(download, false) }
     }
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
         id: incognitoProfile
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
-        onDownloadRequested: function(download) { win.handleDownload(download) }
+        onDownloadRequested: function(download) { win.handleDownload(download, true) }
     }
 
-    // senza questo handler i download (Salva link/immagine) muoiono in silenzio:
-    // il profilo emette downloadRequested ma nessuno chiama accept()
-    function handleDownload(download) {
-        download.downloadDirectory = "/home/defaultuser/Downloads"
+    // ===================== DOWNLOAD =====================
+    // dlItems = download della SESSIONE (array JS, nessun binding: la pagina
+    // downloads.local si ri-renderizza a eventi + timer 1s per il progresso).
+    // I download finiti (solo profilo normale, mai incognito) vanno anche
+    // nella tabella downloads della SQLite → la pagina mostra pure lo storico.
+    property var dlItems: []
+    property int dlSeq: 0
+
+    // senza accept() i download (Salva link/immagine, Content-Disposition,
+    // blob/data) muoiono in silenzio: il profilo emette downloadRequested e
+    // nessuno risponde. Qui: destinazione FORZATA a ~/Downloads (creata se
+    // manca, via rtNative) per ogni tipo di download + tracking per la pagina.
+    function handleDownload(download, priv) {
+        download.downloadDirectory = (typeof rtNative !== "undefined")
+            ? rtNative.downloadsPath() : "/home/defaultuser/Downloads"
         download.accept()
-        toast.show("Download avviato: " + download.downloadFileName)
+        // nome definitivo DOPO accept (Chromium deduplica "file (1).ext")
+        var e = {
+            did: Date.now() + "-" + (++dlSeq),
+            item: download, priv: priv === true,
+            name: "" + download.downloadFileName,
+            path: download.downloadDirectory + "/" + download.downloadFileName,
+            url: "" + download.url,
+            state: "run", received: 0, total: download.totalBytes, ts: Date.now()
+        }
+        dlItems.unshift(e)
+        toast.show("Download avviato: " + e.name)
+        download.receivedBytesChanged.connect(function() { e.received = download.receivedBytes })
+        download.totalBytesChanged.connect(function() { e.total = download.totalBytes })
         download.stateChanged.connect(function() {
-            if (download.state === WebEngineDownloadRequest.DownloadCompleted)
-                toast.show("Scaricato in Downloads: " + download.downloadFileName)
-            else if (download.state === WebEngineDownloadRequest.DownloadInterrupted)
-                toast.show("Download fallito: " + download.downloadFileName)
+            if (download.state === WebEngineDownloadRequest.DownloadCompleted) {
+                e.state = "done"
+                if (e.total > 0) e.received = e.total
+                toast.show("Scaricato in Downloads: " + e.name)
+            } else if (download.state === WebEngineDownloadRequest.DownloadCancelled) {
+                e.state = "cancel"
+            } else if (download.state === WebEngineDownloadRequest.DownloadInterrupted) {
+                e.state = "fail"
+                toast.show("Download fallito: " + e.name)
+            } else return
+            if (e.state !== "done" && typeof rtNative !== "undefined") {
+                // Chromium lascia il parziale su disco (verificato): via anche il .download
+                rtNative.removeFile(e.path)
+                rtNative.removeFile(e.path + ".download")
+            }
+            e.item = null
+            win.dlPersist(e)
+            win.dlRefreshPage()
         })
+        dlRefreshPage()
+    }
+
+    function dlEnsure(tx) { tx.executeSql("CREATE TABLE IF NOT EXISTS downloads(did TEXT PRIMARY KEY, name TEXT, path TEXT, url TEXT, state TEXT, size INTEGER, ts INTEGER)") }
+    function dlPersist(e) {
+        if (e.priv) return   // incognito: mai tracce su disco
+        try { histDb().transaction(function(tx) { dlEnsure(tx)
+            tx.executeSql("INSERT OR REPLACE INTO downloads(did,name,path,url,state,size,ts) VALUES(?,?,?,?,?,?,?)",
+                          [e.did, e.name, e.path, e.url, e.state, e.received, e.ts]) }) } catch(err) {}
+    }
+    function dlHistory() {
+        var out = []
+        try { histDb().transaction(function(tx) { dlEnsure(tx)
+            var rs = tx.executeSql("SELECT did,name,path,url,state,size,ts FROM downloads ORDER BY ts DESC LIMIT 100")
+            for (var i = 0; i < rs.rows.length; i++) { var r = rs.rows.item(i)
+                out.push({ did: r.did, name: r.name, path: r.path, url: r.url, state: r.state,
+                           received: r.size, total: r.size, ts: r.ts, item: null, priv: false }) } }) } catch(err) {}
+        return out
+    }
+    function dlFind(did) {
+        for (var i = 0; i < dlItems.length; i++) if (dlItems[i].did === did) return dlItems[i]
+        var hist = dlHistory()
+        for (var j = 0; j < hist.length; j++) if (hist[j].did === did) return hist[j]
+        return null
+    }
+    function dlCancel(did) {
+        var e = dlFind(did)
+        if (e && e.item) e.item.cancel()   // stateChanged fa persist+refresh
+    }
+    function dlClear() {
+        try { histDb().transaction(function(tx) { dlEnsure(tx); tx.executeSql("DELETE FROM downloads") }) } catch(err) {}
+        dlItems = dlItems.filter(function(e) { return e.state === "run" })
+    }
+    function dlRefreshPage() {
+        if (currentView && currentView.localPage === "downloads")
+            loadInternal(currentView, "downloads", downloadsHtml(), "https://downloads.local/")
+    }
+
+    function fmtBytes(n) {
+        n = Number(n) || 0
+        if (n < 1024) return n + " B"
+        if (n < 1048576) return (n / 1024).toFixed(1) + " KB"
+        if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"
+        return (n / 1073741824).toFixed(2) + " GB"
+    }
+    function dlProgressText(e) {
+        return e.total > 0 ? fmtBytes(e.received) + " di " + fmtBytes(e.total)
+                           : fmtBytes(e.received)
+    }
+
+    // progresso live: aggiorna testo (#t<did>) e barra (#b<did>) via JS,
+    // SENZA ricaricare la pagina (niente flicker/perdita scroll)
+    function dlPushProgress() {
+        if (!currentView) return
+        var js = ""
+        for (var i = 0; i < dlItems.length; i++) {
+            var e = dlItems[i]
+            if (e.state !== "run") continue
+            var pct = e.total > 0 ? Math.round(e.received * 100 / e.total) : 0
+            js += "(function(){var t=document.getElementById('t" + e.did + "');if(t)t.textContent=" + JSON.stringify(dlProgressText(e))
+                + ";var b=document.getElementById('b" + e.did + "');if(b)b.style.width='" + pct + "%';})();"
+        }
+        if (js.length) currentView.runJavaScript(js)
+    }
+    Timer {
+        interval: 1000; repeat: true
+        running: (win.currentView ? win.currentView.localPage : "") === "downloads"
+        onTriggered: win.dlPushProgress()
+    }
+
+    // pagina di gestione (menù ⋮ → Download): sessione + storico dalla SQLite,
+    // dedupe per did. Azioni via link sentinella downloads.local/{open,cancel,clear}
+    function downloadsHtml() {
+        var rows = [], seen = {}
+        for (var i = 0; i < dlItems.length; i++) { rows.push(dlItems[i]); seen[dlItems[i].did] = true }
+        var hist = dlHistory()
+        for (var j = 0; j < hist.length; j++) if (!seen[hist[j].did]) rows.push(hist[j])
+        rows.sort(function(a, b) { return b.ts - a.ts })
+        var body = rows.length ? rows.map(function(e) {
+            var ico = e.state === "run" ? ["#3a5fc0", "↓"] : e.state === "done" ? ["#4ea866", "✓"] : ["#7a4a4a", "✕"]
+            var when = Qt.formatDateTime(new Date(e.ts), "dd/MM hh:mm")
+            var sub, act = ""
+            if (e.state === "run") {
+                sub = win.dlProgressText(e)
+                act = '<a class="dact stop" href="https://downloads.local/cancel?id=' + e.did + '">Annulla</a>'
+            } else if (e.state === "done") {
+                sub = win.fmtBytes(e.received) + " · " + when
+                act = '<a class="dact" href="https://downloads.local/open?id=' + e.did + '">Apri</a>'
+            } else {
+                sub = (e.state === "fail" ? "Non riuscito" : "Annullato") + " · " + when
+            }
+            var bar = (e.state === "run" && e.total > 0)
+                ? '<span class="bar"><span class="fill" id="b' + e.did + '" style="width:' + Math.round(e.received * 100 / Math.max(e.total, 1)) + '%"></span></span>' : ''
+            return '<div class="drow"><span class="hfav" style="background:' + ico[0] + '">' + ico[1] + '</span>'
+                 + '<span class="hbody"><span class="ht">' + win.htmlEsc(e.name) + '</span>'
+                 + '<span class="hu" id="t' + e.did + '">' + win.htmlEsc(sub) + '</span>' + bar + '</span>' + act + '</div>'
+        }).join("") : '<div class="empty">Nessun download. I file scaricati finiscono in Downloads.</div>'
+        var clear = rows.some(function(e) { return e.state !== "run" })
+            ? '<a class="clear" href="https://downloads.local/clear">Svuota elenco</a>' : ''
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px}
+.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
+.clear{display:inline-block;color:#f28b82;font-size:14px;text-decoration:none;margin:6px 0 10px}
+.drow{display:flex;align-items:center;gap:14px;padding:10px 2px;border-bottom:1px solid #24242c}
+.dact{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
+.dact.stop{color:#f28b82}
+.bar{display:block;height:4px;background:#2e2e38;border-radius:2px;margin-top:6px;overflow:hidden}
+.fill{display:block;height:100%;background:#5a7fd0;border-radius:2px}
+${histCss}
+</style></head><body>
+<h1>Download</h1>${clear}
+${body}
+</body></html>`
     }
 
     // landing incognito (stile Chrome/Cromite)
@@ -782,7 +945,7 @@ ${histCss}
                 width: 48 * win.u; height: parent.height
                 Text { anchors.centerIn: parent; text: "⌂"; color: "#e6e6ea"; font.pixelSize: 30 * win.u }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: hma.pressed ? 0.10 : 0 }
-                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.currentView) win.currentView.loadHtml(win.homeHtml(), "about:blank") } }
+                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; win.loadInternal(win.currentView, "home", win.homeHtml(), "about:blank") } }
             }
 
             // back button; durante il caricamento diventa cerchio con ✕ (stop)
@@ -936,6 +1099,11 @@ ${histCss}
                     anchors.fill: parent
                     visible: index === win.currentTab
                     property bool priv: model.priv
+                    // pagina interna correntemente mostrata via loadHtml ("home",
+                    // "downloads", "history", ...): loadHtml NON aggiorna la
+                    // proprietà url (niente urlChanged, verificato su 6.8.3),
+                    // quindi lo stato va tracciato a parte. "" = pagina web vera.
+                    property string localPage: ""
                     profile: priv ? incognitoProfile : normalProfile
                     // zoom sul lato corto della FINESTRA (costante in landscape):
                     // viewport CSS ~412px in portrait, ~960px in landscape.
@@ -958,8 +1126,8 @@ ${histCss}
                             worldId: WebEngineScript.MainWorld,
                             runsOnSubFrames: true
                         }]
-                        if (model.start === "incognito") loadHtml(win.incognitoHtml(), "about:blank")
-                        else if (model.start === "home") loadHtml(win.homeHtml(), "about:blank")
+                        if (model.start === "incognito") win.loadInternal(this, "incognito", win.incognitoHtml(), "about:blank")
+                        else if (model.start === "home") win.loadInternal(this, "home", win.homeHtml(), "about:blank")
                         else url = model.start
                         win.refreshCurrent()
                     }
@@ -977,7 +1145,7 @@ ${histCss}
                         if (u.indexOf("https://history.local/") === 0) {
                             request.action = WebEngineNavigationRequest.IgnoreRequest
                             if (u === "https://history.local/clear") win.histClear()
-                            loadHtml(win.historyHtml(), "https://history.local/")
+                            win.loadInternal(this, "history", win.historyHtml(), "https://history.local/")
                         } else if (u.indexOf("https://bookmarks.local/") === 0) {
                             request.action = WebEngineNavigationRequest.IgnoreRequest
                             // delhome = togli dalla HOME (il segnalibro resta);
@@ -988,16 +1156,30 @@ ${histCss}
                             var mMove = u.match(/^https:\/\/bookmarks\.local\/move\?d=(up|dn)&u=(.*)$/)
                             if (mDel && mDel[1] === "delhome") {
                                 win.bmSetHome(decodeURIComponent(mDel[2]), 0)
-                                loadHtml(win.homeHtml(), "about:blank")
+                                win.loadInternal(this, "home", win.homeHtml(), "about:blank")
                             } else {
                                 if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
                                 else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
                                 else if (mMove) win.bmMove(decodeURIComponent(mMove[2]), mMove[1] === "up")
-                                loadHtml(win.bookmarksHtml(), "https://bookmarks.local/")
+                                win.loadInternal(this, "bookmarks", win.bookmarksHtml(), "https://bookmarks.local/")
+                            }
+                        } else if (u.indexOf("https://downloads.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
+                            var mCanc = u.match(/^https:\/\/downloads\.local\/cancel\?id=(.*)$/)
+                            if (mOpen) {
+                                // niente reload: l'app handler si apre sopra la pagina
+                                var de = win.dlFind(mOpen[1])
+                                if (!(de && typeof rtNative !== "undefined" && rtNative.openFile(de.path)))
+                                    toast.show("File non trovato (spostato o cancellato?)")
+                            } else {
+                                if (mCanc) win.dlCancel(mCanc[1])
+                                else if (u === "https://downloads.local/clear") win.dlClear()
+                                win.loadInternal(this, "downloads", win.downloadsHtml(), "https://downloads.local/")
                             }
                         }
                     }
-                    onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
+                    onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url) }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load

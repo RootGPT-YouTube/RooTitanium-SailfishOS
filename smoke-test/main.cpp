@@ -6,6 +6,7 @@
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #include <QUrl>
 #include <QFileInfo>
+#include <QFile>
 #include <QString>
 #include <QStandardPaths>
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QDBusMessage>
 #include <QVariantMap>
 #include <QVariantList>
+#include <QProcess>
 
 // Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
 // sa fare (DBus, filesystem). Niente dipendenze Silica: solo Qt6DBus/Core.
@@ -66,6 +68,31 @@ public:
         for (int i = 2; QFileInfo::exists(path); ++i)
             path = dir + QStringLiteral("/") + base + QStringLiteral(" (%1).pdf").arg(i);
         return path;
+    }
+
+    // Cartella download: ~/Downloads (o localizzata, xdg-user-dirs), creata
+    // se manca — così ogni download PARTE già con destinazione valida
+    Q_INVOKABLE QString downloadsPath()
+    {
+        QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        if (dir.isEmpty())
+            dir = QDir::homePath() + QStringLiteral("/Downloads");
+        QDir().mkpath(dir);
+        return dir;
+    }
+
+    // rimuovi un file parziale di un download annullato/fallito (il .download
+    // di Chromium resta su disco: verificato, cancel() non lo pulisce qui)
+    Q_INVOKABLE void removeFile(const QString &path) { QFile::remove(path); }
+
+    // Apri file scaricato con l'app di sistema (libcontentaction: lca-tool
+    // sceglie l'handler dal mime type, come il tap in Transfer/Impostazioni)
+    Q_INVOKABLE bool openFile(const QString &path)
+    {
+        if (!QFileInfo::exists(path))
+            return false;
+        return QProcess::startDetached(QStringLiteral("/usr/bin/lca-tool"),
+            { QStringLiteral("--triggerfile"), QUrl::fromLocalFile(path).toString() });
     }
 };
 
