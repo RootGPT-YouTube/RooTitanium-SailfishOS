@@ -1,0 +1,35 @@
+RooTitanium — studio di fattibilità / mini-browser QtWebEngine per SailfishOS
+Copyright (c) 2026 RootGPT
+
+== Codice del progetto ==
+
+Il codice originale di questo repository (smoke-test/, packaging/ — spec,
+script e patch proprie, icons/) è al momento "tutti i diritti riservati":
+repository privato di studio, licenza definitiva da decidere in caso di
+pubblicazione.
+
+== Componenti di terze parti (NON tracciati qui, ma impacchettati/derivati) ==
+
+Il progetto compila e impacchetta software upstream soggetto alle rispettive
+licenze, che restano pienamente valide sui prodotti derivati:
+
+- Qt 6 / Qt WebEngine (qt6-qtwebengine 6.8.3)
+  © The Qt Company Ltd. e contributori
+  Licenza: LGPL-3.0-only oppure GPL-2.0-or-later / GPL-3.0-only
+  https://www.qt.io/licensing/
+
+- Chromium (incluso in Qt WebEngine come src/3rdparty)
+  © The Chromium Authors
+  Licenza: BSD-3-Clause, più licenze delle sue third_party
+  https://chromium.googlesource.com/chromium/src/+/refs/heads/main/LICENSE
+
+- Packaging/patch di partenza dal progetto sailfishos-chum/qt6-qtwebengine
+  (le patch mantengono le licenze dei rispettivi upstream)
+  https://github.com/sailfishos-chum/qt6-qtwebengine
+
+- Pacchetti ausiliari in packaging/ (nodejs-bin, python3-html5lib,
+  python3-webencodings): licenze dei rispettivi upstream (MIT/BSD).
+
+L'albero sorgente upstream (qt6-qtwebengine/) e gli alberi di build NON sono
+tracciati in questo repository (vedi .gitignore); i binari eventualmente
+distribuiti (RPM) devono accompagnarsi alle notice LGPL/BSD di cui sopra.
