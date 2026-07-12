@@ -83,6 +83,7 @@ Window {
         { t: "item", ic: "desktop",  l: "Versione desktop",      a: "desktop", toggle: true },
         { t: "item", ic: "rotate",   l: "Ruota in orizzontale",  a: "rotate",  toggle: true },
         { t: "sep" },
+        { t: "item", ic: "staradd",  l: "Aggiungi ai preferiti", a: "addbookmark" },
         { t: "item", ic: "star",     l: "Segnalibri",            a: "bookmarks" },
         { t: "item", ic: "history",  l: "Cronologia",            a: "history" },
         { t: "item", ic: "download", l: "Download",              a: "downloads" },
@@ -98,6 +99,8 @@ Window {
         else if (a === "pdf") { if (currentView) currentView.printToPdf("/home/defaultuser/pagina.pdf") }
         else if (a === "share") shareUrl()
         else if (a === "history") { if (currentView) currentView.loadHtml(historyHtml(), "https://history.local/") }
+        else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
+        else if (a === "bookmarks") { if (currentView) currentView.loadHtml(bookmarksHtml(), "https://bookmarks.local/") }
         else console.log("menu action (placeholder): " + a)
     }
 
@@ -372,6 +375,89 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     }
     function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} }
 
+    // ===================== SEGNALIBRI (stessa SQLite della cronologia) =====================
+    // i 6 preferiti storici sono il SEED, inserito una volta sola (flag kv
+    // bmSeeded): se l'utente li rimuove non devono risorgere al riavvio
+    function bmEnsure(tx) {
+        tx.executeSql("CREATE TABLE IF NOT EXISTS bookmarks(url TEXT PRIMARY KEY, title TEXT, color TEXT, letter TEXT, ts INTEGER)")
+        tx.executeSql("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)")
+        if (tx.executeSql("SELECT v FROM kv WHERE k='bmSeeded'").rows.length === 0) {
+            var seed = [
+                ["DuckDuckGo","https://lite.duckduckgo.com/lite/","#de5833","D"],
+                ["Wikipedia","https://it.m.wikipedia.org","#636466","W"],
+                ["YouTube","https://m.youtube.com","#ff0000","Y"],
+                ["GitHub","https://github.com","#6e5494","G"],
+                ["Reddit","https://www.reddit.com","#ff4500","R"],
+                ["OpenStreetMap","https://www.openstreetmap.org","#7ebc6f","M"]
+            ]
+            for (var i = 0; i < seed.length; i++)
+                tx.executeSql("INSERT OR IGNORE INTO bookmarks(url,title,color,letter,ts) VALUES(?,?,?,?,?)",
+                              [seed[i][1], seed[i][0], seed[i][2], seed[i][3], i])
+            tx.executeSql("INSERT INTO kv(k,v) VALUES('bmSeeded','1')")
+        }
+    }
+    function bmAll() {
+        var out = []
+        try {
+            histDb().transaction(function(tx) {
+                bmEnsure(tx)
+                var rs = tx.executeSql("SELECT url,title,color,letter FROM bookmarks ORDER BY ts ASC")
+                for (var i = 0; i < rs.rows.length; i++) out.push(rs.rows.item(i))
+            })
+        } catch(e) { _histErr = "" + e; console.warn("segnalibri read: " + e) }
+        return out
+    }
+    function bmAdd(url, title) {
+        url = "" + url
+        if (!/^https?:\/\//i.test(url) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(url)) {
+            toast.show("Questa pagina non si può aggiungere"); return
+        }
+        var host = histHost(url)
+        var palette = ["#de5833","#4285f4","#0f9d58","#6e5494","#ff4500","#7ebc6f","#f4b400","#ab47bc","#00acc1","#ff7043"]
+        var hsum = 0; for (var i = 0; i < host.length; i++) hsum = (hsum * 31 + host.charCodeAt(i)) % 9973
+        var t = ("" + title).length ? "" + title : host
+        try {
+            histDb().transaction(function(tx) {
+                bmEnsure(tx)
+                if (tx.executeSql("SELECT url FROM bookmarks WHERE url=?", [url]).rows.length) {
+                    toast.show("Già nei preferiti")
+                } else {
+                    tx.executeSql("INSERT INTO bookmarks(url,title,color,letter,ts) VALUES(?,?,?,?,?)",
+                                  [url, t, palette[hsum % palette.length], host.charAt(0).toUpperCase(), Date.now()])
+                    toast.show("Aggiunto ai preferiti")
+                }
+            })
+        } catch(e) { _histErr = "" + e; console.warn("segnalibri add: " + e) }
+    }
+    function bmRemove(url) {
+        try { histDb().transaction(function(tx) { bmEnsure(tx); tx.executeSql("DELETE FROM bookmarks WHERE url=?", ["" + url]) }) } catch(e) {}
+    }
+
+    // vista completa segnalibri (menù ⋮ → Segnalibri); rimozione = link
+    // sentinella https://bookmarks.local/del?u=... intercettato in onNavigationRequested
+    function bookmarksHtml() {
+        var items = bmAll()
+        var body = items.length
+            ? items.map(function(b) {
+                var host = win.histHost(b.url)
+                var t = win.htmlEsc(b.title && ("" + b.title).length ? b.title : host)
+                return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a><a class="bdel" href="https://bookmarks.local/del?u=' + encodeURIComponent(b.url) + '">✕</a></div>'
+              }).join("")
+            : '<div class="empty">Nessun preferito. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai preferiti”.</div>'
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Segnalibri</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 10px}
+.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
+.brow{display:flex;align-items:center;border-bottom:1px solid #24242c}
+.bmain{display:flex;align-items:center;gap:14px;flex:1;min-width:0;text-decoration:none;color:#c8c8d0;padding:10px 2px}
+.bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 16px}
+${histCss}
+</style></head><body>
+<h1>Segnalibri</h1>
+${body}
+</body></html>`
+    }
+
     function htmlEsc(s) { return ("" + s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;") }
     function histHost(u) { var m = ("" + u).match(/^[a-z]+:\/\/([^\/]+)/i); return m ? m[1].replace(/^www\./, "") : u }
 
@@ -415,17 +501,17 @@ ${body}
 </body></html>`
     }
 
-    // pagina HOME / nuova scheda (Preferiti + Cronologia)
+    // pagina HOME / nuova scheda (Preferiti dal DB + Cronologia). Long-press su
+    // un tile = modalità modifica (badge ✕ per rimuovere): il contextmenu viene
+    // preventDefault-ato in pagina, così il nostro menù QML non si apre sopra
     function homeHtml() {
-        var favs = [
-            ["DuckDuckGo","https://lite.duckduckgo.com/lite/","#de5833","D"],
-            ["Wikipedia","https://it.m.wikipedia.org","#636466","W"],
-            ["YouTube","https://m.youtube.com","#ff0000","Y"],
-            ["GitHub","https://github.com","#6e5494","G"],
-            ["Reddit","https://www.reddit.com","#ff4500","R"],
-            ["OpenStreetMap","https://www.openstreetmap.org","#7ebc6f","M"]
-        ]
-        var tiles = favs.map(function(f){ return `<a class="tile" href="${f[1]}"><span class="fav" style="background:${f[2]}">${f[3]}</span><span class="tl">${f[0]}</span></a>` }).join("")
+        var favs = bmAll()
+        var tiles = favs.slice(0, 12).map(function(f) {
+            var t = htmlEsc(f.title && ("" + f.title).length ? f.title : histHost(f.url))
+            return '<a class="tile" href="' + htmlEsc(f.url) + '"><span class="bx" data-del="https://bookmarks.local/delhome?u=' + encodeURIComponent(f.url) + '">✕</span><span class="fav" style="background:' + f.color + '">' + htmlEsc(f.letter) + '</span><span class="tl">' + t + '</span></a>'
+        }).join("")
+        if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">Nessun preferito. Menù ⋮ → “Aggiungi ai preferiti”.</div>'
+        var favsMore = favs.length > 12 ? '<a class="hmore" href="https://bookmarks.local/">Tutti i segnalibri →</a>' : ''
         var hist = histRecent(8)
         var histSection = hist.length
             ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">Tutta la cronologia →</a>'
@@ -437,14 +523,37 @@ h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transfor
 .logo{text-align:center;font-size:30px;font-weight:700;margin:18px 0 6px;color:#f0f0f0}
 .logo span{background:linear-gradient(180deg,#d3dbe3 0%,#9aa8b6 45%,#71808f 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
-.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#c8c8d0;gap:9px}
+.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#c8c8d0;gap:9px;position:relative}
 .fav{width:58px;height:58px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:25px;font-weight:700}
-.tl{font-size:13px} .empty{color:#6a6a72;font-size:14px;padding:6px 2px}
+.tl{font-size:13px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.empty{color:#6a6a72;font-size:14px;padding:6px 2px}
+.bx{display:none;position:absolute;top:-8px;left:calc(50% + 16px);width:26px;height:26px;border-radius:50%;background:#e35b5b;color:#fff;font-size:15px;line-height:26px;text-align:center;font-weight:700;z-index:2}
+body.edit .bx{display:block}
+body.edit .fav{opacity:.7}
 ${histCss}
 </style></head><body>
 <div class="logo">Roo<span>Titanium</span></div>
-<h2>Preferiti</h2><div class="grid">${tiles}</div>
+<h2>Preferiti</h2><div class="grid">${tiles}</div>${favsMore}
 <h2>Cronologia</h2>${histSection}
+<script>
+(function(){
+  var eb = document.body, armTs = 0;
+  document.addEventListener('contextmenu', function(e){
+    var t = e.target.closest ? e.target.closest('.tile') : null;
+    if (t) { e.preventDefault(); eb.classList.add('edit'); armTs = Date.now(); }
+    else if (eb.classList.contains('edit')) { e.preventDefault(); eb.classList.remove('edit'); }
+  });
+  // in modalità modifica i click non navigano: ✕ rimuove, altrove si esce.
+  // il click sintetico che segue il long-press di ingresso va ignorato (armTs)
+  document.addEventListener('click', function(e){
+    if (!eb.classList.contains('edit')) return;
+    e.preventDefault(); e.stopPropagation();
+    var x = e.target.closest ? e.target.closest('.bx') : null;
+    if (x) location.href = x.getAttribute('data-del');
+    else if (Date.now() - armTs > 700) eb.classList.remove('edit');
+  }, true);
+})();
+</script>
 </body></html>`
     }
 
@@ -580,7 +689,7 @@ ${histCss}
                 width: 48 * win.u; height: parent.height
                 Text { anchors.centerIn: parent; text: "⌂"; color: "#e6e6ea"; font.pixelSize: 30 * win.u }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: hma.pressed ? 0.10 : 0 }
-                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.currentView) win.currentView.url = "https://lite.duckduckgo.com/lite/" } }
+                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.currentView) win.currentView.loadHtml(win.homeHtml(), "about:blank") } }
             }
 
             // back button; durante il caricamento diventa cerchio con ✕ (stop)
@@ -776,6 +885,12 @@ ${histCss}
                             request.action = WebEngineNavigationRequest.IgnoreRequest
                             if (u === "https://history.local/clear") win.histClear()
                             loadHtml(win.historyHtml(), "https://history.local/")
+                        } else if (u.indexOf("https://bookmarks.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
+                            if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
+                            if (mDel && mDel[1] === "delhome") loadHtml(win.homeHtml(), "about:blank")
+                            else loadHtml(win.bookmarksHtml(), "https://bookmarks.local/")
                         }
                     }
                     onUrlChanged: tabsModel.setProperty(index, "murl", "" + url)
@@ -1038,6 +1153,11 @@ ${histCss}
                 ctx.beginPath()
                 for (var t=0;t<10;t++){ var rad = (t%2===0)? s*0.34 : s*0.15; var an = -Math.PI/2 + t*Math.PI/5; var px=cx+rad*Math.cos(an), py=cy+rad*Math.sin(an); if(t===0) ctx.moveTo(px,py); else ctx.lineTo(px,py) }
                 ctx.closePath(); ctx.fill()
+            } else if (k === "staradd") {
+                ctx.beginPath()
+                for (var t2=0;t2<10;t2++){ var rad2=(t2%2===0)?s*0.30:s*0.13; var an2=-Math.PI/2+t2*Math.PI/5; var px2=cx-s*0.06+rad2*Math.cos(an2), py2=cy+s*0.04+rad2*Math.sin(an2); if(t2===0) ctx.moveTo(px2,py2); else ctx.lineTo(px2,py2) }
+                ctx.closePath(); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(s*0.78,s*0.14); ctx.lineTo(s*0.78,s*0.38); ctx.moveTo(s*0.66,s*0.26); ctx.lineTo(s*0.90,s*0.26); ctx.stroke()
             } else if (k === "history") {
                 ctx.beginPath(); ctx.arc(cx,cy,s*0.30,0,2*Math.PI); ctx.stroke()
                 ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx,cy-s*0.18); ctx.moveTo(cx,cy); ctx.lineTo(cx+s*0.15,cy+s*0.05); ctx.stroke()
