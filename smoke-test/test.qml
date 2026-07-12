@@ -27,6 +27,22 @@ Window {
 
     // --- schede ---
     property int currentTab: 0
+    // stato "Cerca nella pagina" (la barra findBar vive dentro appRoot)
+    property int findCur: 0
+    property int findTot: 0
+    onCurrentTabChanged: closeFind()
+    function closeFind() {
+        if (!findBar.open) return
+        findBar.open = false
+        findInput.focus = false
+        findInput.text = ""
+        findCur = 0; findTot = 0
+        if (currentView) currentView.findText("")
+    }
+    function findNextMatch(back) {
+        if (!currentView || !findInput.text.length) return
+        currentView.findText(findInput.text, back ? WebEngineView.FindBackward : 0)
+    }
     property var currentView: null
     property bool currentPrivate: currentView ? currentView.priv : false
 
@@ -101,6 +117,7 @@ Window {
         else if (a === "history") { if (currentView) currentView.loadHtml(historyHtml(), "https://history.local/") }
         else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
         else if (a === "bookmarks") { if (currentView) currentView.loadHtml(bookmarksHtml(), "https://bookmarks.local/") }
+        else if (a === "find") { if (currentView) { findBar.open = true; Qt.callLater(function(){ findInput.forceActiveFocus() }) } }
         else console.log("menu action (placeholder): " + a)
     }
 
@@ -982,6 +999,10 @@ ${histCss}
                         win.showJsDialog(request)
                     }
                     onTooltipRequested: function(request) { request.accepted = true }  // niente tooltip nativi minuscoli
+                    onFindTextFinished: function(result) {
+                        win.findCur = result.activeMatch
+                        win.findTot = result.numberOfMatches
+                    }
                     // video a tutto schermo: senza accept() la richiesta JS viene
                     // rifiutata e il player resta inline. Accettata → landscape auto
                     onFullScreenRequested: function(request) {
@@ -991,6 +1012,61 @@ ${histCss}
                 }
             }
         }
+    }
+
+    // ===================== CERCA NELLA PAGINA (UI) =====================
+    // barra sotto la toolbar (overlay, non sposta la pagina); find-as-you-type
+    // con findText(), contatore n/m da onFindTextFinished, ▲▼ prev/next.
+    // findText("") a chiusura pulisce le evidenziazioni. NB: qui siamo dentro
+    // appRoot (Item ruotabile): proprietà e funzioni stanno su win.
+    Rectangle {
+        id: findBar
+        property bool open: false
+        // stile Chrome mobile: la barra di ricerca SOSTITUISCE la toolbar
+        // (overlay a tutta altezza sopra di essa, z sopra pagina e toolbar)
+        anchors.top: parent.top
+        width: parent.width; height: toolbar.height
+        visible: open && !win.videoFS; z: 40
+        color: "#1e1e26"
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#33333c" }
+
+        MenuIcon { id: findIco; kind: "search"; anchors.left: parent.left; anchors.leftMargin: 18*win.u; anchors.verticalCenter: parent.verticalCenter; width: 26*win.u; height: 26*win.u }
+
+        TextInput {
+            id: findInput
+            anchors.left: findIco.right; anchors.leftMargin: 14 * win.u
+            anchors.right: findCount.left; anchors.rightMargin: 8 * win.u
+            anchors.verticalCenter: parent.verticalCenter
+            color: "white"; font.pixelSize: 22 * win.u; clip: true
+            inputMethodHints: Qt.ImhNoAutoUppercase
+            selectByMouse: true
+            onTextChanged: {
+                win.findCur = 0; win.findTot = 0
+                if (win.currentView && findBar.open) win.currentView.findText(text)
+            }
+            onAccepted: win.findNextMatch(false)
+            Text { anchors.verticalCenter: parent.verticalCenter; visible: findInput.text.length === 0
+                   text: "Cerca nella pagina"; color: "#6a6a72"; font.pixelSize: 22 * win.u }
+        }
+        Text {
+            id: findCount
+            anchors.right: findPrev.left; anchors.rightMargin: 6 * win.u
+            anchors.verticalCenter: parent.verticalCenter
+            text: win.findTot ? (win.findCur + "/" + win.findTot) : (findInput.text.length ? "0/0" : "")
+            color: "#8a8a92"; font.pixelSize: 18 * win.u
+        }
+        Item { id: findPrev; anchors.right: findNextB.left; width: 46*win.u; height: parent.height
+            Text { anchors.centerIn: parent; text: "▲"; color: "#e6e6ea"; font.pixelSize: 20*win.u }
+            Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fpma.pressed ? 0.10 : 0 }
+            MouseArea { id: fpma; anchors.fill: parent; onClicked: win.findNextMatch(true) } }
+        Item { id: findNextB; anchors.right: findClose.left; width: 46*win.u; height: parent.height
+            Text { anchors.centerIn: parent; text: "▼"; color: "#e6e6ea"; font.pixelSize: 20*win.u }
+            Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fnma.pressed ? 0.10 : 0 }
+            MouseArea { id: fnma; anchors.fill: parent; onClicked: win.findNextMatch(false) } }
+        Item { id: findClose; anchors.right: parent.right; anchors.rightMargin: 4*win.u; width: 46*win.u; height: parent.height
+            Text { anchors.centerIn: parent; text: "✕"; color: "#e6e6ea"; font.pixelSize: 22*win.u }
+            Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fcma.pressed ? 0.10 : 0 }
+            MouseArea { id: fcma; anchors.fill: parent; onClicked: win.closeFind() } }
     }
 
     // ===================== MENU (⋮) =====================
