@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+<defs>
+  <radialGradient id="gBase" cx="40%" cy="34%" r="80%">
+    <stop offset="0%" stop-color="#0f2750"/><stop offset="55%" stop-color="#081833"/>
+    <stop offset="100%" stop-color="#03070f"/>
+  </radialGradient>
+
+  <!-- tre gradienti di blu -->
+  <linearGradient id="gA" x1="0.15" y1="0" x2="0.85" y2="1">
+    <stop offset="0%" stop-color="#a6f4ff"/><stop offset="45%" stop-color="#4fd2f2"/>
+    <stop offset="100%" stop-color="#1a93cf"/>
+  </linearGradient>
+  <linearGradient id="gB" x1="0.9" y1="0.1" x2="0.1" y2="0.9">
+    <stop offset="0%" stop-color="#5aa3f2"/><stop offset="45%" stop-color="#2a6ad8"/>
+    <stop offset="100%" stop-color="#123b96"/>
+  </linearGradient>
+  <linearGradient id="gC" x1="0.2" y1="0.9" x2="0.8" y2="0.1">
+    <stop offset="0%" stop-color="#0a2596"/><stop offset="55%" stop-color="#15379f"/>
+    <stop offset="100%" stop-color="#2f5fd6"/>
+  </linearGradient>
+
+  <radialGradient id="gDisc" cx="38%" cy="32%" r="72%">
+    <stop offset="0%" stop-color="#16409b"/><stop offset="55%" stop-color="#0a2260"/>
+    <stop offset="100%" stop-color="#04102f"/>
+  </radialGradient>
+
+  <linearGradient id="gTi" x1="0.1" y1="0" x2="0.9" y2="1">
+    <stop offset="0%" stop-color="#ffffff"/><stop offset="22%" stop-color="#dbe7f1"/>
+    <stop offset="40%" stop-color="#9aacbd"/><stop offset="52%" stop-color="#f4f9fd"/>
+    <stop offset="68%" stop-color="#a9bac9"/><stop offset="86%" stop-color="#7c8d9d"/>
+    <stop offset="100%" stop-color="#cfdbe6"/>
+  </linearGradient>
+
+  <linearGradient id="gSheen" x1="0" y1="0" x2="0.3" y2="1">
+    <stop offset="0%" stop-color="#ffffff" stop-opacity="0.26"/>
+    <stop offset="45%" stop-color="#ffffff" stop-opacity="0.04"/>
+    <stop offset="100%" stop-color="#000018" stop-opacity="0.22"/>
+  </linearGradient>
+
+  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="12" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+
+  <clipPath id="circ"><circle cx="540" cy="540" r="528"/></clipPath>
+  <clipPath id="lobesClip">
+    <path d="M 540.00 832.00 L 126.75 832.00 A 506.0 506.0 0 0 1 493.74 36.12 L 287.12 394.00 A 292.0 292.0 0 0 0 540.00 832.00 Z"/><path d="M 287.12 394.00 L 493.74 36.12 A 506.0 506.0 0 0 1 999.50 751.88 L 792.88 394.00 A 292.0 292.0 0 0 0 287.12 394.00 Z"/><path d="M 792.88 394.00 L 999.50 751.88 A 506.0 506.0 0 0 1 126.75 832.00 L 540.00 832.00 A 292.0 292.0 0 0 0 792.88 394.00 Z"/>
+  </clipPath>
+</defs>
+
+<g clip-path="url(#circ)">
+  <circle cx="540" cy="540" r="528" fill="url(#gBase)"/>
+
+  <!-- i tre swoosh -->
+  <path d="M 540.00 832.00 L 126.75 832.00 A 506.0 506.0 0 0 1 493.74 36.12 L 287.12 394.00 A 292.0 292.0 0 0 0 540.00 832.00 Z" fill="url(#gA)"/>
+  <path d="M 287.12 394.00 L 493.74 36.12 A 506.0 506.0 0 0 1 999.50 751.88 L 792.88 394.00 A 292.0 292.0 0 0 0 287.12 394.00 Z" fill="url(#gB)"/>
+  <path d="M 792.88 394.00 L 999.50 751.88 A 506.0 506.0 0 0 1 126.75 832.00 L 540.00 832.00 A 292.0 292.0 0 0 0 792.88 394.00 Z" fill="url(#gC)"/>
+
+  <g clip-path="url(#lobesClip)">
+        <circle cx="540" cy="540" r="330" fill="none" stroke="#eaf9ff" stroke-opacity="0.10" stroke-width="3"/>
+    <circle cx="540" cy="540" r="380" fill="none" stroke="#eaf9ff" stroke-opacity="0.10" stroke-width="3"/>
+    <circle cx="540" cy="540" r="430" fill="none" stroke="#eaf9ff" stroke-opacity="0.10" stroke-width="3"/>
+    <circle cx="540" cy="540" r="475" fill="none" stroke="#eaf9ff" stroke-opacity="0.10" stroke-width="3"/>
+    <path d="M 447.3 825.3 L 386.7 1011.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="386.7" cy="1011.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 324.2 748.4 L 183.2 884.6" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="183.2" cy="884.6" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 251.6 622.7 L 63.2 676.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="63.2" cy="676.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 246.6 477.6 L 54.8 436.9" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="54.8" cy="436.9" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 339.3 317.1 L 208.1 171.4" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="208.1" cy="171.4" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 467.4 248.9 L 420.0 58.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="420.0" cy="58.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 612.6 248.9 L 660.0 58.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="660.0" cy="58.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 740.7 317.1 L 871.9 171.4" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="871.9" cy="171.4" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 833.4 477.6 L 1025.2 436.9" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="1025.2" cy="436.9" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 828.4 622.7 L 1016.8 676.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="1016.8" cy="676.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 755.8 748.4 L 896.8 884.6" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="896.8" cy="884.6" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <path d="M 632.7 825.3 L 693.3 1011.7" fill="none" stroke="#eaf9ff" stroke-opacity="0.09" stroke-width="3"/>
+    <circle cx="693.3" cy="1011.7" r="7" fill="#eaf9ff" fill-opacity="0.15"/>
+    <circle cx="540" cy="540" r="528" fill="url(#gSheen)"/>
+  </g>
+
+  <!-- gap scuri tra gli swoosh -->
+  <g fill="none" stroke="#03070f" stroke-opacity="0.92" stroke-width="16" stroke-linecap="round">
+        <path d="M 540.00 832.00 L 102.25 849.31"/>
+    <path d="M 287.12 394.00 L 491.00 6.24"/>
+    <path d="M 792.88 394.00 L 1026.75 764.44"/>
+  </g>
+
+  <!-- disco centrale -->
+  <circle cx="540" cy="540" r="286" fill="#03070f"/>
+  <circle cx="540" cy="540" r="262" fill="url(#gDisc)"/>
+  <circle cx="540" cy="540" r="262" fill="none" stroke="#7de9ff" stroke-opacity="0.55" stroke-width="8" filter="url(#glow)"/>
+  <circle cx="540" cy="540" r="262" fill="url(#gSheen)" fill-opacity="0.55"/>
+
+  <!-- T in titanio -->
+  <path d="M 408 412 L 672 412 L 672 484 L 578 484 L 578 668 L 502 668 L 502 484 L 408 484 Z" transform="translate(6,8)" fill="#03070f" fill-opacity="0.45"/>
+  <path d="M 408 412 L 672 412 L 672 484 L 578 484 L 578 668 L 502 668 L 502 484 L 408 484 Z" fill="url(#gTi)"/>
+  <path d="M 408 412 L 672 412 L 672 484 L 578 484 L 578 668 L 502 668 L 502 484 L 408 484 Z" fill="none" stroke="#ffffff" stroke-opacity="0.5" stroke-width="3"/>
+</g>
+<circle cx="540" cy="540" r="525" fill="none" stroke="#02060f" stroke-opacity="0.55" stroke-width="8"/>
+</svg>
