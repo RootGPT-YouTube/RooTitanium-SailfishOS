@@ -418,6 +418,21 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     function bmSetHome(url, v) {
         try { histDb().transaction(function(tx) { bmEnsure(tx); tx.executeSql("UPDATE bookmarks SET home=? WHERE url=?", [v ? 1 : 0, "" + url]) }) } catch(e) {}
     }
+    // sposta su/giù nella lista: scambia i ts col vicino (l'ordine è ts ASC,
+    // quindi si riordina di conseguenza anche la griglia della HOME)
+    function bmMove(url, up) {
+        try { histDb().transaction(function(tx) {
+            bmEnsure(tx)
+            var rs = tx.executeSql("SELECT url,ts FROM bookmarks ORDER BY ts ASC")
+            var idx = -1
+            for (var i = 0; i < rs.rows.length; i++) if (rs.rows.item(i).url === "" + url) { idx = i; break }
+            var j = up ? idx - 1 : idx + 1
+            if (idx < 0 || j < 0 || j >= rs.rows.length) return
+            var a = rs.rows.item(idx), b = rs.rows.item(j)
+            tx.executeSql("UPDATE bookmarks SET ts=? WHERE url=?", [b.ts, a.url])
+            tx.executeSql("UPDATE bookmarks SET ts=? WHERE url=?", [a.ts, b.url])
+        }) } catch(e) {}
+    }
     function bmAdd(url, title) {
         url = "" + url
         if (!/^https?:\/\//i.test(url) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(url)) {
@@ -456,9 +471,11 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
                 var host = win.histHost(b.url)
                 var t = win.htmlEsc(b.title && ("" + b.title).length ? b.title : host)
                 var inHome = b.home === 1 || b.home === "1"
+                var enc = encodeURIComponent(b.url)
                 return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a>'
-                     + '<a class="bhome' + (inHome ? ' on' : '') + '" title="Mostra in HOME" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + encodeURIComponent(b.url) + '">⌂</a>'
-                     + '<a class="bdel" href="https://bookmarks.local/del?u=' + encodeURIComponent(b.url) + '">✕</a></div>'
+                     + '<span class="bmov"><a class="bar" href="https://bookmarks.local/move?d=up&u=' + enc + '">▲</a><a class="bar" href="https://bookmarks.local/move?d=dn&u=' + enc + '">▼</a></span>'
+                     + '<a class="bhome' + (inHome ? ' on' : '') + '" title="Mostra in HOME" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + enc + '">⌂</a>'
+                     + '<a class="bdel" href="https://bookmarks.local/del?u=' + enc + '">✕</a></div>'
               }).join("")
             : '<div class="empty">Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.</div>'
         var hint = items.length ? '<div class="hint">⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro</div>' : ''
@@ -469,6 +486,8 @@ h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .hint{color:#6a6a72;font-size:12px;margin:2px 0 8px}
 .brow{display:flex;align-items:center;border-bottom:1px solid #24242c}
 .bmain{display:flex;align-items:center;gap:14px;flex:1;min-width:0;text-decoration:none;color:#c8c8d0;padding:10px 2px}
+.bmov{flex:none;display:flex;flex-direction:column;gap:2px;margin-left:4px}
+.bar{color:#5a5a64;font-size:12px;line-height:14px;text-decoration:none;padding:2px 8px}
 .bhome{flex:none;color:#4a4a54;font-size:21px;text-decoration:none;padding:10px 8px}
 .bhome.on{color:#4ea866}
 .bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
@@ -914,12 +933,14 @@ ${histCss}
                             // home?v= = toggle presenza in HOME dalla pagina Segnalibri
                             var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
                             var mHome = u.match(/^https:\/\/bookmarks\.local\/home\?v=([01])&u=(.*)$/)
+                            var mMove = u.match(/^https:\/\/bookmarks\.local\/move\?d=(up|dn)&u=(.*)$/)
                             if (mDel && mDel[1] === "delhome") {
                                 win.bmSetHome(decodeURIComponent(mDel[2]), 0)
                                 loadHtml(win.homeHtml(), "about:blank")
                             } else {
                                 if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
                                 else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
+                                else if (mMove) win.bmMove(decodeURIComponent(mMove[2]), mMove[1] === "up")
                                 loadHtml(win.bookmarksHtml(), "https://bookmarks.local/")
                             }
                         }
