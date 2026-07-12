@@ -2,10 +2,72 @@
 // qt6-qtwebengine 6.8.3 (build nativa) renderizzi sul device via GPU/hybris.
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #include <QUrl>
 #include <QFileInfo>
 #include <QString>
+#include <QStandardPaths>
+#include <QDir>
+#include <QRegularExpression>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QVariantMap>
+#include <QVariantList>
+
+// Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
+// sa fare (DBus, filesystem). Niente dipendenze Silica: solo Qt6DBus/Core.
+class NativeHelper : public QObject
+{
+    Q_OBJECT
+public:
+    using QObject::QObject;
+
+    // Condivisione DI SISTEMA SailfishOS: apre il dialogo sailfish-share via
+    // DBus session (org.sailfishos.share / share(a{sv})) — stesso protocollo
+    // del ShareAction Qt5 di Sailfish.Share, ricostruito perché il plugin
+    // Silica non esiste in Qt6. Formato risorsa URL come i browser SFOS:
+    // { type: "text/x-url", status: url, linkTitle: titolo }.
+    Q_INVOKABLE bool shareUrl(const QString &url, const QString &title)
+    {
+        QVariantMap resource{
+            { QStringLiteral("type"),   QStringLiteral("text/x-url") },
+            { QStringLiteral("status"), url },
+        };
+        if (!title.isEmpty())
+            resource.insert(QStringLiteral("linkTitle"), title);
+        QVariantMap config{
+            { QStringLiteral("resources"), QVariantList{ resource } },
+            { QStringLiteral("mimeType"),  QStringLiteral("text/x-url") },
+        };
+        QDBusMessage msg = QDBusMessage::createMethodCall(
+            QStringLiteral("org.sailfishos.share"), QStringLiteral("/"),
+            QStringLiteral("org.sailfishos.share"), QStringLiteral("share"));
+        msg.setArguments({ config });
+        return QDBusConnection::sessionBus().send(msg);
+    }
+
+    // Percorso per "Salva pagina come PDF": ~/Documents (o versione localizzata,
+    // via xdg-user-dirs come QStandardPaths), nome file dal titolo pagina
+    // sanificato; se esiste già aggiunge " (2)", " (3)", ...
+    Q_INVOKABLE QString pdfPathForTitle(const QString &title)
+    {
+        QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        if (dir.isEmpty())
+            dir = QDir::homePath() + QStringLiteral("/Documents");
+        QDir().mkpath(dir);
+        QString base = title;
+        base.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|\\x00-\\x1f]")), QStringLiteral(" "));
+        base = base.simplified();
+        base.truncate(80);
+        if (base.isEmpty())
+            base = QStringLiteral("pagina");
+        QString path = dir + QStringLiteral("/") + base + QStringLiteral(".pdf");
+        for (int i = 2; QFileInfo::exists(path); ++i)
+            path = dir + QStringLiteral("/") + base + QStringLiteral(" (%1).pdf").arg(i);
+        return path;
+    }
+};
 
 int main(int argc, char **argv)
 {
@@ -19,8 +81,12 @@ int main(int argc, char **argv)
     // carica test.qml dalla stessa cartella dell'eseguibile
     const QString base = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
     QQmlApplicationEngine engine;
+    NativeHelper native;
+    engine.rootContext()->setContextProperty(QStringLiteral("rtNative"), &native);
     engine.load(QUrl::fromLocalFile(base + "/test.qml"));
     if (engine.rootObjects().isEmpty())
         return -1;
     return app.exec();
 }
+
+#include "main.moc"

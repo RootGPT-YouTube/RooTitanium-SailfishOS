@@ -112,7 +112,7 @@ Window {
         else if (a === "private") newTab(true)
         else if (a === "desktop") setDesktop(!win.desktopMode)
         else if (a === "rotate") manualLandscape = !manualLandscape
-        else if (a === "pdf") { if (currentView) currentView.printToPdf("/home/defaultuser/pagina.pdf") }
+        else if (a === "pdf") savePdf()
         else if (a === "share") shareUrl()
         else if (a === "history") { if (currentView) currentView.loadHtml(historyHtml(), "https://history.local/") }
         else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
@@ -121,17 +121,36 @@ Window {
         else console.log("menu action (placeholder): " + a)
     }
 
-    // Condividi = copia l'URL corrente negli appunti (wl_data_device_manager) + toast
+    // Condividi = dialogo di condivisione DI SISTEMA (sailfish-share via DBus
+    // org.sailfishos.share, helper rtNative in main.cpp — il plugin Qt5
+    // Sailfish.Share non esiste in Qt6). Solo la scheda ATTIVA; pagine interne
+    // (about:blank, *.local) escluse. Fallback: copia negli appunti se
+    // l'helper manca (binario webengine-smoke vecchio).
     function shareUrl() {
         if (!currentView) return
         var u = "" + currentView.url
-        if (u === "" || u === "about:blank") return
+        if (u === "" || u === "about:blank" || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(u)) {
+            toast.show("Questa pagina non si può condividere"); return
+        }
+        if (typeof rtNative !== "undefined" && rtNative.shareUrl(u, "" + currentView.title)) return
         clipHelper.text = u
         clipHelper.selectAll()
         clipHelper.copy()
         toast.show("Link copiato negli appunti")
     }
     TextInput { id: clipHelper; visible: false }
+
+    // Salva pagina come PDF in ~/Documents (xdg-user-dirs), nome file dal
+    // titolo pagina (sanificato + dedupe in rtNative); esito nel toast di
+    // onPdfPrintingFinished della view
+    function savePdf() {
+        if (!currentView) return
+        var p = (typeof rtNative !== "undefined")
+            ? rtNative.pdfPathForTitle("" + currentView.title)
+            : "/home/defaultuser/pagina.pdf"
+        currentView.printToPdf(p)
+        toast.show("Creazione PDF…")
+    }
 
     // ===================== CONTEXT MENU (longpress) =====================
     // apre una scheda su un URL specifico (per "apri link in nuova scheda")
@@ -1002,6 +1021,12 @@ ${histCss}
                     onFindTextFinished: function(result) {
                         win.findCur = result.activeMatch
                         win.findTot = result.numberOfMatches
+                    }
+                    // esito di printToPdf (Salva pagina come PDF)
+                    onPdfPrintingFinished: function(filePath, success) {
+                        var name = ("" + filePath).replace(/^.*\//, "")
+                        toast.show(success ? "PDF salvato in Documenti: " + name
+                                           : "Salvataggio PDF fallito")
                     }
                     // video a tutto schermo: senza accept() la richiesta JS viene
                     // rifiutata e il player resta inline. Accettata → landscape auto

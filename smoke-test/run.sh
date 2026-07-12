@@ -20,6 +20,9 @@ export QTWEBENGINE_LOCALES_PATH="$HERE/locales"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland-egl}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+# session bus (Condividi via org.sailfishos.share): dall'icona lo passa lipstick,
+# via ssh va indicato a mano (path standard del bus utente SFOS)
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/dbus/user_bus_socket}"
 
 # --- tastiera: QtVirtualKeyboard (in-app, via InputPanel nel QML) ---
 export QT_IM_MODULE=qtvirtualkeyboard
