@@ -77,6 +77,25 @@ Window {
     readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     function setDesktop(on) { desktopMode = on; applyClientHints(); if (currentView) currentView.reload() }
 
+    // ESPERIMENTO login X (#7) — ESITO NEGATIVO, toggle lasciato SPENTO.
+    // Ipotesi: il browser NATIVO SailfishOS (Gecko/Firefox 91) accetta il login su
+    // X dallo stesso device/IP, RooTitanium (Chromium) no → forse è l'identità.
+    // firefoxMode ci fa presentare come il nativo: UA Firefox 91, niente API Chrome
+    // lato JS (userAgentData/window.chrome rimossi). PROVATO 13 lug col login reale
+    // dell'utente: STESSO blocco "non puoi accedere" su begin_login. Quindi
+    // l'identità del browser NON è (da sola) il discriminante — anche perché con
+    // username fittizio X procede sempre (il blocco è sul percorso account reale).
+    // LIMITE tecnico emerso: da QML NON si può togliere l'header Sec-CH-UA
+    // low-entropy (isAllClientHintsEnabled=false non basta) → la "Firefox" restava
+    // un ibrido (UA Firefox + Sec-CH-UA Chromium). Codice tenuto come toggle per
+    // futuri test; default false = identità Chromium coerente (giusta e onesta).
+    property bool firefoxMode: false
+    readonly property string uaFirefox: "Mozilla/5.0 (Mobile; rv:91.0) Gecko/91.0 Firefox/91.0"
+    function effectiveUA() {
+        if (firefoxMode) return uaFirefox
+        return desktopMode ? uaDesktop : uaMobile
+    }
+
     // Client Hints (Sec-CH-UA-*/navigator.userAgentData) coerenti con lo UA:
     // Chrome Android vero manda arch/bitness VUOTI e la versione Android reale
     // in platformVersion (lo UA ridotto resta "10; K"). API REVISION(6,8):
@@ -87,6 +106,10 @@ Window {
         for (var i = 0; i < profs.length; i++) {
             try {
                 var ch = profs[i].clientHints
+                // firefoxMode: Gecko non manda ALCUN Client Hint → li spengo tutti
+                // (niente header Sec-CH-UA*). isAllClientHintsEnabled è REV(6,8)
+                if (firefoxMode) { ch.isAllClientHintsEnabled = false; continue }
+                ch.isAllClientHintsEnabled = true
                 ch.mobile = m
                 ch.platform = m ? "Android" : "Linux"
                 ch.platformVersion = m ? "13.0.0" : "6.5.0"
@@ -228,6 +251,20 @@ Window {
         } catch(e){}
     })();`
 
+    // firefoxMode (ESPERIMENTO #7): fa sparire lato JS le API che tradiscono
+    // Chromium sotto UA Firefox — un vero Firefox non le ha. userAgentData e
+    // window.chrome rimossi; vendor "" e productSub "20100101" come Gecko
+    readonly property string firefoxJs: `(function(){
+        try { delete Navigator.prototype.userAgentData; } catch(e){}
+        try { Object.defineProperty(Navigator.prototype, 'userAgentData', { configurable: true, get: function(){ return undefined; } }); } catch(e){}
+        try { delete window.chrome; } catch(e){}
+        try { window.chrome = undefined; } catch(e){}
+        try { Object.defineProperty(Navigator.prototype, 'vendor',     { configurable: true, get: function(){ return ''; } }); } catch(e){}
+        try { Object.defineProperty(Navigator.prototype, 'productSub',  { configurable: true, get: function(){ return '20100101'; } }); } catch(e){}
+        try { Object.defineProperty(Navigator.prototype, 'oscpu',       { configurable: true, get: function(){ return 'Linux aarch64'; } }); } catch(e){}
+        try { Object.defineProperty(Navigator.prototype, 'buildID',     { configurable: true, get: function(){ return '20181001000000'; } }); } catch(e){}
+    })();`
+
     function buildScripts() {
         var s = [{
             name: "rtScreenSpoof",
@@ -241,13 +278,21 @@ Window {
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
-        }, {
+        }]
+        // identità JS: Firefox (rimuove API Chrome) OPPURE stub Chrome
+        s.push(firefoxMode ? {
+            name: "rtFirefox",
+            sourceCode: firefoxJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        } : {
             name: "rtChromeStub",
             sourceCode: chromeStubJs,
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
-        }]
+        })
         if (cfgDnt) s.push({
             name: "rtDnt",
             sourceCode: dntJs,
@@ -528,7 +573,7 @@ Window {
         // alla chiusura; il cambio vale da subito, non serve riavviare
         persistentCookiesPolicy: win.cfgCookies ? WebEngineProfile.AllowPersistentCookies
                                                 : WebEngineProfile.NoPersistentCookies
-        httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         // senza, l'header Accept-Language MANCAVA del tutto (nessun browser
         // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
         httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
@@ -537,7 +582,7 @@ Window {
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
         id: incognitoProfile
-        httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, true) }
     }
