@@ -65,10 +65,38 @@ Window {
     function tabCount(priv) { var n = 0; for (var i=0;i<tabsModel.count;i++) if (tabsModel.get(i).priv === priv) n++; return n }
 
     // --- user agent per toggle Versione desktop ---
+    // #7 (login negato da x.com): lo UA vecchio ("Android 13; Mobile",
+    // Chrome/124) CONTRADDICEVA i Client Hints veri (Sec-CH-UA: Chromium 122,
+    // Platform "Linux", Mobile ?0, platformVersion = kernel 4.19) → fingerprint
+    // da UA contraffatto, oro per l'anti-bot. Identità coerente scelta:
+    // "Chromium 122 su Android, mobile" — UA nel formato RIDOTTO ufficiale di
+    // Chrome Android (piattaforma congelata "Android 10; K", solo major
+    // version) + Client Hints allineati in applyClientHints()
     property bool desktopMode: false
-    readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-    readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    function setDesktop(on) { desktopMode = on; if (currentView) currentView.reload() }
+    readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+    readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    function setDesktop(on) { desktopMode = on; applyClientHints(); if (currentView) currentView.reload() }
+
+    // Client Hints (Sec-CH-UA-*/navigator.userAgentData) coerenti con lo UA:
+    // Chrome Android vero manda arch/bitness VUOTI e la versione Android reale
+    // in platformVersion (lo UA ridotto resta "10; K"). API REVISION(6,8):
+    // guardia try, l'app deve partire anche su runtime più vecchi
+    function applyClientHints() {
+        var m = !desktopMode
+        var profs = [normalProfile, incognitoProfile]
+        for (var i = 0; i < profs.length; i++) {
+            try {
+                var ch = profs[i].clientHints
+                ch.mobile = m
+                ch.platform = m ? "Android" : "Linux"
+                ch.platformVersion = m ? "13.0.0" : "6.5.0"
+                ch.model = m ? "Pixel 7" : ""
+                ch.arch = m ? "" : "x86"
+                ch.bitness = m ? "" : "64"
+                ch.wow64 = false
+            } catch(e) { console.warn("clientHints non disponibili: " + e) }
+        }
+    }
 
     // ===================== IMPOSTAZIONI (persistite nella kv della SQLite) =====================
     property bool cfgJs: true               // Attiva JavaScript
@@ -468,12 +496,16 @@ Window {
         persistentCookiesPolicy: win.cfgCookies ? WebEngineProfile.AllowPersistentCookies
                                                 : WebEngineProfile.NoPersistentCookies
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        // senza, l'header Accept-Language MANCAVA del tutto (nessun browser
+        // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
+        httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, false) }
     }
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
         id: incognitoProfile
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
+        httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, true) }
     }
 
@@ -1174,6 +1206,7 @@ ${histCss}
     // ripristino sessione solo se "chiudi schede all'uscita" è spento
     Component.onCompleted: {
         loadCfg()
+        applyClientHints()
         if (cfgStartPrivate) { newTab(true); return }
         var urls = []
         if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }
