@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QString>
+#include <QByteArray>
 #include <QStandardPaths>
 #include <QDir>
 #include <QRegularExpression>
@@ -16,9 +17,34 @@
 #include <QVariantMap>
 #include <QVariantList>
 #include <QProcess>
+#include <QDebug>
+// interceptor header (QtWebEngineCore) + profilo QML (QQuickWebEngineProfile
+// espone setUrlRequestInterceptor come metodo C++ pubblico, verificato in 6.8.3)
+#include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
+#include <QtWebEngineCore/QWebEngineUrlRequestInfo>
+#include <QtWebEngineQuick/qquickwebengineprofile.h>
+
+// Interceptor header HTTP: riscrive il terzetto Sec-CH-UA low-entropy che Qt
+// NON espone al QML (WebEngineClientHints tocca solo la parte high-entropy JS).
+// Brand "Google Chrome" invece di "Chromium" (gli anti-bot diffidano di
+// Chromium). Verificato via CDP: setHttpHeader sovrascrive davvero i Sec-CH-UA.
+class HeaderInterceptor : public QWebEngineUrlRequestInterceptor
+{
+    Q_OBJECT
+public:
+    using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
+    void interceptRequest(QWebEngineUrlRequestInfo &info) override
+    {
+        // engine reale = Chromium 122 (Qt 6.8.3): versione coerente
+        info.setHttpHeader("sec-ch-ua",
+            "\"Google Chrome\";v=\"122\", \"Chromium\";v=\"122\", \"Not:A-Brand\";v=\"24\"");
+        info.setHttpHeader("sec-ch-ua-mobile", "?1");
+        info.setHttpHeader("sec-ch-ua-platform", "\"Android\"");
+    }
+};
 
 // Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
-// sa fare (DBus, filesystem). Niente dipendenze Silica: solo Qt6DBus/Core.
+// sa fare (DBus, filesystem). Niente dipendenze Silica.
 class NativeHelper : public QObject
 {
     Q_OBJECT
@@ -93,6 +119,17 @@ public:
             return false;
         return QProcess::startDetached(QStringLiteral("/usr/bin/lca-tool"),
             { QStringLiteral("--triggerfile"), QUrl::fromLocalFile(path).toString() });
+    }
+
+    // Installa l'interceptor header sul profilo QML. I due WebEngineProfile sono
+    // dichiarati in QML; QQuickWebEngineProfile espone setUrlRequestInterceptor
+    // come metodo C++ pubblico (non Q_INVOKABLE) → lo chiamiamo qui passando
+    // l'oggetto profilo da QML (Component.onCompleted: rtNative.setupProfile(this)).
+    Q_INVOKABLE void setupProfile(QObject *profileObj)
+    {
+        auto *p = qobject_cast<QQuickWebEngineProfile *>(profileObj);
+        if (!p) { qWarning() << "rtNative.setupProfile: non è un WebEngineProfile"; return; }
+        p->setUrlRequestInterceptor(new HeaderInterceptor(p));
     }
 };
 

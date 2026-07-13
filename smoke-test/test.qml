@@ -136,6 +136,8 @@ Window {
     property bool cfgDark: false            // resa scura forzata (auto-dark Chromium)
     property bool cfgStartPrivate: false    // avvia in navigazione privata
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
+    property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
+    property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
     property string cfgHome: ""             // vuoto = HOME interna RooTitanium
     property string cfgSearch: "duckduckgo"
     property string cfgDlDir: "downloads"   // destinazione download (token in dlDirs)
@@ -179,6 +181,8 @@ Window {
         cfgDark         = kvGet("set_dark", "0") === "1"
         cfgStartPrivate = kvGet("set_startprivate", "0") === "1"
         cfgCloseTabs    = kvGet("set_closetabs", "1") === "1"
+        cfgFarble       = kvGet("set_farble", "1") === "1"
+        cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
         cfgHome         = kvGet("set_homepage", "")
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
@@ -203,6 +207,8 @@ Window {
         else if (k === "startprivate") { cfgStartPrivate = on; kvSet("set_startprivate", v) }
         else if (k === "closetabs")    { cfgCloseTabs = on;    kvSet("set_closetabs", v)
                                          if (on) kvSet("session_tabs", "[]"); else saveSession() }
+        else if (k === "farble")   { cfgFarble = on;   kvSet("set_farble", v); applyViewPrefs() }
+        else if (k === "nocookie") { cfgNoCookieBanner = on; kvSet("set_nocookie", v); applyViewPrefs() }
     }
     // sessione (solo schede normali, mai incognito né pagine interne .local);
     // salvata a ogni navigazione/chiusura scheda: non esiste un "on exit"
@@ -265,6 +271,64 @@ Window {
         try { Object.defineProperty(Navigator.prototype, 'buildID',     { configurable: true, get: function(){ return '20181001000000'; } }); } catch(e){}
     })();`
 
+    // Anti-fingerprinting stile Brave/Cromite ("farbling"): rumore DETERMINISTICO
+    // per-origine (stabile entro la pagina, diverso tra siti/sessioni) sui vettori
+    // di fingerprint — canvas, WebGL readPixels, audio. Valori restano PLAUSIBILI
+    // (non falsi evidenti), per questo non rompe l'anti-bot: Brave/Cromite girano
+    // su X.com. NON tocca gli userscript di coerenza-Chrome: ci si aggiunge sopra.
+    readonly property string farbleJs: `(function(){
+  if (window.__rtFarble) return; window.__rtFarble = true;
+  function h(s){var x=2166136261>>>0;for(var i=0;i<s.length;i++){x^=s.charCodeAt(i);x=Math.imul(x,16777619);}return x>>>0;}
+  var seed=h((location.origin||'null')+'|rtfarble1');
+  function mk(s){return function(){s|=0;s=s+0x6D2B79F5|0;var t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  try{
+    var gID=CanvasRenderingContext2D.prototype.getImageData;
+    var pID=CanvasRenderingContext2D.prototype.putImageData;
+    // rumore DETERMINISTICO (seed fisso per-origine): due letture dello stesso
+    // canvas danno lo STESSO risultato → stabile entro la pagina, non rilevabile
+    function fb(img){var r=mk(seed^img.width^(img.height<<16));var d=img.data;for(var i=0;i<d.length;i+=4){if(r()<0.045){var n=(r()*3|0)-1;d[i]=(d[i]+n)&255;d[i+1]=(d[i+1]+n)&255;d[i+2]=(d[i+2]+n)&255;}}return img;}
+    CanvasRenderingContext2D.prototype.getImageData=function(){var img=gID.apply(this,arguments);try{fb(img);}catch(e){}return img;};
+    var tDU=HTMLCanvasElement.prototype.toDataURL;
+    // legge i pixel PULITI (gID originale), farbla una COPIA su canvas temporaneo
+    // e serializza quello — NON muta mai il canvas sorgente (evita drift cumulativo)
+    HTMLCanvasElement.prototype.toDataURL=function(){try{var c=this.getContext('2d');if(c&&this.width&&this.height){var im=gID.call(c,0,0,this.width,this.height);fb(im);var t=document.createElement('canvas');t.width=this.width;t.height=this.height;pID.call(t.getContext('2d'),im,0,0);return tDU.apply(t,arguments);}}catch(e){}return tDU.apply(this,arguments);};
+  }catch(e){}
+  try{
+    function pgl(P){if(!P)return;var rp=P.prototype.readPixels;P.prototype.readPixels=function(){var ret=rp.apply(this,arguments);try{var px=arguments[6];if(px&&px.length){var r=mk(seed^7);for(var i=0;i<px.length;i+=97){px[i]=(px[i]+(r()*2|0))&255;}}}catch(e){}return ret;};}
+    pgl(window.WebGLRenderingContext);pgl(window.WebGL2RenderingContext);
+  }catch(e){}
+  try{
+    var AN=window.AnalyserNode&&AnalyserNode.prototype;
+    if(AN){var gf=AN.getFloatFrequencyData;AN.getFloatFrequencyData=function(a){gf.apply(this,arguments);try{var r=mk(seed^13);for(var i=0;i<a.length;i++)a[i]+=(r()-0.5)*0.002;}catch(e){}};}
+  }catch(e){}
+})();`
+
+    // Rifiuta/nascondi i banner cookie automaticamente (stile "I don't care about
+    // cookies"): nasconde i contenitori dei CMP più diffusi via CSS, clicca i
+    // bottoni "rifiuta/solo necessari" noti (OneTrust/Cookiebot/Didomi/…) e per
+    // testo, ripristina lo scroll. Best-effort e limitato: non copre ogni sito.
+    readonly property string cookieBannerJs: `(function(){
+  if (window.__rtNoCookie) return; window.__rtNoCookie = true;
+  var HIDE=['#onetrust-banner-sdk','#onetrust-consent-sdk','#CybotCookiebotDialog','#didomi-host','#usercentrics-root','.qc-cmp2-container','#cmpbox','.cc-window','#cookie-banner','#cookieConsent','.cookie-consent','.cookie-notice','.fc-consent-root','.truste_overlay','#truste-consent-track','.osano-cm-window','.iubenda-cs-container','#iubenda-cs-banner'];
+  var RIDS=['onetrust-reject-all-handler','CybotCookiebotDialogBodyButtonDecline','didomi-notice-disagree-button','truste-consent-required'];
+  // bottoni "rifiuta" identificati per SELETTORE-classe nei vari CMP (anche <a>,
+  // che il match per testo — solo button/[role=button] — non prenderebbe)
+  var RSEL=['.iubenda-cs-reject-btn','.cc-btn.cc-deny','.osano-cm-denyAll','.cmp-reject-all','.fc-cta-do-not-consent','[data-role=reject-all]','[aria-label*="Rifiuta"]','[aria-label*="Reject"]'];
+  function css(){try{if(document.getElementById('__rtNoCookieCss'))return;var s=document.createElement('style');s.id='__rtNoCookieCss';s.textContent=HIDE.join(',')+'{display:none!important;visibility:hidden!important;}html,body{overflow:auto!important;}';(document.head||document.documentElement).appendChild(s);}catch(e){}}
+  var RE=/^(rifiuta|rifiuta tutto|rifiuta tutti|solo (i )?necessari|reject|reject all|decline|necessary only|only necessary|continua senza accettare|non accetto|no thanks)$/i;
+  // clicca TUTTI i bottoni "rifiuta" non ancora gestiti (marcati con __rtDone,
+  // così non si ri-cliccano e non bloccano la gestione di altri banner)
+  function rej(){try{
+    for(var i=0;i<RIDS.length;i++){var el=document.getElementById(RIDS[i]);if(el&&!el.__rtDone){el.__rtDone=1;el.click();}}
+    for(var k=0;k<RSEL.length;k++){document.querySelectorAll(RSEL[k]).forEach(function(e){if(!e.__rtDone){e.__rtDone=1;e.click();}});}
+    var b=document.querySelectorAll('button,a[role=button],[role=button]');
+    for(var j=0;j<b.length;j++){var e2=b[j];if(e2.__rtDone)continue;var t=(e2.textContent||'').trim();if(t&&t.length<40&&RE.test(t)){e2.__rtDone=1;e2.click();}}
+  }catch(e){}}
+  css();
+  var n=0;var iv=setInterval(function(){css();rej();if(++n>20)clearInterval(iv);},500);
+  try{var mo=new MutationObserver(function(){css();rej();});mo.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){try{mo.disconnect();}catch(e){}},12000);}catch(e){}
+})();`
+
     function buildScripts() {
         var s = [{
             name: "rtScreenSpoof",
@@ -299,6 +363,20 @@ Window {
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
+        })
+        if (cfgFarble) s.push({
+            name: "rtFarble",
+            sourceCode: farbleJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        })
+        if (cfgNoCookieBanner) s.push({
+            name: "rtCookieBanner",
+            sourceCode: cookieBannerJs,
+            injectionPoint: WebEngineScript.DocumentReady,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: false
         })
         return s
     }
@@ -582,6 +660,10 @@ Window {
         // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
         httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, false) }
+        // installa (dal C++) l'interceptor header Sec-CH-UA. QQuickWebEngineProfile
+        // espone setUrlRequestInterceptor come metodo C++ pubblico → rtNative lo
+        // chiama passando questo profilo (non è raggiungibile da QML puro).
+        Component.onCompleted: rtNative.setupProfile(this)
     }
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
@@ -591,6 +673,8 @@ Window {
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, true) }
+        // stesso interceptor header Sec-CH-UA anche in incognito
+        Component.onCompleted: rtNative.setupProfile(this)
     }
 
     // ===================== DOWNLOAD =====================
@@ -836,7 +920,9 @@ ${sToggle("dnt", cfgDnt, "Non tenere traccia", "Chiede ai siti di non tracciarti
 ${sToggle("js", cfgJs, "Attiva JavaScript", "Consentito, raccomandato")}
 ${sToggle("cookies", cfgCookies, "Conserva i cookies alla chiusura", "Spento: i login non sopravvivono al riavvio")}
 ${sToggle("popups", cfgPopups, "Popup e nuove schede dai siti", "Spento: i link si aprono nella scheda corrente")}
-<div class="srow dis"><span class="sbody"><span class="st">Password</span></span><span class="badge">In arrivo</span></div>
+${sToggle("farble", cfgFarble, "Disattiva fingerprint", "Anti-tracciamento stile Brave/Cromite: nasconde l'impronta del browser")}
+${sToggle("nocookie", cfgNoCookieBanner, "Rifiuta i banner cookie", "Rifiuta o nasconde automaticamente gli avvisi sui cookie")}
+<div class="srow dis"><span class="sbody"><span class="st">Password</span><span class="sd">Per sicurezza usa un gestore dedicato (Proton Pass, Bitwarden, KeePassXC)</span></span></div>
 <a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">Permessi</span><span class="sd">Fotocamera, microfono, posizione, notifiche dei siti</span></span><span class="chev">›</span></a>
 ${clearRow}
 <h2>Download — Destinazione</h2>
