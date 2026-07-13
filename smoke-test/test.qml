@@ -573,6 +573,10 @@ Window {
         // alla chiusura; il cambio vale da subito, non serve riavviare
         persistentCookiesPolicy: win.cfgCookies ? WebEngineProfile.AllowPersistentCookies
                                                 : WebEngineProfile.NoPersistentCookies
+        // permessi (#4 sezione Permessi): decisioni consenti/blocca salvate su
+        // disco così sopravvivono al riavvio (REV 6,8). listAllPermissions()
+        // alimenta la pagina di gestione permissions.local
+        persistentPermissionsPolicy: WebEngineProfile.StoreOnDisk
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         // senza, l'header Accept-Language MANCAVA del tutto (nessun browser
         // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
@@ -582,6 +586,8 @@ Window {
     // profilo INCOGNITO: niente storageName → off-the-record (in memoria, isolato dal normale)
     WebEngineProfile {
         id: incognitoProfile
+        // incognito: permessi solo in memoria, nessuna traccia su disco
+        persistentPermissionsPolicy: WebEngineProfile.StoreInMemory
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
         onDownloadRequested: function(download) { win.handleDownload(download, true) }
@@ -807,6 +813,7 @@ h2{font-size:13px;color:#9aa0a6;font-weight:600;margin:26px 0 4px;text-transform
 .rad.on{border-color:#3a5fc0;background:radial-gradient(circle,#8ab4f8 0 5px,transparent 6px)}
 .dis .st{color:#6a6a72}
 .badge{flex:none;font-size:11px;color:#9aa0a6;border:1px solid #3a3a44;border-radius:9px;padding:3px 9px}
+.chev{flex:none;color:#6a6a72;font-size:22px;line-height:1}
 .act{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
 .act.red{color:#f28b82}
 form{display:flex;gap:10px;padding:13px 2px;border-bottom:1px solid #24242c}
@@ -830,12 +837,103 @@ ${sToggle("js", cfgJs, "Attiva JavaScript", "Consentito, raccomandato")}
 ${sToggle("cookies", cfgCookies, "Conserva i cookies alla chiusura", "Spento: i login non sopravvivono al riavvio")}
 ${sToggle("popups", cfgPopups, "Popup e nuove schede dai siti", "Spento: i link si aprono nella scheda corrente")}
 <div class="srow dis"><span class="sbody"><span class="st">Password</span></span><span class="badge">In arrivo</span></div>
-<div class="srow dis"><span class="sbody"><span class="st">Permessi</span></span><span class="badge">In arrivo</span></div>
+<a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">Permessi</span><span class="sd">Fotocamera, microfono, posizione, notifiche dei siti</span></span><span class="chev">›</span></a>
 ${clearRow}
 <h2>Download — Destinazione</h2>
 ${dldirs}
 <h2>Aspetto</h2>
 ${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle pagine")}
+</body></html>`
+    }
+
+    // ===================== PERMESSI (#4) =====================
+    // API WebEngine 6.8: la view emette permissionRequested(QWebEnginePermission);
+    // il permesso ha origin/permissionType/state e i metodi grant()/deny()/reset().
+    // Le decisioni sono persistite dal profilo (persistentPermissionsPolicy) e
+    // rilette con listAllPermissions() per la pagina di gestione permissions.local.
+    property var permPending: null          // permesso in attesa di decisione (tenuto vivo)
+    function permLabel(t) {
+        var T = WebEnginePermission.PermissionType
+        if (t === T.Geolocation)             return "Conoscere la tua posizione"
+        if (t === T.Notifications)           return "Inviarti notifiche"
+        if (t === T.MediaAudioCapture)       return "Usare il microfono"
+        if (t === T.MediaVideoCapture)       return "Usare la fotocamera"
+        if (t === T.MediaAudioVideoCapture)  return "Usare fotocamera e microfono"
+        if (t === T.DesktopVideoCapture)     return "Registrare lo schermo"
+        if (t === T.DesktopAudioVideoCapture) return "Registrare schermo e audio"
+        if (t === T.ClipboardReadWrite)      return "Leggere gli appunti"
+        if (t === T.LocalFontsAccess)        return "Elencare i caratteri installati"
+        if (t === T.MouseLock)               return "Bloccare il puntatore del mouse"
+        return "Un permesso"
+    }
+    function permHost(p) { return ("" + p.origin).replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "") }
+    function showPermission(p) {
+        permPending = p
+        permDlg.host = permHost(p)
+        permDlg.msg = permLabel(p.permissionType)
+        permDlg.open = true
+    }
+    function permDecide(grant) {
+        permDlg.open = false
+        if (permPending) {
+            if (grant) permPending.grant(); else permPending.deny()
+            permPending = null
+        }
+        permRefreshPage()
+    }
+    // elenco permessi decisi (solo profilo normale: l'incognito è in memoria e
+    // non ha una pagina di gestione persistente). Ordinati per origine.
+    function permList() {
+        var out = []
+        try {
+            var all = normalProfile.listAllPermissions()
+            for (var i = 0; i < all.length; i++) {
+                var p = all[i]
+                var S = WebEnginePermission.State
+                if (p.state !== S.Granted && p.state !== S.Denied) continue
+                out.push({ origin: "" + p.origin, host: permHost(p), type: p.permissionType,
+                           label: permLabel(p.permissionType), granted: p.state === S.Granted })
+            }
+        } catch(e) { console.warn("listAllPermissions non disponibile: " + e) }
+        out.sort(function(a, b) { return a.host < b.host ? -1 : a.host > b.host ? 1 : a.type - b.type })
+        return out
+    }
+    // revoca: reset() riporta il permesso a "chiedi" (il sito richiederà di nuovo)
+    function permReset(origin, type) {
+        try {
+            var p = normalProfile.queryPermission(origin, type)
+            if (p.isValid) p.reset()
+        } catch(e) { console.warn("queryPermission/reset: " + e) }
+    }
+    function permRefreshPage() {
+        if (currentView && currentView.localPage === "permissions")
+            loadInternal(currentView, "permissions", permissionsHtml(), "https://permissions.local/")
+    }
+    function permissionsHtml() {
+        var rows = permList()
+        var body = rows.length ? rows.map(function(p) {
+            var st = p.granted ? ["Consentito", "#4ea866"] : ["Bloccato", "#f28b82"]
+            var enc = encodeURIComponent(p.origin) + "&t=" + p.type
+            return '<div class="prow"><span class="pbody"><span class="pt">' + win.htmlEsc(p.host) + '</span>'
+                 + '<span class="pu">' + win.htmlEsc(p.label) + '</span></span>'
+                 + '<span class="pst" style="color:' + st[1] + '">' + st[0] + '</span>'
+                 + '<a class="pact" href="https://permissions.local/reset?o=' + enc + '">Revoca</a></div>'
+        }).join("") : '<div class="empty">Nessun permesso concesso o bloccato. Quando un sito chiede fotocamera, microfono, posizione o notifiche, la tua scelta comparirà qui.</div>'
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Permessi</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px}
+.hint{color:#6a6a72;font-size:12px;margin:2px 0 10px}
+.empty{color:#6a6a72;font-size:14px;padding:14px 2px;line-height:1.5}
+.prow{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid #24242c}
+.pbody{flex:1;min-width:0;display:flex;flex-direction:column}
+.pt{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pu{font-size:12px;color:#8a8a92;margin-top:2px}
+.pst{flex:none;font-size:12px}
+.pact{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 2px 10px 10px}
+</style></head><body>
+<h1>Permessi</h1>
+<div class="hint">Consenti o blocca l'accesso dei siti a fotocamera, microfono, posizione e notifiche. Revoca = il sito tornerà a chiedere.</div>
+${body}
 </body></html>`
     }
 
@@ -1584,8 +1682,18 @@ ${histCss}
                             }
                             else if (u === "https://settings.local/cleardata2") win.clearBrowsingData()
                             win.loadInternal(this, "settings", win.settingsHtml(), "https://settings.local/")
+                        } else if (u.indexOf("https://permissions.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            // reset?o=<origin>&t=<type>: revoca (reset → il sito richiederà)
+                            var mPerm = u.match(/^https:\/\/permissions\.local\/reset\?o=([^&]*)&t=(\d+)$/)
+                            if (mPerm) win.permReset(decodeURIComponent(mPerm[1]), parseInt(mPerm[2]))
+                            win.loadInternal(this, "permissions", win.permissionsHtml(), "https://permissions.local/")
                         }
                     }
+                    // richiesta permesso di un sito (geoloc/notifiche/camera/mic/…):
+                    // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
+                    // profilo persiste. Senza handler le richieste morivano in silenzio.
+                    onPermissionRequested: function(permission) { win.showPermission(permission) }
                     onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
@@ -1980,6 +2088,51 @@ ${histCss}
                         color: joma.pressed ? "#4a6fd0" : "#3a5fc0"
                         Text { id: okTxt; anchors.centerIn: parent; text: "OK"; color: "white"; font.pixelSize: 20*win.u }
                         MouseArea { id: joma; anchors.fill: parent; onClicked: win.jsDialogDone(true) }
+                    }
+                }
+            }
+        }
+    }
+
+    // ===================== DIALOGO PERMESSI (#4) =====================
+    // "<host> vuole: <azione>" con Blocca/Consenti. Stessa UI del dialogo JS.
+    Rectangle {
+        id: permDlg
+        property bool open: false
+        property string host: ""
+        property string msg: ""
+        anchors.fill: parent
+        color: "#99000000"
+        visible: open; z: 90
+        MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(permDlg.width - 48*win.u, 460*win.u)
+            height: permCol.height + 36*win.u
+            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            Column {
+                id: permCol
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top; anchors.topMargin: 18*win.u
+                width: parent.width - 44*win.u
+                spacing: 14*win.u
+                Text { width: parent.width; text: permDlg.host; visible: permDlg.host.length > 0
+                    color: "#9aa0a6"; font.pixelSize: 17*win.u; elide: Text.ElideRight }
+                Text { width: parent.width; text: "Vuole: " + permDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
+                Row {
+                    anchors.right: parent.right; spacing: 10*win.u
+                    Rectangle {
+                        width: permNoTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
+                        color: pnma.pressed ? "#3a3a44" : "transparent"
+                        Text { id: permNoTxt; anchors.centerIn: parent; text: "Blocca"; color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        MouseArea { id: pnma; anchors.fill: parent; onClicked: win.permDecide(false) }
+                    }
+                    Rectangle {
+                        width: permYesTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
+                        color: pyma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        Text { id: permYesTxt; anchors.centerIn: parent; text: "Consenti"; color: "white"; font.pixelSize: 20*win.u }
+                        MouseArea { id: pyma; anchors.fill: parent; onClicked: win.permDecide(true) }
                     }
                 }
             }
