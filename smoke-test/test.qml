@@ -80,6 +80,21 @@ Window {
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property string cfgHome: ""             // vuoto = HOME interna RooTitanium
     property string cfgSearch: "duckduckgo"
+    property string cfgDlDir: "downloads"   // destinazione download (token in dlDirs)
+    // cartelle standard SFOS (inglesi anche con lingua italiana, verificato sul
+    // device); scelta chiusa: niente path liberi = niente dir inesistenti
+    readonly property var dlDirs: ({
+        downloads: { n: "Downloads",  p: "/home/defaultuser/Downloads" },
+        documents: { n: "Documenti",  p: "/home/defaultuser/Documents" },
+        pictures:  { n: "Immagini",   p: "/home/defaultuser/Pictures" },
+        videos:    { n: "Video",      p: "/home/defaultuser/Videos" },
+        music:     { n: "Musica",     p: "/home/defaultuser/Music" }
+    })
+    function downloadDirPath() {
+        // il default passa da rtNative: crea ~/Downloads se manca
+        if (cfgDlDir === "downloads" && typeof rtNative !== "undefined") return rtNative.downloadsPath()
+        return (dlDirs[cfgDlDir] || dlDirs.downloads).p
+    }
     readonly property var searchEngines: ({
         duckduckgo: { n: "DuckDuckGo", q: "https://lite.duckduckgo.com/lite/?q=" },
         google:     { n: "Google",     q: "https://www.google.com/search?q=" },
@@ -109,6 +124,8 @@ Window {
         cfgHome         = kvGet("set_homepage", "")
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
+        cfgDlDir        = kvGet("set_dldir", "downloads")
+        if (!dlDirs[cfgDlDir]) cfgDlDir = "downloads"
     }
     function applySetting(k, v) {
         if (k === "homepage") {
@@ -118,6 +135,7 @@ Window {
             cfgHome = v; kvSet("set_homepage", cfgHome); return
         }
         if (k === "search")        { if (searchEngines[v]) { cfgSearch = v; kvSet("set_search", v) } return }
+        if (k === "dldir")         { if (dlDirs[v]) { cfgDlDir = v; kvSet("set_dldir", v) } return }
         var on = v === "1"
         if (k === "js")            { cfgJs = on;        kvSet("set_js", v) }
         else if (k === "cookies")  { cfgCookies = on;   kvSet("set_cookies", v) }
@@ -469,11 +487,10 @@ Window {
 
     // senza accept() i download (Salva link/immagine, Content-Disposition,
     // blob/data) muoiono in silenzio: il profilo emette downloadRequested e
-    // nessuno risponde. Qui: destinazione FORZATA a ~/Downloads (creata se
-    // manca, via rtNative) per ogni tipo di download + tracking per la pagina.
+    // nessuno risponde. Qui: destinazione FORZATA alla cartella scelta in
+    // Impostazioni (default ~/Downloads) per ogni tipo di download + tracking.
     function handleDownload(download, priv) {
-        download.downloadDirectory = (typeof rtNative !== "undefined")
-            ? rtNative.downloadsPath() : "/home/defaultuser/Downloads"
+        download.downloadDirectory = downloadDirPath()
         download.accept()
         // nome definitivo DOPO accept (Chromium deduplica "file (1).ext")
         var e = {
@@ -492,7 +509,9 @@ Window {
             if (download.state === WebEngineDownloadRequest.DownloadCompleted) {
                 e.state = "done"
                 if (e.total > 0) e.received = e.total
-                toast.show("Scaricato in Downloads: " + e.name)
+                // cartella da e.path (quella vera del download, non la config
+                // corrente: potrebbe essere cambiata a download in corso)
+                toast.show("Scaricato in " + e.path.replace(/\/[^\/]*$/, "").replace(/^.*\//, "") + ": " + e.name)
             } else if (download.state === WebEngineDownloadRequest.DownloadCancelled) {
                 e.state = "cancel"
             } else if (download.state === WebEngineDownloadRequest.DownloadInterrupted) {
@@ -604,7 +623,7 @@ Window {
             return '<div class="drow"><span class="hfav" style="background:' + ico[0] + '">' + ico[1] + '</span>'
                  + '<span class="hbody"><span class="ht">' + win.htmlEsc(e.name) + '</span>'
                  + '<span class="hu" id="t' + e.did + '">' + win.htmlEsc(sub) + '</span>' + bar + '</span>' + act + '</div>'
-        }).join("") : '<div class="empty">Nessun download. I file scaricati finiscono in Downloads.</div>'
+        }).join("") : '<div class="empty">Nessun download. I file scaricati finiscono in ' + win.dlDirs[win.cfgDlDir].n + '.</div>'
         var clear = rows.some(function(e) { return e.state !== "run" })
             ? '<a class="clear" href="https://downloads.local/clear">Svuota elenco</a>' : ''
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download</title><style>
@@ -646,6 +665,13 @@ ${body}
             return '<a class="srow" href="https://settings.local/set?k=search&v=' + k + '">'
                  + '<span class="rad' + (on ? ' on' : '') + '"></span>'
                  + '<span class="sbody"><span class="st">' + searchEngines[k].n + '</span></span></a>'
+        }).join("")
+        var dldirs = ["downloads", "documents", "pictures", "videos", "music"].map(function(k) {
+            var on = cfgDlDir === k
+            return '<a class="srow" href="https://settings.local/set?k=dldir&v=' + k + '">'
+                 + '<span class="rad' + (on ? ' on' : '') + '"></span>'
+                 + '<span class="sbody"><span class="st">' + dlDirs[k].n + '</span>'
+                 + '<span class="sd">' + dlDirs[k].p.replace("/home/defaultuser", "~") + '</span></span></a>'
         }).join("")
         var clearRow = settingsClearArm
             ? '<div class="srow"><span class="sbody"><span class="st" style="color:#f28b82">Pulire i dati di navigazione?</span>'
@@ -696,8 +722,8 @@ ${sToggle("popups", cfgPopups, "Popup e nuove schede dai siti", "Spento: i link 
 <div class="srow dis"><span class="sbody"><span class="st">Password</span></span><span class="badge">In arrivo</span></div>
 <div class="srow dis"><span class="sbody"><span class="st">Permessi</span></span><span class="badge">In arrivo</span></div>
 ${clearRow}
-<h2>Download</h2>
-<div class="srow"><span class="sbody"><span class="st">Destinazione</span><span class="sd">~/Downloads</span></span></div>
+<h2>Download — Destinazione</h2>
+${dldirs}
 <h2>Aspetto</h2>
 ${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle pagine")}
 </body></html>`
