@@ -94,6 +94,13 @@ Window {
                 ch.arch = m ? "" : "x86"
                 ch.bitness = m ? "" : "64"
                 ch.wow64 = false
+                // NB brand "Google Chrome": NON impostabile in modo coerente. Il
+                // setter fullVersionList tocca solo la lista HIGH-entropy (via JS
+                // getHighEntropyValues), mentre l'header Sec-CH-UA low-entropy è
+                // gestito dallo stack di rete C++ e QtWebEngine non lo espone →
+                // aggiungere Google Chrome creava un mismatch high/low. Restiamo
+                // "Chromium 122" coerente ovunque (vendor "Google Inc." è normale
+                // anche per Chromium vero: tutti i browser Blink lo riportano)
             } catch(e) { console.warn("clientHints non disponibili: " + e) }
         }
     }
@@ -201,6 +208,26 @@ Window {
         try { Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { configurable: true, get: function(){ return true } }); } catch(e) {}
     })();`
 
+    // fingerprint fix (bug login #7): QtWebEngine crea window.chrome VUOTO (nessuna
+    // chiave, niente runtime/loadTimes/csi) → firma classica di browser non-Chrome
+    // usata dagli anti-bot. Ricostruisco un window.chrome minimale plausibile come
+    // fa Chrome vero su una pagina normale (loadTimes/csi funzioni, app/runtime
+    // oggetti; runtime SENZA id, come nelle pagine non-extension)
+    readonly property string chromeStubJs: `(function(){
+        if (window.__rtChrome) return; window.__rtChrome = true;
+        try {
+            var c = window.chrome = window.chrome || {};
+            if (!c.app)  c.app  = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+            if (!c.csi) c.csi = function(){ return { startE: Date.now(), onloadT: Date.now(), pageT: performance.now(), tran: 15 }; };
+            if (!c.loadTimes) c.loadTimes = function(){ var t = performance.timing || {}; return {
+                requestTime: (t.navigationStart||Date.now())/1000, startLoadTime: (t.navigationStart||Date.now())/1000,
+                commitLoadTime: (t.responseStart||Date.now())/1000, finishDocumentLoadTime: (t.domContentLoadedEventEnd||Date.now())/1000,
+                finishLoadTime: (t.loadEventEnd||Date.now())/1000, firstPaintTime: performance.now()/1000, firstPaintAfterLoadTime: 0,
+                navigationType: 'Other', wasFetchedViaSpdy: true, wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' }; };
+            if (!c.runtime) c.runtime = { OnInstalledReason: {}, OnRestartRequiredReason: {}, PlatformArch: {}, PlatformNaclArch: {}, PlatformOs: {}, RequestUpdateCheckStatus: {}, connect: function(){}, sendMessage: function(){} };
+        } catch(e){}
+    })();`
+
     function buildScripts() {
         var s = [{
             name: "rtScreenSpoof",
@@ -211,6 +238,12 @@ Window {
         }, {
             name: "rtYtTapFix",
             sourceCode: ytTapFixJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        }, {
+            name: "rtChromeStub",
+            sourceCode: chromeStubJs,
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
@@ -1119,7 +1152,19 @@ ${histCss}
             Object.defineProperty(proto, wName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.max(w,h) : Math.min(w,h); } });
             Object.defineProperty(proto, hName, { configurable: true, get: function(){ var w = dw.get.call(this), h = dh.get.call(this); return land ? Math.min(w,h) : Math.max(w,h); } });
         }
-        try { swapGet(Screen.prototype, 'width', 'height'); swapGet(Screen.prototype, 'availWidth', 'availHeight'); } catch(e){}
+        try { swapGet(Screen.prototype, 'width', 'height'); } catch(e){}
+        // availWidth/availHeight: Chromium con --force-device-scale-factor corregge
+        // width/height in px CSS (412x961) ma NON avail*, che restano FISICI
+        // (1080x2520) → availWidth(1080) > width(412), impossibile su un device
+        // vero e segnale-bot lampante (l'anti-bot di X controlla availWidth<=width,
+        // sospetta concausa del blocco login #7). Li allineo ai getter width/height
+        // già spoofati (avail == dimensione piena, come una PWA mobile fullscreen)
+        try {
+            Object.defineProperty(Screen.prototype, 'availWidth',  { configurable: true, get: function(){ return this.width;  } });
+            Object.defineProperty(Screen.prototype, 'availHeight', { configurable: true, get: function(){ return this.height; } });
+            Object.defineProperty(Screen.prototype, 'availLeft',   { configurable: true, get: function(){ return 0; } });
+            Object.defineProperty(Screen.prototype, 'availTop',    { configurable: true, get: function(){ return 0; } });
+        } catch(e){}
         try {
             var ot = Object.getOwnPropertyDescriptor(ScreenOrientation.prototype, 'type');
             var oa = Object.getOwnPropertyDescriptor(ScreenOrientation.prototype, 'angle');
