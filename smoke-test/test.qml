@@ -56,6 +56,7 @@ Window {
     }
     function closeTab(i) {
         tabsModel.remove(i)
+        saveSession()
         if (tabsModel.count === 0) { newTab(false); return }   // ultima scheda chiusa → HOME
         if (currentTab >= tabsModel.count) currentTab = tabsModel.count - 1
         Qt.callLater(refreshCurrent)
@@ -68,6 +69,138 @@ Window {
     readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     function setDesktop(on) { desktopMode = on; if (currentView) currentView.reload() }
+
+    // ===================== IMPOSTAZIONI (persistite nella kv della SQLite) =====================
+    property bool cfgJs: true               // Attiva JavaScript
+    property bool cfgCookies: true          // conserva i cookies alla chiusura (#5)
+    property bool cfgPopups: true           // consenti ai siti di aprire nuove schede (#6)
+    property bool cfgDnt: false             // Non tenere traccia
+    property bool cfgDark: false            // resa scura forzata (auto-dark Chromium)
+    property bool cfgStartPrivate: false    // avvia in navigazione privata
+    property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
+    property string cfgHome: ""             // vuoto = HOME interna RooTitanium
+    property string cfgSearch: "duckduckgo"
+    readonly property var searchEngines: ({
+        duckduckgo: { n: "DuckDuckGo", q: "https://lite.duckduckgo.com/lite/?q=" },
+        google:     { n: "Google",     q: "https://www.google.com/search?q=" },
+        bing:       { n: "Bing",       q: "https://www.bing.com/search?q=" },
+        startpage:  { n: "Startpage",  q: "https://www.startpage.com/sp/search?query=" }
+    })
+    function kvEnsure(tx) { tx.executeSql("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)") }
+    function kvGet(k, def) {
+        var v = def
+        try { histDb().transaction(function(tx) { kvEnsure(tx)
+            var rs = tx.executeSql("SELECT v FROM kv WHERE k=?", [k])
+            if (rs.rows.length) v = rs.rows.item(0).v }) } catch(e) {}
+        return v
+    }
+    function kvSet(k, v) {
+        try { histDb().transaction(function(tx) { kvEnsure(tx)
+            tx.executeSql("INSERT OR REPLACE INTO kv(k,v) VALUES(?,?)", [k, "" + v]) }) } catch(e) {}
+    }
+    function loadCfg() {
+        cfgJs           = kvGet("set_js", "1") === "1"
+        cfgCookies      = kvGet("set_cookies", "1") === "1"
+        cfgPopups       = kvGet("set_popups", "1") === "1"
+        cfgDnt          = kvGet("set_dnt", "0") === "1"
+        cfgDark         = kvGet("set_dark", "0") === "1"
+        cfgStartPrivate = kvGet("set_startprivate", "0") === "1"
+        cfgCloseTabs    = kvGet("set_closetabs", "1") === "1"
+        cfgHome         = kvGet("set_homepage", "")
+        cfgSearch       = kvGet("set_search", "duckduckgo")
+        if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
+    }
+    function applySetting(k, v) {
+        if (k === "homepage") {
+            v = v.trim()
+            // senza schema: completa a https:// (come la barra indirizzi)
+            if (v.length && !/^[a-z]+:\/\//i.test(v)) v = "https://" + v
+            cfgHome = v; kvSet("set_homepage", cfgHome); return
+        }
+        if (k === "search")        { if (searchEngines[v]) { cfgSearch = v; kvSet("set_search", v) } return }
+        var on = v === "1"
+        if (k === "js")            { cfgJs = on;        kvSet("set_js", v) }
+        else if (k === "cookies")  { cfgCookies = on;   kvSet("set_cookies", v) }
+        else if (k === "popups")   { cfgPopups = on;    kvSet("set_popups", v) }
+        else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs() }
+        else if (k === "dark")     { cfgDark = on;      kvSet("set_dark", v); applyViewPrefs() }
+        else if (k === "startprivate") { cfgStartPrivate = on; kvSet("set_startprivate", v) }
+        else if (k === "closetabs")    { cfgCloseTabs = on;    kvSet("set_closetabs", v)
+                                         if (on) kvSet("session_tabs", "[]"); else saveSession() }
+    }
+    // sessione (solo schede normali, mai incognito né pagine interne .local);
+    // salvata a ogni navigazione/chiusura scheda: non esiste un "on exit"
+    // affidabile (swipe-close di lipstick può uccidere il processo)
+    function saveSession() {
+        if (cfgCloseTabs) return
+        var urls = []
+        for (var i = 0; i < tabsModel.count; i++) {
+            var t = tabsModel.get(i)
+            if (!t.priv && /^https?:\/\//i.test(t.murl) && !/^https?:\/\/[^\/]*\.local(\/|$)/i.test(t.murl)) urls.push("" + t.murl)
+        }
+        kvSet("session_tabs", JSON.stringify(urls))
+    }
+
+    // HOME della scheda: pagina interna, o l'URL scelto in Impostazioni
+    function goHome(view) {
+        if (!view) return
+        if (cfgHome.length) view.url = cfgHome
+        else loadInternal(view, "home", homeHtml(), "about:blank")
+    }
+
+    // DNT solo lato JS (navigator.doNotTrack): l'header DNT: 1 vero
+    // richiederebbe un interceptor C++ in rtNative → rimandato
+    readonly property string dntJs: `(function(){
+        try { Object.defineProperty(Navigator.prototype, 'doNotTrack', { configurable: true, get: function(){ return '1' } }); } catch(e) {}
+        try { Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', { configurable: true, get: function(){ return true } }); } catch(e) {}
+    })();`
+
+    function buildScripts() {
+        var s = [{
+            name: "rtScreenSpoof",
+            sourceCode: screenSpoofJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        }, {
+            name: "rtYtTapFix",
+            sourceCode: ytTapFixJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        }]
+        if (cfgDnt) s.push({
+            name: "rtDnt",
+            sourceCode: dntJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        })
+        return s
+    }
+    // riallinea le view esistenti dopo un cambio impostazione (dark subito,
+    // DNT dal prossimo load). forceDarkMode è REVISION(6,7): assegnazione
+    // imperativa con guardia, mai binding dichiarativo (se il runtime QML non
+    // la espone, un binding romperebbe la creazione dell'intera view)
+    function applyViewPrefs() {
+        for (var i = 0; i < tabsRepeater.count; i++) {
+            var v = tabsRepeater.itemAt(i)
+            if (!v) continue
+            try { v.settings.forceDarkMode = cfgDark } catch(e) {}
+            v.userScripts.collection = buildScripts()
+        }
+    }
+
+    // Pulisci dati navigazione: cronologia + download + cache HTTP + sessione.
+    // I cookie NON si toccano da QML (niente cookie store): li governa il
+    // toggle "conserva i cookies" via persistentCookiesPolicy (#5)
+    function clearBrowsingData() {
+        histClear()
+        dlClear()
+        kvSet("session_tabs", "[]")
+        try { normalProfile.clearHttpCache() } catch(e) {}
+        toast.show("Dati di navigazione puliti")
+    }
 
     // carica una pagina interna su una view marcandola (localPage): loadHtml
     // non tocca la proprietà url, quindi timer/refresh Download e guardia
@@ -84,7 +217,7 @@ Window {
         if (t === "probe") { loadInternal(currentView, "probe", probeHtml(), "https://probe.local/"); return }   // pagina diagnostica
         if (/^[a-z]+:\/\//i.test(t)) currentView.url = t
         else if (/^[^ ]+\.[^ ]+$/.test(t)) currentView.url = "https://" + t
-        else currentView.url = "https://lite.duckduckgo.com/lite/?q=" + encodeURIComponent(t)
+        else currentView.url = searchEngines[cfgSearch].q + encodeURIComponent(t)
     }
 
     function colorizeUrl(u) {
@@ -127,6 +260,7 @@ Window {
         else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
         else if (a === "bookmarks") loadInternal(currentView, "bookmarks", bookmarksHtml(), "https://bookmarks.local/")
         else if (a === "downloads") loadInternal(currentView, "downloads", downloadsHtml(), "https://downloads.local/")
+        else if (a === "settings") openSettings(currentView)
         else if (a === "find") { if (currentView) { findBar.open = true; Qt.callLater(function(){ findInput.forceActiveFocus() }) } }
         else console.log("menu action (placeholder): " + a)
     }
@@ -297,11 +431,24 @@ Window {
         else if (a === "reload")      v.reload()
     }
 
-    // profilo NORMALE: persistente (cookie/login/cronologia salvati su disco)
+    // profilo NORMALE: persistente (cookie/login/cronologia salvati su disco).
+    // ⚠️ CAUSA del bug #5 "cookie non conservati": in QML il profilo nasce
+    // off-the-record e storageName da solo NON lo commuta (ProfileAdapter:
+    // setStorageName non tocca m_offTheRecord, verificato nei sorgenti 6.8.3)
+    // → senza offTheRecord:false esplicito su disco esisteva solo OffTheRecord/
     WebEngineProfile {
         id: normalProfile
         storageName: "rootitanium"
+        // NB: all'avvio QML applica offTheRecord prima di storageName → nel log
+        // compare "Storage name is empty…" seguito da "Switching to disk-based
+        // behavior": è il fallback previsto dal setter (SingleShotConnection su
+        // storageNameChanged), benigno
+        offTheRecord: false
         persistentStoragePath: "/home/defaultuser/.rootitanium"
+        // toggle Impostazioni→Privacy (#5): OFF = cookie di sessione, spariscono
+        // alla chiusura; il cambio vale da subito, non serve riavviare
+        persistentCookiesPolicy: win.cfgCookies ? WebEngineProfile.AllowPersistentCookies
+                                                : WebEngineProfile.NoPersistentCookies
         httpUserAgent: win.desktopMode ? win.uaDesktop : win.uaMobile
         onDownloadRequested: function(download) { win.handleDownload(download, false) }
     }
@@ -474,6 +621,85 @@ ${histCss}
 </style></head><body>
 <h1>Download</h1>${clear}
 ${body}
+</body></html>`
+    }
+
+    // ===================== IMPOSTAZIONI (pagina interna) =====================
+    // pagina modellata sul Browser SFOS (scelte utente 12 lug: Password e
+    // Permessi placeholder, niente "Barra strumenti fissa"). Tutto HTML puro
+    // (link sentinella https://settings.local/... + form GET per la homepage):
+    // deve funzionare anche col toggle JavaScript spento
+    property bool settingsClearArm: false   // "Pulisci dati" chiede conferma inline
+    function openSettings(view) {
+        settingsClearArm = false
+        loadInternal(view, "settings", settingsHtml(), "https://settings.local/")
+    }
+    function sToggle(k, on, title, desc) {
+        return '<a class="srow" href="https://settings.local/set?k=' + k + '&v=' + (on ? 0 : 1) + '">'
+             + '<span class="sbody"><span class="st">' + title + '</span>'
+             + (desc ? '<span class="sd">' + desc + '</span>' : '') + '</span>'
+             + '<span class="sw' + (on ? ' on' : '') + '"></span></a>'
+    }
+    function settingsHtml() {
+        var engines = ["duckduckgo", "google", "bing", "startpage"].map(function(k) {
+            var on = cfgSearch === k
+            return '<a class="srow" href="https://settings.local/set?k=search&v=' + k + '">'
+                 + '<span class="rad' + (on ? ' on' : '') + '"></span>'
+                 + '<span class="sbody"><span class="st">' + searchEngines[k].n + '</span></span></a>'
+        }).join("")
+        var clearRow = settingsClearArm
+            ? '<div class="srow"><span class="sbody"><span class="st" style="color:#f28b82">Pulire i dati di navigazione?</span>'
+              + '<span class="sd">Cronologia, elenco download, cache e sessione</span></span>'
+              + '<a class="act red" href="https://settings.local/cleardata2">Pulisci</a>'
+              + '<a class="act" href="https://settings.local/cancelclear">Annulla</a></div>'
+            : '<a class="srow" href="https://settings.local/cleardata"><span class="sbody">'
+              + '<span class="st">Pulisci dati navigazione</span>'
+              + '<span class="sd">Cronologia, elenco download e cache</span></span></a>'
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Impostazioni</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px}
+h2{font-size:13px;color:#9aa0a6;font-weight:600;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.6px}
+.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid #24242c;text-decoration:none;color:#e8eaed}
+.sbody{flex:1;min-width:0;display:flex;flex-direction:column}
+.st{font-size:15px}
+.sd{font-size:12px;color:#8a8a92;margin-top:2px}
+.sw{flex:none;width:46px;height:26px;border-radius:13px;background:#3a3a44;position:relative;transition:background .15s}
+.sw.on{background:#3a5fc0}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#e8eaed;transition:left .15s}
+.sw.on::after{left:23px}
+.rad{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid #6a6a72}
+.rad.on{border-color:#3a5fc0;background:radial-gradient(circle,#8ab4f8 0 5px,transparent 6px)}
+.dis .st{color:#6a6a72}
+.badge{flex:none;font-size:11px;color:#9aa0a6;border:1px solid #3a3a44;border-radius:9px;padding:3px 9px}
+.act{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
+.act.red{color:#f28b82}
+form{display:flex;gap:10px;padding:13px 2px;border-bottom:1px solid #24242c}
+input{flex:1;min-width:0;background:#1c1c22;border:1px solid #3a3a44;border-radius:8px;color:#e8eaed;font-size:15px;padding:10px 12px;outline:none}
+input:focus{border-color:#5a7fd0}
+button{flex:none;background:#3a5fc0;border:0;border-radius:8px;color:#fff;font-size:14px;padding:10px 16px}
+</style></head><body>
+<h1>Impostazioni</h1>
+<h2>Pagina iniziale</h2>
+<form action="https://settings.local/sethome" method="get">
+<input name="u" value="${htmlEsc(cfgHome)}" placeholder="HOME di RooTitanium" inputmode="url" autocapitalize="off" autocorrect="off">
+<button>Salva</button>
+</form>
+<h2>Motore di ricerca</h2>
+${engines}
+<h2>Privacy</h2>
+${sToggle("closetabs", cfgCloseTabs, "Chiudi tutte le schede all'uscita", "Spento: al riavvio ritrovi le schede aperte")}
+${sToggle("startprivate", cfgStartPrivate, "Avvia in navigazione privata", "")}
+${sToggle("dnt", cfgDnt, "Non tenere traccia", "Chiede ai siti di non tracciarti (DNT)")}
+${sToggle("js", cfgJs, "Attiva JavaScript", "Consentito, raccomandato")}
+${sToggle("cookies", cfgCookies, "Conserva i cookies alla chiusura", "Spento: i login non sopravvivono al riavvio")}
+${sToggle("popups", cfgPopups, "Popup e nuove schede dai siti", "Spento: i link si aprono nella scheda corrente")}
+<div class="srow dis"><span class="sbody"><span class="st">Password</span></span><span class="badge">In arrivo</span></div>
+<div class="srow dis"><span class="sbody"><span class="st">Permessi</span></span><span class="badge">In arrivo</span></div>
+${clearRow}
+<h2>Download</h2>
+<div class="srow"><span class="sbody"><span class="st">Destinazione</span><span class="sd">~/Downloads</span></span></div>
+<h2>Aspetto</h2>
+${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle pagine")}
 </body></html>`
     }
 
@@ -917,7 +1143,20 @@ ${histCss}
     onOrientChanged: pushOrientation()
 
     ListModel { id: tabsModel }
-    Component.onCompleted: newTab(false)
+    // avvio: config dalla kv PRIMA di creare la prima view (cfgJs/cfgCookies
+    // sono binding, ma la homepage/incognito di partenza si decide qui);
+    // ripristino sessione solo se "chiudi schede all'uscita" è spento
+    Component.onCompleted: {
+        loadCfg()
+        if (cfgStartPrivate) { newTab(true); return }
+        var urls = []
+        if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }
+        if (!urls || !urls.length) { newTab(false); return }
+        for (var i = 0; i < urls.length; i++)
+            tabsModel.append({ priv: false, start: "" + urls[i], murl: "" + urls[i], mtitle: "…" })
+        currentTab = 0
+        Qt.callLater(refreshCurrent)
+    }
 
     // contenitore ruotabile: TUTTA la UI vive qui dentro; in landscape si
     // scambiano larghezza/altezza e si ruota attorno al centro della finestra
@@ -945,7 +1184,7 @@ ${histCss}
                 width: 48 * win.u; height: parent.height
                 Text { anchors.centerIn: parent; text: "⌂"; color: "#e6e6ea"; font.pixelSize: 30 * win.u }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: hma.pressed ? 0.10 : 0 }
-                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; win.loadInternal(win.currentView, "home", win.homeHtml(), "about:blank") } }
+                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; win.goHome(win.currentView) } }
             }
 
             // back button; durante il caricamento diventa cerchio con ✕ (stop)
@@ -1112,24 +1351,28 @@ ${histCss}
                     // screen.* (in DIP) e le soglie gesture del display
                     zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, Math.min(win.width, win.height) / 412)
                     settings.fullScreenSupportEnabled: true
+                    settings.javascriptEnabled: win.cfgJs
                     Component.onCompleted: {
-                        userScripts.collection = [{
-                            name: "rtScreenSpoof",
-                            sourceCode: win.screenSpoofJs,
-                            injectionPoint: WebEngineScript.DocumentCreation,
-                            worldId: WebEngineScript.MainWorld,
-                            runsOnSubFrames: true
-                        }, {
-                            name: "rtYtTapFix",
-                            sourceCode: win.ytTapFixJs,
-                            injectionPoint: WebEngineScript.DocumentCreation,
-                            worldId: WebEngineScript.MainWorld,
-                            runsOnSubFrames: true
-                        }]
+                        userScripts.collection = win.buildScripts()
+                        // REVISION(6,7): guardia come in applyViewPrefs
+                        try { settings.forceDarkMode = win.cfgDark } catch(e) {}
                         if (model.start === "incognito") win.loadInternal(this, "incognito", win.incognitoHtml(), "about:blank")
-                        else if (model.start === "home") win.loadInternal(this, "home", win.homeHtml(), "about:blank")
+                        else if (model.start === "home") win.goHome(this)
                         else url = model.start
                         win.refreshCurrent()
+                    }
+                    // popup/nuove schede dai siti (#6): window.open, target=_blank…
+                    // niente request.openIn (le nostre view nascono dal Repeater):
+                    // si apre l'URL richiesto in una scheda nuova, senza legame
+                    // con l'opener — per un mini-browser basta. Toggle OFF: i
+                    // gesti dell'utente restano nella scheda corrente, i popup
+                    // spontanei (non user-initiated) muoiono con un toast
+                    onNewWindowRequested: function(request) {
+                        var u = "" + request.requestedUrl
+                        if (u === "" || u === "about:blank") return
+                        if (win.cfgPopups) win.newTabUrl(priv, u)
+                        else if (request.userInitiated) url = u
+                        else toast.show("Popup bloccato: " + win.histHost(u))
                     }
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
@@ -1177,9 +1420,24 @@ ${histCss}
                                 else if (u === "https://downloads.local/clear") win.dlClear()
                                 win.loadInternal(this, "downloads", win.downloadsHtml(), "https://downloads.local/")
                             }
+                        } else if (u.indexOf("https://settings.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            // set?k=&v= dai toggle/radio; sethome?u= dal form GET
+                            // (spazi codificati come +); cleardata → conferma
+                            // inline → cleardata2 esegue
+                            var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z]+)&v=([a-z0-9]*)$/)
+                            var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
+                            win.settingsClearArm = (u === "https://settings.local/cleardata")
+                            if (mSet) win.applySetting(mSet[1], mSet[2])
+                            else if (mSHome) {
+                                win.applySetting("homepage", decodeURIComponent(mSHome[1].replace(/\+/g, "%20")))
+                                toast.show(win.cfgHome.length ? "Pagina iniziale salvata" : "Pagina iniziale: HOME di RooTitanium")
+                            }
+                            else if (u === "https://settings.local/cleardata2") win.clearBrowsingData()
+                            win.loadInternal(this, "settings", win.settingsHtml(), "https://settings.local/")
                         }
                     }
-                    onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url) }
+                    onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
