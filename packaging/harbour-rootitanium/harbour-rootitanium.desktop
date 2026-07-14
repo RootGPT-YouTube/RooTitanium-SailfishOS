@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+# generic = nessun booster Silica/Qt5 (la nostra e' un'app Qt6 custom via script)
+X-Nemo-Application-Type=generic
+Name=RooTitanium
+Comment=Browser Qt6 WebEngine
+# Exec = launcher ELF in /usr/bin (sailjail: rifiuta gli script e vuole il
+# binario in /usr/bin/). harbour-rootitanium imposta l'env come run.sh ed esegue
+# /home/rootitanium/webengine-smoke.
+Exec=harbour-rootitanium
+Icon=harbour-rootitanium
+Categories=Network;WebBrowser;
+
+[X-Sailjail]
+# Sandboxing=Disabled: l'app NON gira in firejail (serve accesso pieno a
+# /home/rootitanium, alle lib hybris di sistema e a Chromium --no-sandbox).
+# Senza questa sezione sailjaild rifiuta il lancio dall'icona.
+OrganizationName=com.github.RootGPT_YouTube
+ApplicationName=rootitanium
+Sandboxing=Disabled
