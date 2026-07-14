@@ -1668,6 +1668,7 @@ ${histCss}
                 id: tabsRepeater
                 model: tabsModel
                 WebEngineView {
+                    id: webView
                     anchors.fill: parent
                     visible: index === win.currentTab
                     property bool priv: model.priv
@@ -1693,6 +1694,31 @@ ${histCss}
                         else if (model.start === "home") win.goHome(this)
                         else url = model.start
                         win.refreshCurrent()
+                    }
+                    // --- lifecycle: sospendi le schede in background per non
+                    //     saturare la RAM (con swap zram → thrashing → freeze
+                    //     globale del device, come i canali pesanti di RooTelegram).
+                    //     Frozen sospende JS/timer/polling; dopo un po' Discarded
+                    //     libera del tutto il renderer (ricarica da url al ritorno).
+                    //     Le pagine interne (loadHtml) NON si scartano: Discard
+                    //     ricarica da url e loadHtml non aggiorna url → perderemmo
+                    //     l'HTML. Restano al più Frozen (statiche, costo ~nullo).
+                    //     Transizioni ammesse: Active→Frozen e Frozen→Discarded
+                    //     solo con view !visible; →Active sempre.
+                    onVisibleChanged: {
+                        if (visible) {
+                            discardTimer.stop()
+                            lifecycleState = WebEngineView.LifecycleState.Active
+                        } else {
+                            lifecycleState = WebEngineView.LifecycleState.Frozen
+                            if (localPage === "") discardTimer.restart()
+                        }
+                    }
+                    Timer {
+                        id: discardTimer
+                        interval: 60000   // 60s in background → scarta il renderer
+                        onTriggered: if (!webView.visible && webView.localPage === "")
+                                         webView.lifecycleState = WebEngineView.LifecycleState.Discarded
                     }
                     // popup/nuove schede dai siti (#6): window.open, target=_blank…
                     // niente request.openIn (le nostre view nascono dal Repeater):
