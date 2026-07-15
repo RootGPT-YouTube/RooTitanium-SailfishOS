@@ -7,9 +7,12 @@ Comment=Browser Qt6 WebEngine
 # Exec = launcher ELF in /usr/bin (sailjail: rifiuta gli script e vuole il
 # binario in /usr/bin/). harbour-rootitanium imposta l'env come run.sh ed esegue
 # /home/rootitanium/webengine-smoke.
-Exec=harbour-rootitanium
+Exec=harbour-rootitanium %u
 Icon=harbour-rootitanium
 Categories=Network;WebBrowser;
+# MimeType: fa comparire RooTitanium nel chooser «Apri con» di sistema per i
+# link (libcontentaction legge questi handler dal .desktop). %u passa l'URL.
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
 
 [X-Sailjail]
 # Sandboxing=Disabled: l'app NON gira in firejail (serve accesso pieno a

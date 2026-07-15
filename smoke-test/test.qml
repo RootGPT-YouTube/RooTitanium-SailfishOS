@@ -28,12 +28,12 @@ Window {
     // palette per la chrome/dialoghi QML (i colori delle pagine HTML stanno in themeVars)
     readonly property var pal: uiDark ? ({
         bg: "#101014", surface: "#1c1c22", card: "#2c2c31", border: "#3a3a42",
-        fg: "#e6e6ea", fg2: "#c8c8d0", muted: "#9aa0a6", faint: "#6a6a72",
+        fg: "#e6e6ea", fg2: "#c8c8d0", muted: "#9aa0a6", muted2: "#8a8a92", faint: "#6a6a72", ok: "#4ea866",
         line: "#3a3a44", link: "#8ab4f8", accent: "#3a5fc0", accentPress: "#4a6fd0",
         neutralPress: "#3a3a44", focus: "#5a7fd0", incAccent: "#c9b8e0"
     }) : ({
         bg: "#e9e9ec", surface: "#ffffff", card: "#ffffff", border: "#d6d6dc",
-        fg: "#1b1b20", fg2: "#33333a", muted: "#5c5c66", faint: "#9a9aa4",
+        fg: "#1b1b20", fg2: "#33333a", muted: "#5c5c66", muted2: "#6a6a74", faint: "#9a9aa4", ok: "#2e7d46",
         line: "#d0d0d6", link: "#1a56d0", accent: "#3a5fc0", accentPress: "#2f4fa8",
         neutralPress: "#e0e0e6", focus: "#5a7fd0", incAccent: "#7a4fd0"
     })
@@ -487,11 +487,12 @@ Window {
     function colorizeUrl(u) {
         u = "" + u
         var m = u.match(/^([a-z][a-z0-9+.-]*):\/\/([^\/]*)(.*)$/i)
-        if (!m) return '<span style="color:var(--fg)">' + u + '</span>'
-        return '<span style="color:var(--ok)">' + m[1] + '</span>'
-             + '<span style="color:var(--faint)">://</span>'
-             + '<span style="color:var(--fg)">' + m[2] + '</span>'
-             + '<span style="color:var(--muted2)">' + m[3] + '</span>'
+        // Text QML in RichText: le var(--x) CSS non vengono risolte da Qt → usare pal
+        if (!m) return '<span style="color:' + win.pal.fg + '">' + u + '</span>'
+        return '<span style="color:' + win.pal.ok + '">' + m[1] + '</span>'
+             + '<span style="color:' + win.pal.faint + '">://</span>'
+             + '<span style="color:' + win.pal.fg + '">' + m[2] + '</span>'
+             + '<span style="color:' + win.pal.muted2 + '">' + m[3] + '</span>'
     }
 
     readonly property var menuModel: [
@@ -1600,6 +1601,10 @@ ${histCss}
         // pop-up una-tantum: spiega come gestire i permessi via «Permessi App»
         // (mostrato una sola volta, differito così compare sopra la UI pronta).
         if (!cfgFirstRunSeen) Qt.callLater(function() { firstRunDlg.open = true })
+        // URL passato dal chooser di sistema (main.cpp → rtOpenUrl via .desktop %u).
+        // typeof: la property manca se il binario è più vecchio del test.qml (scp).
+        var initUrl = (typeof rtOpenUrl !== "undefined" && rtOpenUrl) ? "" + rtOpenUrl : ""
+        if (initUrl !== "") { tabsModel.append({ priv: false, start: initUrl, murl: initUrl, mtitle: "…" }); currentTab = 0; return }
         if (cfgStartPrivate) { newTab(true); return }
         var urls = []
         if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }
@@ -1739,7 +1744,7 @@ ${histCss}
                     text: {
                         if (!win.currentView) return ""
                         var u = "" + win.currentView.url
-                        if (u === "" || u === "about:blank") return '<span style="color:var(--faint)">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
+                        if (u === "" || u === "about:blank") return '<span style="color:' + win.pal.faint + '">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
                         return win.colorizeUrl(u)
                     }
                     textFormat: Text.RichText; font.pixelSize: 22 * win.u
@@ -1750,7 +1755,7 @@ ${histCss}
                     anchors.left: infoIcon.right; anchors.right: parent.right; anchors.leftMargin: 12*win.u; anchors.rightMargin: 20*win.u
                     anchors.verticalCenter: parent.verticalCenter
                     visible: activeFocus
-                    color: "white"; font.pixelSize: 22 * win.u; clip: true
+                    color: win.pal.fg; font.pixelSize: 22 * win.u; clip: true
                     inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
                     selectByMouse: true
                     onActiveFocusChanged: if (activeFocus && win.currentView) { var u = "" + win.currentView.url; text = (u === "about:blank" ? "" : u); selectAll() }

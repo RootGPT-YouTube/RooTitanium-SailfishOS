@@ -152,9 +152,22 @@ int main(int argc, char **argv)
 
     // carica test.qml dalla stessa cartella dell'eseguibile
     const QString base = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
+
+    // URL da aprire passato dal chooser di sistema (.desktop: Exec=... %u): il
+    // primo argomento http(s)/file — lipstick/libcontentaction lancia l'app con
+    // l'URL del link. Esposto al QML come rtOpenUrl; test.qml lo apre all'avvio.
+    QString openUrl;
+    for (int i = 1; i < argc; ++i) {
+        const QString a = QString::fromLocal8Bit(argv[i]);
+        if (a.startsWith(QLatin1String("http://"))  ||
+            a.startsWith(QLatin1String("https://")) ||
+            a.startsWith(QLatin1String("file://"))) { openUrl = a; break; }
+    }
+
     QQmlApplicationEngine engine;
     NativeHelper native;
     engine.rootContext()->setContextProperty(QStringLiteral("rtNative"), &native);
+    engine.rootContext()->setContextProperty(QStringLiteral("rtOpenUrl"), openUrl);
     engine.load(QUrl::fromLocalFile(base + "/test.qml"));
     if (engine.rootObjects().isEmpty())
         return -1;
