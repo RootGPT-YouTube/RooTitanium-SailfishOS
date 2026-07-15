@@ -75,13 +75,21 @@ int main(int argc, char **argv) {
            "--blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 "
            "--force-device-scale-factor=2.6214 --touch-slop-distance=28", 0);
 
-    /* exec di webengine-smoke con argv[0] = suo path in /home/rootitanium, cosi'
-     * main.cpp (base = dirname(argv[0])) trova /home/rootitanium/test.qml. */
+    /* execv del binario webengine-smoke, ma con argv[0] FORGIATO =
+     * /home/rootitanium/harbour-rootitanium. Due requisiti in uno:
+     *   - basename(argv[0]) == "harbour-rootitanium" == basename del .desktop:
+     *     lipstick deriva l'app-id della finestra dalla cmdline del processo
+     *     client (/proc/PID) e la confronta col launcher item; se non combacia
+     *     NON aggancia la finestra alla cover del launcher e resta una
+     *     cover-segnaposto "in avvio" con spinner che va in timeout (doppia cover).
+     *   - dirname(argv[0]) == "/home/rootitanium": main.cpp risolve test.qml da li'. */
     char bin[PATH_MAX];
     snprintf(bin, sizeof(bin), "%s/webengine-smoke", HERE);
+    char argv0[PATH_MAX];
+    snprintf(argv0, sizeof(argv0), "%s/harbour-rootitanium", HERE);
     char **nargv = malloc(sizeof(char *) * (argc + 1));
     if (!nargv) return 1;
-    nargv[0] = bin;                    /* argv[0] = /home/rootitanium/webengine-smoke */
+    nargv[0] = argv0;                  /* argv[0] = /home/rootitanium/harbour-rootitanium */
     for (int i = 1; i < argc; i++) nargv[i] = argv[i];
     nargv[argc] = NULL;
     execv(bin, nargv);

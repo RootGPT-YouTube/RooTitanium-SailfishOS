@@ -18,6 +18,7 @@
 #include <QVariantList>
 #include <QProcess>
 #include <QDebug>
+#include <sys/prctl.h>
 // interceptor header (QtWebEngineCore) + profilo QML (QQuickWebEngineProfile
 // espone setUrlRequestInterceptor come metodo C++ pubblico, verificato in 6.8.3)
 #include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
@@ -135,12 +136,19 @@ public:
 
 int main(int argc, char **argv)
 {
+    // comm del processo (/proc/PID/stat, /proc/PID/comm) = "harbour-rootita"
+    // (troncato a 15 char): assicura che, oltre alla cmdline (argv[0] forgiato dal
+    // launcher), anche il nome-processo che lipstick puo' leggere combaci col
+    // launcher item. Insieme evitano la cover-segnaposto fantasma all'avvio.
+    prctl(PR_SET_NAME, (unsigned long)"harbour-rootitanium", 0, 0, 0);
+
     QtWebEngineQuick::initialize();
     QGuiApplication app(argc, argv);
-    // app_id Wayland = basename del .desktop (rootitanium.desktop): senza questo
-    // lipstick non aggancia la finestra alla cover del launcher e mostra una
-    // cover-segnaposto "in avvio" che va in timeout e si chiude da sola.
-    app.setDesktopFileName(QStringLiteral("rootitanium"));
+    // app_id Wayland = basename del .desktop INSTALLATO (harbour-rootitanium.desktop):
+    // deve combaciare col nome del .desktop da cui lipstick lancia, altrimenti non
+    // aggancia la finestra alla cover del launcher e mostra una cover-segnaposto
+    // "in avvio" che va in timeout e si chiude da sola (doppia cover all'avvio).
+    app.setDesktopFileName(QStringLiteral("harbour-rootitanium"));
 
     // carica test.qml dalla stessa cartella dell'eseguibile
     const QString base = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();

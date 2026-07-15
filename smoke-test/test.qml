@@ -13,6 +13,13 @@ Window {
     // u basato sul lato corto: resta costante quando il contenuto ruota in landscape
     readonly property real u: Math.min(width, height) / 540
 
+    // --- lingua UI: italiano se il dispositivo è italiano, altrimenti inglese ---
+    // Tutta la UI è bilingue via t(it, en). Rilevamento una-tantum dal locale di
+    // sistema (Qt.locale() = LANG della sessione; il launcher forza it_IT solo se
+    // LANG è vuoto, quindi su device non-italiano qui arriva la lingua reale).
+    readonly property bool uiIt: ("" + Qt.locale().name).toLowerCase().indexOf("it") === 0
+    function t(it, en) { return uiIt ? it : en }
+
     // --- rotazione landscape ---
     // lipstick NON ruota le superfici wayland (le app SFOS si ruotano da sole):
     // ruotiamo il contenitore root (appRoot). Sensori non disponibili in Qt6 sul
@@ -138,17 +145,27 @@ Window {
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
+    // Permessi App: gate master di capacità, sopra i permessi per-sito. Se OFF,
+    // RooTitanium nega quella capacità a TUTTI i siti (il sito non viene neppure
+    // interpellato). Servono perché l'app gira Sandboxing=Disabled: i permessi OS
+    // non sono applicati, quindi l'unico gate reale è qui dentro.
+    property bool cfgPermCam: true          // fotocamera
+    property bool cfgPermMic: true          // microfono
+    property bool cfgPermLoc: true          // posizione
+    property bool cfgPermNotif: true        // notifiche
+    property bool cfgPermDownload: true     // download/salvataggio file
+    property bool cfgFirstRunSeen: false    // pop-up una-tantum "primo avvio" già mostrato
     property string cfgHome: ""             // vuoto = HOME interna RooTitanium
     property string cfgSearch: "duckduckgo"
     property string cfgDlDir: "downloads"   // destinazione download (token in dlDirs)
     // cartelle standard SFOS (inglesi anche con lingua italiana, verificato sul
     // device); scelta chiusa: niente path liberi = niente dir inesistenti
     readonly property var dlDirs: ({
-        downloads: { n: "Downloads",  p: "/home/defaultuser/Downloads" },
-        documents: { n: "Documenti",  p: "/home/defaultuser/Documents" },
-        pictures:  { n: "Immagini",   p: "/home/defaultuser/Pictures" },
-        videos:    { n: "Video",      p: "/home/defaultuser/Videos" },
-        music:     { n: "Musica",     p: "/home/defaultuser/Music" }
+        downloads: { n: win.t("Downloads", "Downloads"),  p: "/home/defaultuser/Downloads" },
+        documents: { n: win.t("Documenti", "Documents"),  p: "/home/defaultuser/Documents" },
+        pictures:  { n: win.t("Immagini", "Pictures"),   p: "/home/defaultuser/Pictures" },
+        videos:    { n: win.t("Video", "Videos"),      p: "/home/defaultuser/Videos" },
+        music:     { n: win.t("Musica", "Music"),     p: "/home/defaultuser/Music" }
     })
     function downloadDirPath() {
         // il default passa da rtNative: crea ~/Downloads se manca
@@ -183,6 +200,12 @@ Window {
         cfgCloseTabs    = kvGet("set_closetabs", "1") === "1"
         cfgFarble       = kvGet("set_farble", "1") === "1"
         cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
+        cfgPermCam      = kvGet("set_perm_cam", "1") === "1"
+        cfgPermMic      = kvGet("set_perm_mic", "1") === "1"
+        cfgPermLoc      = kvGet("set_perm_loc", "1") === "1"
+        cfgPermNotif    = kvGet("set_perm_notif", "1") === "1"
+        cfgPermDownload = kvGet("set_perm_dl", "1") === "1"
+        cfgFirstRunSeen = kvGet("first_run_seen", "0") === "1"
         cfgHome         = kvGet("set_homepage", "")
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
@@ -209,6 +232,11 @@ Window {
                                          if (on) kvSet("session_tabs", "[]"); else saveSession() }
         else if (k === "farble")   { cfgFarble = on;   kvSet("set_farble", v); applyViewPrefs() }
         else if (k === "nocookie") { cfgNoCookieBanner = on; kvSet("set_nocookie", v); applyViewPrefs() }
+        else if (k === "permcam")   { cfgPermCam = on;      kvSet("set_perm_cam", v) }
+        else if (k === "permmic")   { cfgPermMic = on;      kvSet("set_perm_mic", v) }
+        else if (k === "permloc")   { cfgPermLoc = on;      kvSet("set_perm_loc", v) }
+        else if (k === "permnotif") { cfgPermNotif = on;    kvSet("set_perm_notif", v) }
+        else if (k === "permdl")    { cfgPermDownload = on; kvSet("set_perm_dl", v) }
     }
     // sessione (solo schede normali, mai incognito né pagine interne .local);
     // salvata a ogni navigazione/chiusura scheda: non esiste un "on exit"
@@ -401,7 +429,7 @@ Window {
         dlClear()
         kvSet("session_tabs", "[]")
         try { normalProfile.clearHttpCache() } catch(e) {}
-        toast.show("Dati di navigazione puliti")
+        toast.show(win.t("Dati di navigazione puliti", "Browsing data cleared"))
     }
 
     // carica una pagina interna su una view marcandola (localPage): loadHtml
@@ -433,21 +461,21 @@ Window {
     }
 
     readonly property var menuModel: [
-        { t: "item", ic: "newtab",   l: "Nuova scheda",          a: "newtab" },
-        { t: "item", ic: "private",  l: "Scheda anonima",        a: "private" },
+        { t: "item", ic: "newtab",   l: win.t("Nuova scheda", "New tab"),           a: "newtab" },
+        { t: "item", ic: "private",  l: win.t("Scheda anonima", "Private tab"),      a: "private" },
         { t: "sep" },
-        { t: "item", ic: "search",   l: "Cerca nella pagina",    a: "find" },
-        { t: "item", ic: "share",    l: "Condividi",             a: "share" },
-        { t: "item", ic: "pdf",      l: "Salva pagina come PDF", a: "pdf" },
+        { t: "item", ic: "search",   l: win.t("Cerca nella pagina", "Find in page"), a: "find" },
+        { t: "item", ic: "share",    l: win.t("Condividi", "Share"),                a: "share" },
+        { t: "item", ic: "pdf",      l: win.t("Salva pagina come PDF", "Save page as PDF"), a: "pdf" },
         { t: "sep" },
-        { t: "item", ic: "desktop",  l: "Versione desktop",      a: "desktop", toggle: true },
-        { t: "item", ic: "rotate",   l: "Ruota in orizzontale",  a: "rotate",  toggle: true },
+        { t: "item", ic: "desktop",  l: win.t("Versione desktop", "Desktop site"),   a: "desktop", toggle: true },
+        { t: "item", ic: "rotate",   l: win.t("Ruota in orizzontale", "Rotate to landscape"), a: "rotate",  toggle: true },
         { t: "sep" },
-        { t: "item", ic: "staradd",  l: "Aggiungi ai segnalibri", a: "addbookmark" },
-        { t: "item", ic: "star",     l: "Segnalibri",            a: "bookmarks" },
-        { t: "item", ic: "history",  l: "Cronologia",            a: "history" },
-        { t: "item", ic: "download", l: "Download",              a: "downloads" },
-        { t: "item", ic: "settings", l: "Impostazioni",          a: "settings" }
+        { t: "item", ic: "staradd",  l: win.t("Aggiungi ai segnalibri", "Add bookmark"), a: "addbookmark" },
+        { t: "item", ic: "star",     l: win.t("Segnalibri", "Bookmarks"),           a: "bookmarks" },
+        { t: "item", ic: "history",  l: win.t("Cronologia", "History"),             a: "history" },
+        { t: "item", ic: "download", l: win.t("Download", "Downloads"),             a: "downloads" },
+        { t: "item", ic: "settings", l: win.t("Impostazioni", "Settings"),          a: "settings" }
     ]
 
     function doAction(a) {
@@ -478,13 +506,13 @@ Window {
         // su pagina interna view.url resta quello della pagina PRECEDENTE
         // (loadHtml non lo aggiorna): localPage decide, mai condividerlo
         if (currentView.localPage !== "" || u === "" || u === "about:blank" || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(u)) {
-            toast.show("Questa pagina non si può condividere"); return
+            toast.show(win.t("Questa pagina non si può condividere", "This page can't be shared")); return
         }
         if (typeof rtNative !== "undefined" && rtNative.shareUrl(u, "" + currentView.title)) return
         clipHelper.text = u
         clipHelper.selectAll()
         clipHelper.copy()
-        toast.show("Link copiato negli appunti")
+        toast.show(win.t("Link copiato negli appunti", "Link copied to clipboard"))
     }
     TextInput { id: clipHelper; visible: false }
 
@@ -497,7 +525,7 @@ Window {
             ? rtNative.pdfPathForTitle("" + currentView.title)
             : "/home/defaultuser/pagina.pdf"
         currentView.printToPdf(p)
-        toast.show("Creazione PDF…")
+        toast.show(win.t("Creazione PDF…", "Creating PDF…"))
     }
 
     // ===================== CONTEXT MENU (longpress) =====================
@@ -525,31 +553,31 @@ Window {
 
         var items = []
         if (ctxLink !== "") {
-            items.push({ l: "Apri in nuova scheda",   a: "link_newtab" })
-            items.push({ l: "Apri in scheda anonima",  a: "link_private" })
-            items.push({ l: "Copia indirizzo link",    a: "link_copy" })
-            items.push({ l: "Salva link",              a: "link_save" })
+            items.push({ l: win.t("Apri in nuova scheda", "Open in new tab"),   a: "link_newtab" })
+            items.push({ l: win.t("Apri in scheda anonima", "Open in private tab"),  a: "link_private" })
+            items.push({ l: win.t("Copia indirizzo link", "Copy link address"),    a: "link_copy" })
+            items.push({ l: win.t("Salva link", "Save link"),              a: "link_save" })
         }
         if (ctxImg !== "") {
             if (items.length) items.push({ sep: true })
-            items.push({ l: "Apri immagine in nuova scheda", a: "img_newtab" })
-            items.push({ l: "Copia immagine",                a: "img_copy" })
-            items.push({ l: "Salva immagine",                a: "img_save" })
+            items.push({ l: win.t("Apri immagine in nuova scheda", "Open image in new tab"), a: "img_newtab" })
+            items.push({ l: win.t("Copia immagine", "Copy image"),                a: "img_copy" })
+            items.push({ l: win.t("Salva immagine", "Save image"),                a: "img_save" })
         }
         if (sel !== "") {
             if (items.length) items.push({ sep: true })
-            items.push({ l: "Copia", a: "copy" })
-            if (editable) items.push({ l: "Taglia", a: "cut" })
+            items.push({ l: win.t("Copia", "Copy"), a: "copy" })
+            if (editable) items.push({ l: win.t("Taglia", "Cut"), a: "cut" })
         }
         if (editable) {
             if (items.length) items.push({ sep: true })
-            items.push({ l: "Incolla", a: "paste" })
-            items.push({ l: "Seleziona tutto", a: "selall" })
+            items.push({ l: win.t("Incolla", "Paste"), a: "paste" })
+            items.push({ l: win.t("Seleziona tutto", "Select all"), a: "selall" })
         }
         if (items.length) items.push({ sep: true })
-        items.push({ l: "Indietro", a: "back",    dis: !view.canGoBack })
-        items.push({ l: "Avanti",   a: "forward", dis: !view.canGoForward })
-        items.push({ l: "Ricarica", a: "reload" })
+        items.push({ l: win.t("Indietro", "Back"), a: "back",    dis: !view.canGoBack })
+        items.push({ l: win.t("Avanti", "Forward"),   a: "forward", dis: !view.canGoForward })
+        items.push({ l: win.t("Ricarica", "Reload"), a: "reload" })
         ctxModel = items
 
         // req.position è relativo alla WebEngineView (che sta sotto la toolbar)
@@ -565,10 +593,10 @@ Window {
         ctxLink = ""; ctxImg = ""
         var f = req.touchSelectionCommandFlags
         var items = []
-        if (f & TouchSelectionMenuRequest.Copy)  items.push({ l: "Copia",   a: "copy" })
-        if (f & TouchSelectionMenuRequest.Cut)   items.push({ l: "Taglia",  a: "cut" })
-        if (f & TouchSelectionMenuRequest.Paste) items.push({ l: "Incolla", a: "paste" })
-        items.push({ l: "Seleziona tutto", a: "selall" })
+        if (f & TouchSelectionMenuRequest.Copy)  items.push({ l: win.t("Copia", "Copy"),   a: "copy" })
+        if (f & TouchSelectionMenuRequest.Cut)   items.push({ l: win.t("Taglia", "Cut"),  a: "cut" })
+        if (f & TouchSelectionMenuRequest.Paste) items.push({ l: win.t("Incolla", "Paste"), a: "paste" })
+        items.push({ l: win.t("Seleziona tutto", "Select all"), a: "selall" })
         ctxModel = items
         // selectionBounds è relativo alla WebEngineView; il menù sotto la selezione
         ctxMenu.px = req.selectionBounds.x
@@ -601,9 +629,9 @@ Window {
         menu.open = false
         ctxView = null
         ctxModel = [
-            { l: "Seleziona tutto", a: "ub_selall" },
-            { l: "Copia",           a: "ub_copy",  dis: urlbar.text.length === 0 },
-            { l: "Incolla",         a: "ub_paste", dis: !urlbar.canPaste }
+            { l: win.t("Seleziona tutto", "Select all"), a: "ub_selall" },
+            { l: win.t("Copia", "Copy"),           a: "ub_copy",  dis: urlbar.text.length === 0 },
+            { l: win.t("Incolla", "Paste"),         a: "ub_paste", dis: !urlbar.canPaste }
         ]
         ctxMenu.px = 60 * u
         ctxMenu.py = toolbar.height + 4 * u
@@ -613,13 +641,13 @@ Window {
     function ctxAction(a) {
         ctxMenu.open = false
         if (a === "ub_selall") { urlbar.forceActiveFocus(); urlbar.selectAll(); return }
-        if (a === "ub_copy")   { if (urlbar.selectedText.length === 0) urlbar.selectAll(); urlbar.copy(); toast.show("Copiato negli appunti"); return }
+        if (a === "ub_copy")   { if (urlbar.selectedText.length === 0) urlbar.selectAll(); urlbar.copy(); toast.show(win.t("Copiato negli appunti", "Copied to clipboard")); return }
         if (a === "ub_paste")  { urlbar.forceActiveFocus(); urlbar.paste(); return }
         var v = ctxView
         if (!v) return
         if (a === "link_newtab")      newTabUrl(false, ctxLink)
         else if (a === "link_private") newTabUrl(true, ctxLink)
-        else if (a === "link_copy")   { clipHelper.text = ctxLink; clipHelper.selectAll(); clipHelper.copy(); toast.show("Link copiato negli appunti") }
+        else if (a === "link_copy")   { clipHelper.text = ctxLink; clipHelper.selectAll(); clipHelper.copy(); toast.show(win.t("Link copiato negli appunti", "Link copied to clipboard")) }
         else if (a === "link_save")   v.triggerWebAction(WebEngineView.DownloadLinkToDisk)
         else if (a === "img_newtab")  newTabUrl(v.priv, ctxImg)
         else if (a === "img_copy")    v.triggerWebAction(WebEngineView.CopyImageToClipboard)
@@ -690,6 +718,13 @@ Window {
     // nessuno risponde. Qui: destinazione FORZATA alla cartella scelta in
     // Impostazioni (default ~/Downloads) per ogni tipo di download + tracking.
     function handleDownload(download, priv) {
+        // gate master "Permessi App": se i download sono revocati a livello app,
+        // annulla senza salvare nulla.
+        if (!cfgPermDownload) {
+            try { download.cancel() } catch(e) {}
+            toast.show(win.t("Download bloccato — riattivalo in Impostazioni › Permessi App", "Download blocked — re-enable it in Settings › App Permissions"))
+            return
+        }
         download.downloadDirectory = downloadDirPath()
         download.accept()
         // nome definitivo DOPO accept (Chromium deduplica "file (1).ext")
@@ -702,7 +737,7 @@ Window {
             state: "run", received: 0, total: download.totalBytes, ts: Date.now()
         }
         dlItems.unshift(e)
-        toast.show("Download avviato: " + e.name)
+        toast.show(win.t("Download avviato: ", "Download started: ") + e.name)
         download.receivedBytesChanged.connect(function() { e.received = download.receivedBytes })
         download.totalBytesChanged.connect(function() { e.total = download.totalBytes })
         download.stateChanged.connect(function() {
@@ -711,12 +746,12 @@ Window {
                 if (e.total > 0) e.received = e.total
                 // cartella da e.path (quella vera del download, non la config
                 // corrente: potrebbe essere cambiata a download in corso)
-                toast.show("Scaricato in " + e.path.replace(/\/[^\/]*$/, "").replace(/^.*\//, "") + ": " + e.name)
+                toast.show(win.t("Scaricato in ", "Saved to ") + e.path.replace(/\/[^\/]*$/, "").replace(/^.*\//, "") + ": " + e.name)
             } else if (download.state === WebEngineDownloadRequest.DownloadCancelled) {
                 e.state = "cancel"
             } else if (download.state === WebEngineDownloadRequest.DownloadInterrupted) {
                 e.state = "fail"
-                toast.show("Download fallito: " + e.name)
+                toast.show(win.t("Download fallito: ", "Download failed: ") + e.name)
             } else return
             if (e.state !== "done" && typeof rtNative !== "undefined") {
                 // Chromium lascia il parziale su disco (verificato): via anche il .download
@@ -773,7 +808,7 @@ Window {
         return (n / 1073741824).toFixed(2) + " GB"
     }
     function dlProgressText(e) {
-        return e.total > 0 ? fmtBytes(e.received) + " di " + fmtBytes(e.total)
+        return e.total > 0 ? fmtBytes(e.received) + win.t(" di ", " of ") + fmtBytes(e.total)
                            : fmtBytes(e.received)
     }
 
@@ -811,22 +846,22 @@ Window {
             var sub, act = ""
             if (e.state === "run") {
                 sub = win.dlProgressText(e)
-                act = '<a class="dact stop" href="https://downloads.local/cancel?id=' + e.did + '">Annulla</a>'
+                act = '<a class="dact stop" href="https://downloads.local/cancel?id=' + e.did + '">' + win.t("Annulla", "Cancel") + '</a>'
             } else if (e.state === "done") {
                 sub = win.fmtBytes(e.received) + " · " + when
-                act = '<a class="dact" href="https://downloads.local/open?id=' + e.did + '">Apri</a>'
+                act = '<a class="dact" href="https://downloads.local/open?id=' + e.did + '">' + win.t("Apri", "Open") + '</a>'
             } else {
-                sub = (e.state === "fail" ? "Non riuscito" : "Annullato") + " · " + when
+                sub = (e.state === "fail" ? win.t("Non riuscito", "Failed") : win.t("Annullato", "Cancelled")) + " · " + when
             }
             var bar = (e.state === "run" && e.total > 0)
                 ? '<span class="bar"><span class="fill" id="b' + e.did + '" style="width:' + Math.round(e.received * 100 / Math.max(e.total, 1)) + '%"></span></span>' : ''
             return '<div class="drow"><span class="hfav" style="background:' + ico[0] + '">' + ico[1] + '</span>'
                  + '<span class="hbody"><span class="ht">' + win.htmlEsc(e.name) + '</span>'
                  + '<span class="hu" id="t' + e.did + '">' + win.htmlEsc(sub) + '</span>' + bar + '</span>' + act + '</div>'
-        }).join("") : '<div class="empty">Nessun download. I file scaricati finiscono in ' + win.dlDirs[win.cfgDlDir].n + '.</div>'
+        }).join("") : '<div class="empty">' + win.t("Nessun download. I file scaricati finiscono in ", "No downloads. Downloaded files go to ") + win.dlDirs[win.cfgDlDir].n + '.</div>'
         var clear = rows.some(function(e) { return e.state !== "run" })
-            ? '<a class="clear" href="https://downloads.local/clear">Svuota elenco</a>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download</title><style>
+            ? '<a class="clear" href="https://downloads.local/clear">' + win.t("Svuota elenco", "Clear list") + '</a>' : ''
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Download", "Downloads")}</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .empty{color:#6a6a72;font-size:14px;padding:14px 2px}
@@ -838,7 +873,7 @@ h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .fill{display:block;height:100%;background:#5a7fd0;border-radius:2px}
 ${histCss}
 </style></head><body>
-<h1>Download</h1>${clear}
+<h1>${win.t("Download", "Downloads")}</h1>${clear}
 ${body}
 </body></html>`
     }
@@ -874,14 +909,14 @@ ${body}
                  + '<span class="sd">' + dlDirs[k].p.replace("/home/defaultuser", "~") + '</span></span></a>'
         }).join("")
         var clearRow = settingsClearArm
-            ? '<div class="srow"><span class="sbody"><span class="st" style="color:#f28b82">Pulire i dati di navigazione?</span>'
-              + '<span class="sd">Cronologia, elenco download, cache e sessione</span></span>'
-              + '<a class="act red" href="https://settings.local/cleardata2">Pulisci</a>'
-              + '<a class="act" href="https://settings.local/cancelclear">Annulla</a></div>'
+            ? '<div class="srow"><span class="sbody"><span class="st" style="color:#f28b82">' + win.t("Pulire i dati di navigazione?", "Clear browsing data?") + '</span>'
+              + '<span class="sd">' + win.t("Cronologia, elenco download, cache e sessione", "History, download list, cache and session") + '</span></span>'
+              + '<a class="act red" href="https://settings.local/cleardata2">' + win.t("Pulisci", "Clear") + '</a>'
+              + '<a class="act" href="https://settings.local/cancelclear">' + win.t("Annulla", "Cancel") + '</a></div>'
             : '<a class="srow" href="https://settings.local/cleardata"><span class="sbody">'
-              + '<span class="st">Pulisci dati navigazione</span>'
-              + '<span class="sd">Cronologia, elenco download e cache</span></span></a>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Impostazioni</title><style>
+              + '<span class="st">' + win.t("Pulisci dati navigazione", "Clear browsing data") + '</span>'
+              + '<span class="sd">' + win.t("Cronologia, elenco download e cache", "History, download list and cache") + '</span></span></a>'
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Impostazioni", "Settings")}</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 h2{font-size:13px;color:#9aa0a6;font-weight:600;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.6px}
@@ -905,30 +940,31 @@ input{flex:1;min-width:0;background:#1c1c22;border:1px solid #3a3a44;border-radi
 input:focus{border-color:#5a7fd0}
 button{flex:none;background:#3a5fc0;border:0;border-radius:8px;color:#fff;font-size:14px;padding:10px 16px}
 </style></head><body>
-<h1>Impostazioni</h1>
-<h2>Pagina iniziale</h2>
+<h1>${win.t("Impostazioni", "Settings")}</h1>
+<h2>${win.t("Pagina iniziale", "Home page")}</h2>
 <form action="https://settings.local/sethome" method="get">
-<input name="u" value="${htmlEsc(cfgHome)}" placeholder="HOME di RooTitanium" inputmode="url" autocapitalize="off" autocorrect="off">
-<button>Salva</button>
+<input name="u" value="${htmlEsc(cfgHome)}" placeholder="${win.t("HOME di RooTitanium", "RooTitanium HOME")}" inputmode="url" autocapitalize="off" autocorrect="off">
+<button>${win.t("Salva", "Save")}</button>
 </form>
-<h2>Motore di ricerca</h2>
+<h2>${win.t("Motore di ricerca", "Search engine")}</h2>
 ${engines}
 <h2>Privacy</h2>
-${sToggle("closetabs", cfgCloseTabs, "Chiudi tutte le schede all'uscita", "Spento: al riavvio ritrovi le schede aperte")}
-${sToggle("startprivate", cfgStartPrivate, "Avvia in navigazione privata", "")}
-${sToggle("dnt", cfgDnt, "Non tenere traccia", "Chiede ai siti di non tracciarti (DNT)")}
-${sToggle("js", cfgJs, "Attiva JavaScript", "Consentito, raccomandato")}
-${sToggle("cookies", cfgCookies, "Conserva i cookies alla chiusura", "Spento: i login non sopravvivono al riavvio")}
-${sToggle("popups", cfgPopups, "Popup e nuove schede dai siti", "Spento: i link si aprono nella scheda corrente")}
-${sToggle("farble", cfgFarble, "Disattiva fingerprint", "Anti-tracciamento stile Brave/Cromite: nasconde l'impronta del browser")}
-${sToggle("nocookie", cfgNoCookieBanner, "Rifiuta i banner cookie", "Rifiuta o nasconde automaticamente gli avvisi sui cookie")}
-<div class="srow dis"><span class="sbody"><span class="st">Password</span><span class="sd">Per sicurezza usa un gestore dedicato (Proton Pass, Bitwarden, KeePassXC)</span></span></div>
-<a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">Permessi</span><span class="sd">Fotocamera, microfono, posizione, notifiche dei siti</span></span><span class="chev">›</span></a>
+${sToggle("closetabs", cfgCloseTabs, win.t("Chiudi tutte le schede all'uscita", "Close all tabs on exit"), win.t("Spento: al riavvio ritrovi le schede aperte", "Off: your open tabs are restored on restart"))}
+${sToggle("startprivate", cfgStartPrivate, win.t("Avvia in navigazione privata", "Start in private browsing"), "")}
+${sToggle("dnt", cfgDnt, win.t("Non tenere traccia", "Do Not Track"), win.t("Chiede ai siti di non tracciarti (DNT)", "Asks sites not to track you (DNT)"))}
+${sToggle("js", cfgJs, win.t("Attiva JavaScript", "Enable JavaScript"), win.t("Consentito, raccomandato", "Allowed, recommended"))}
+${sToggle("cookies", cfgCookies, win.t("Conserva i cookies alla chiusura", "Keep cookies on exit"), win.t("Spento: i login non sopravvivono al riavvio", "Off: logins don't survive a restart"))}
+${sToggle("popups", cfgPopups, win.t("Popup e nuove schede dai siti", "Popups and new tabs from sites"), win.t("Spento: i link si aprono nella scheda corrente", "Off: links open in the current tab"))}
+${sToggle("farble", cfgFarble, win.t("Disattiva fingerprint", "Disable fingerprinting"), win.t("Anti-tracciamento stile Brave/Cromite: nasconde l'impronta del browser", "Brave/Cromite-style anti-tracking: hides the browser fingerprint"))}
+${sToggle("nocookie", cfgNoCookieBanner, win.t("Rifiuta i banner cookie", "Reject cookie banners"), win.t("Rifiuta o nasconde automaticamente gli avvisi sui cookie", "Automatically rejects or hides cookie notices"))}
+<div class="srow dis"><span class="sbody"><span class="st">Password</span><span class="sd">${win.t("Per sicurezza usa un gestore dedicato (Proton Pass, Bitwarden, KeePassXC)", "For security use a dedicated manager (Proton Pass, Bitwarden, KeePassXC)")}</span></span></div>
+<a class="srow" href="https://permsapp.local/"><span class="sbody"><span class="st">${win.t("Permessi App", "App Permissions")}</span><span class="sd">${win.t("Cosa RooTitanium può usare: fotocamera, microfono, posizione, notifiche, download", "What RooTitanium can use: camera, microphone, location, notifications, downloads")}</span></span><span class="chev">›</span></a>
+<a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">${win.t("Permessi siti", "Site Permissions")}</span><span class="sd">${win.t("Decisioni per singolo sito su fotocamera, microfono, posizione, notifiche", "Per-site choices for camera, microphone, location, notifications")}</span></span><span class="chev">›</span></a>
 ${clearRow}
-<h2>Download — Destinazione</h2>
+<h2>${win.t("Download — Destinazione", "Downloads — Location")}</h2>
 ${dldirs}
-<h2>Aspetto</h2>
-${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle pagine")}
+<h2>${win.t("Aspetto", "Appearance")}</h2>
+${sToggle("dark", cfgDark, win.t("Schema di colori scuro", "Dark color scheme"), win.t("Forza la resa scura delle pagine", "Forces dark rendering of pages"))}
 </body></html>`
     }
 
@@ -940,20 +976,32 @@ ${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle 
     property var permPending: null          // permesso in attesa di decisione (tenuto vivo)
     function permLabel(t) {
         var T = WebEnginePermission.PermissionType
-        if (t === T.Geolocation)             return "Conoscere la tua posizione"
-        if (t === T.Notifications)           return "Inviarti notifiche"
-        if (t === T.MediaAudioCapture)       return "Usare il microfono"
-        if (t === T.MediaVideoCapture)       return "Usare la fotocamera"
-        if (t === T.MediaAudioVideoCapture)  return "Usare fotocamera e microfono"
-        if (t === T.DesktopVideoCapture)     return "Registrare lo schermo"
-        if (t === T.DesktopAudioVideoCapture) return "Registrare schermo e audio"
-        if (t === T.ClipboardReadWrite)      return "Leggere gli appunti"
-        if (t === T.LocalFontsAccess)        return "Elencare i caratteri installati"
-        if (t === T.MouseLock)               return "Bloccare il puntatore del mouse"
-        return "Un permesso"
+        if (t === T.Geolocation)             return win.t("Conoscere la tua posizione", "Know your location")
+        if (t === T.Notifications)           return win.t("Inviarti notifiche", "Send you notifications")
+        if (t === T.MediaAudioCapture)       return win.t("Usare il microfono", "Use the microphone")
+        if (t === T.MediaVideoCapture)       return win.t("Usare la fotocamera", "Use the camera")
+        if (t === T.MediaAudioVideoCapture)  return win.t("Usare fotocamera e microfono", "Use camera and microphone")
+        if (t === T.DesktopVideoCapture)     return win.t("Registrare lo schermo", "Record the screen")
+        if (t === T.DesktopAudioVideoCapture) return win.t("Registrare schermo e audio", "Record screen and audio")
+        if (t === T.ClipboardReadWrite)      return win.t("Leggere gli appunti", "Read the clipboard")
+        if (t === T.LocalFontsAccess)        return win.t("Elencare i caratteri installati", "List installed fonts")
+        if (t === T.MouseLock)               return win.t("Bloccare il puntatore del mouse", "Lock the mouse pointer")
+        return win.t("Un permesso", "A permission")
     }
     function permHost(p) { return ("" + p.origin).replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "") }
+    // gate master "Permessi App": true = la capacità è concessa a livello app e si
+    // può chiedere al sito; false = revocata, si nega senza interpellare l'utente.
+    function permMasterAllows(t) {
+        var T = WebEnginePermission.PermissionType
+        if (t === T.MediaVideoCapture)      return cfgPermCam
+        if (t === T.MediaAudioCapture)      return cfgPermMic
+        if (t === T.MediaAudioVideoCapture) return cfgPermCam && cfgPermMic
+        if (t === T.Geolocation)            return cfgPermLoc
+        if (t === T.Notifications)          return cfgPermNotif
+        return true   // altri tipi non coperti dai master → flusso normale
+    }
     function showPermission(p) {
+        if (!permMasterAllows(p.permissionType)) { try { p.deny() } catch(e) {} return }
         permPending = p
         permDlg.host = permHost(p)
         permDlg.msg = permLabel(p.permissionType)
@@ -998,14 +1046,14 @@ ${sToggle("dark", cfgDark, "Schema di colori scuro", "Forza la resa scura delle 
     function permissionsHtml() {
         var rows = permList()
         var body = rows.length ? rows.map(function(p) {
-            var st = p.granted ? ["Consentito", "#4ea866"] : ["Bloccato", "#f28b82"]
+            var st = p.granted ? [win.t("Consentito", "Allowed"), "#4ea866"] : [win.t("Bloccato", "Blocked"), "#f28b82"]
             var enc = encodeURIComponent(p.origin) + "&t=" + p.type
             return '<div class="prow"><span class="pbody"><span class="pt">' + win.htmlEsc(p.host) + '</span>'
                  + '<span class="pu">' + win.htmlEsc(p.label) + '</span></span>'
                  + '<span class="pst" style="color:' + st[1] + '">' + st[0] + '</span>'
-                 + '<a class="pact" href="https://permissions.local/reset?o=' + enc + '">Revoca</a></div>'
-        }).join("") : '<div class="empty">Nessun permesso concesso o bloccato. Quando un sito chiede fotocamera, microfono, posizione o notifiche, la tua scelta comparirà qui.</div>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Permessi</title><style>
+                 + '<a class="pact" href="https://permissions.local/reset?o=' + enc + '">' + win.t("Revoca", "Revoke") + '</a></div>'
+        }).join("") : '<div class="empty">' + win.t("Nessun permesso concesso o bloccato. Quando un sito chiede fotocamera, microfono, posizione o notifiche, la tua scelta comparirà qui.", "No permissions granted or blocked. When a site asks for camera, microphone, location or notifications, your choice will appear here.") + '</div>'
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi siti", "Site Permissions")}</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .hint{color:#6a6a72;font-size:12px;margin:2px 0 10px}
@@ -1017,16 +1065,47 @@ h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .pst{flex:none;font-size:12px}
 .pact{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 2px 10px 10px}
 </style></head><body>
-<h1>Permessi</h1>
-<div class="hint">Consenti o blocca l'accesso dei siti a fotocamera, microfono, posizione e notifiche. Revoca = il sito tornerà a chiedere.</div>
+<h1>${win.t("Permessi siti", "Site Permissions")}</h1>
+<div class="hint">${win.t("Consenti o blocca l'accesso dei siti a fotocamera, microfono, posizione e notifiche. Revoca = il sito tornerà a chiedere.", "Allow or block sites from using camera, microphone, location and notifications. Revoke = the site will ask again.")}</div>
 ${body}
+</body></html>`
+    }
+
+    // "Permessi App": interruttori master di capacità (sopra i permessi per-sito).
+    // I toggle puntano a permsapp.local/set?k=…&v=… (router: applySetting + reload).
+    function permsAppHtml() {
+        function aRow(k, on, title, desc) {
+            return '<a class="srow" href="https://permsapp.local/set?k=' + k + '&v=' + (on ? 0 : 1) + '">'
+                 + '<span class="sbody"><span class="st">' + title + '</span><span class="sd">' + desc + '</span></span>'
+                 + '<span class="sw ' + (on ? 'on' : '') + '"></span></a>'
+        }
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi App", "App Permissions")}</title><style>
+*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px}
+.hint{color:#8a8a92;font-size:12px;margin:2px 0 14px;line-height:1.5}
+.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid #24242c;text-decoration:none;color:#e8eaed}
+.sbody{flex:1;min-width:0;display:flex;flex-direction:column}
+.st{font-size:15px}
+.sd{font-size:12px;color:#8a8a92;margin-top:2px}
+.sw{flex:none;width:46px;height:26px;border-radius:13px;background:#3a3a44;position:relative}
+.sw.on{background:#3a5fc0}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#e8eaed}
+.sw.on::after{left:23px}
+</style></head><body>
+<h1>${win.t("Permessi App", "App Permissions")}</h1>
+<div class="hint">${win.t("Cosa RooTitanium può usare, per TUTTI i siti. Se spegni una voce, l'app la nega automaticamente a ogni sito, sopra i permessi decisi in «Permessi siti».", "What RooTitanium can use, for ALL sites. If you turn an item off, the app automatically denies it to every site, on top of the choices made in «Site Permissions».")}</div>
+${aRow("permcam", cfgPermCam, win.t("Fotocamera", "Camera"), win.t("I siti possono chiedere di usare la fotocamera", "Sites can ask to use the camera"))}
+${aRow("permmic", cfgPermMic, win.t("Microfono", "Microphone"), win.t("I siti possono chiedere di usare il microfono", "Sites can ask to use the microphone"))}
+${aRow("permloc", cfgPermLoc, win.t("Posizione", "Location"), win.t("I siti possono chiedere la tua posizione", "Sites can ask for your location"))}
+${aRow("permnotif", cfgPermNotif, win.t("Notifiche", "Notifications"), win.t("I siti possono chiedere di inviarti notifiche", "Sites can ask to send you notifications"))}
+${aRow("permdl", cfgPermDownload, win.t("Download / File", "Downloads / Files"), win.t("Consenti il salvataggio di file sul dispositivo", "Allow saving files to the device"))}
 </body></html>`
     }
 
     // landing incognito (stile Chrome/Cromite)
     function incognitoHtml() {
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Nuova scheda in incognito</title><style>
+<title>${win.t("Nuova scheda in incognito", "New incognito tab")}</title><style>
 *{box-sizing:border-box} body{background:#202124;color:#e8eaed;font-family:sans-serif;margin:0;padding:28px}
 .wrap{max-width:640px;margin:32px auto} .ico{width:76px;height:76px;border-radius:50%;background:#3c4043;
 display:flex;align-items:center;justify-content:center;margin-bottom:22px}
@@ -1035,10 +1114,10 @@ h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:#9aa0a6;line-height:1
 .box b{color:#e8eaed;display:block;margin-bottom:6px} ul{margin:0;padding-left:20px;color:#9aa0a6;line-height:1.7;font-size:15px}
 </style></head><body><div class="wrap">
 <div class="ico"><svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#e8eaed" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="15" r="3.1"/><circle cx="17" cy="15" r="3.1"/><path d="M10.1 14.6h3.8"/><path d="M3.8 12.2 5.3 7.6A2 2 0 0 1 7.2 6.2h9.6a2 2 0 0 1 1.9 1.4l1.5 4.6"/></svg></div>
-<h1>Stai navigando in incognito</h1>
-<p>Le altre persone che usano questo dispositivo non vedranno la tua attività, quindi puoi navigare in modo più privato.</p>
-<div class="box"><b>RooTitanium non salverà:</b><ul><li>la cronologia di navigazione</li><li>i cookie e i dati dei siti</li><li>le informazioni inserite nei moduli</li></ul></div>
-<div class="box"><b>La tua attività potrebbe comunque essere visibile a:</b><ul><li>i siti web che visiti</li><li>il tuo provider Internet</li></ul></div>
+<h1>${win.t("Stai navigando in incognito", "You've gone incognito")}</h1>
+<p>${win.t("Le altre persone che usano questo dispositivo non vedranno la tua attività, quindi puoi navigare in modo più privato.", "Other people using this device won't see your activity, so you can browse more privately.")}</p>
+<div class="box"><b>${win.t("RooTitanium non salverà:", "RooTitanium won't save:")}</b><ul><li>${win.t("la cronologia di navigazione", "your browsing history")}</li><li>${win.t("i cookie e i dati dei siti", "cookies and site data")}</li><li>${win.t("le informazioni inserite nei moduli", "information entered in forms")}</li></ul></div>
+<div class="box"><b>${win.t("La tua attività potrebbe comunque essere visibile a:", "Your activity might still be visible to:")}</b><ul><li>${win.t("i siti web che visiti", "the websites you visit")}</li><li>${win.t("il tuo provider Internet", "your internet provider")}</li></ul></div>
 </div></body></html>`
     }
 
@@ -1181,7 +1260,7 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     function bmAdd(url, title) {
         url = "" + url
         if (!/^https?:\/\//i.test(url) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(url)) {
-            toast.show("Questa pagina non si può aggiungere"); return
+            toast.show(win.t("Questa pagina non si può aggiungere", "This page can't be added")); return
         }
         var host = histHost(url)
         var palette = ["#de5833","#4285f4","#0f9d58","#6e5494","#ff4500","#7ebc6f","#f4b400","#ab47bc","#00acc1","#ff7043"]
@@ -1191,12 +1270,12 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
             histDb().transaction(function(tx) {
                 bmEnsure(tx)
                 if (tx.executeSql("SELECT url FROM bookmarks WHERE url=?", [url]).rows.length) {
-                    toast.show("Già nei segnalibri")
+                    toast.show(win.t("Già nei segnalibri", "Already bookmarked"))
                 } else {
                     // home=0: in HOME ci va solo per scelta esplicita (⌂ nella pagina Segnalibri)
                     tx.executeSql("INSERT INTO bookmarks(url,title,color,letter,ts,home) VALUES(?,?,?,?,?,0)",
                                   [url, t, palette[hsum % palette.length], host.charAt(0).toUpperCase(), Date.now()])
-                    toast.show("Aggiunto ai segnalibri")
+                    toast.show(win.t("Aggiunto ai segnalibri", "Bookmark added"))
                 }
             })
         } catch(e) { _histErr = "" + e; console.warn("segnalibri add: " + e) }
@@ -1219,12 +1298,12 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
                 var enc = encodeURIComponent(b.url)
                 return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a>'
                      + '<span class="bmov"><a class="bar" href="https://bookmarks.local/move?d=up&u=' + enc + '">▲</a><a class="bar" href="https://bookmarks.local/move?d=dn&u=' + enc + '">▼</a></span>'
-                     + '<a class="bhome' + (inHome ? ' on' : '') + '" title="Mostra in HOME" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + enc + '">⌂</a>'
+                     + '<a class="bhome' + (inHome ? ' on' : '') + '" title="' + win.t("Mostra in HOME", "Show on HOME") + '" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + enc + '">⌂</a>'
                      + '<a class="bdel" href="https://bookmarks.local/del?u=' + enc + '">✕</a></div>'
               }).join("")
-            : '<div class="empty">Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.</div>'
-        var hint = items.length ? '<div class="hint">⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro</div>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Segnalibri</title><style>
+            : '<div class="empty">' + win.t("Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.", "No bookmarks. Add the page you're viewing from the ⋮ menu → “Add bookmark”.") + '</div>'
+        var hint = items.length ? '<div class="hint">' + win.t("⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro", "⌂ green = shown in HOME Favorites · ✕ = delete the bookmark") + '</div>' : ''
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .empty{color:#6a6a72;font-size:14px;padding:14px 2px}
@@ -1238,7 +1317,7 @@ h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
 ${histCss}
 </style></head><body>
-<h1>Segnalibri</h1>${hint}
+<h1>${win.t("Segnalibri", "Bookmarks")}</h1>${hint}
 ${body}
 </body></html>`
     }
@@ -1270,18 +1349,18 @@ ${body}
         var items = histRecent(200)
         var body = items.length
             ? histRowsHtml(items, true)
-            : '<div class="empty">La cronologia è vuota.</div>'
+            : '<div class="empty">' + win.t("La cronologia è vuota.", "History is empty.") + '</div>'
         var clear = items.length
-            ? '<a class="clear" href="https://history.local/clear">Svuota cronologia</a>'
+            ? '<a class="clear" href="https://history.local/clear">' + win.t("Svuota cronologia", "Clear history") + '</a>'
             : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cronologia</title><style>
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Cronologia", "History")}</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .empty{color:#6a6a72;font-size:14px;padding:14px 2px}
 .clear{display:inline-block;color:#f28b82;font-size:14px;text-decoration:none;margin:6px 0 10px}
 ${histCss}
 </style></head><body>
-<h1>Cronologia</h1>${clear}
+<h1>${win.t("Cronologia", "History")}</h1>${clear}
 ${body}
 </body></html>`
     }
@@ -1311,13 +1390,13 @@ ${body}
             var t = htmlEsc(f.title && ("" + f.title).length ? f.title : histHost(f.url))
             return '<a class="tile" href="' + htmlEsc(f.url) + '"><span class="bx" data-del="https://bookmarks.local/delhome?u=' + encodeURIComponent(f.url) + '">✕</span><span class="fav" style="background:' + f.color + '">' + htmlEsc(f.letter) + '</span><span class="tl">' + t + '</span></a>'
         }).join("")
-        if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">Nessun preferito. Scegli cosa mostrare qui col ⌂ nella pagina Segnalibri (menù ⋮).</div>'
-        var favsMore = favs.length > 12 ? '<a class="hmore" href="https://bookmarks.local/">Tutti i segnalibri →</a>' : ''
+        if (!favs.length) tiles = '<div class="empty" style="grid-column:1/-1">' + win.t("Nessun preferito. Scegli cosa mostrare qui col ⌂ nella pagina Segnalibri (menù ⋮).", "No favorites yet. Pick what to show here with ⌂ on the Bookmarks page (⋮ menu).") + '</div>'
+        var favsMore = favs.length > 12 ? '<a class="hmore" href="https://bookmarks.local/">' + win.t("Tutti i segnalibri →", "All bookmarks →") + '</a>' : ''
         var gridRows = Math.ceil(Math.min(favs.length, 12) / 3)
         var hist = histRecent(homeHistCount(gridRows))
         var histSection = hist.length
-            ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">Tutta la cronologia →</a>'
-            : '<div class="empty">La cronologia apparirà qui.</div>'
+            ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">' + win.t("Tutta la cronologia →", "All history →") + '</a>'
+            : '<div class="empty">' + win.t("La cronologia apparirà qui.", "Your history will appear here.") + '</div>'
         if (_histErr.length) histSection += '<!-- histErr: ' + htmlEsc(_histErr) + ' -->'
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home</title><style>
 *{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:26px}
@@ -1335,8 +1414,8 @@ body.edit .fav{opacity:.7}
 ${histCss}
 </style></head><body>
 <div class="logo">Roo<span>Titanium</span></div>
-<h2>Preferiti</h2><div class="grid">${tiles}</div>${favsMore}
-<h2>Cronologia</h2>${histSection}
+<h2>${win.t("Preferiti", "Favorites")}</h2><div class="grid">${tiles}</div>${favsMore}
+<h2>${win.t("Cronologia", "History")}</h2>${histSection}
 <script>
 (function(){
   var eb = document.body, armTs = 0;
@@ -1481,6 +1560,9 @@ ${histCss}
     Component.onCompleted: {
         loadCfg()
         applyClientHints()
+        // pop-up una-tantum: spiega come gestire i permessi via «Permessi App»
+        // (mostrato una sola volta, differito così compare sopra la UI pronta).
+        if (!cfgFirstRunSeen) Qt.callLater(function() { firstRunDlg.open = true })
         if (cfgStartPrivate) { newTab(true); return }
         var urls = []
         if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }
@@ -1620,7 +1702,7 @@ ${histCss}
                     text: {
                         if (!win.currentView) return ""
                         var u = "" + win.currentView.url
-                        if (u === "" || u === "about:blank") return '<span style="color:#6a6a72">Cerca o inserisci un indirizzo</span>'
+                        if (u === "" || u === "about:blank") return '<span style="color:#6a6a72">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
                         return win.colorizeUrl(u)
                     }
                     textFormat: Text.RichText; font.pixelSize: 22 * win.u
@@ -1731,7 +1813,7 @@ ${histCss}
                         if (u === "" || u === "about:blank") return
                         if (win.cfgPopups) win.newTabUrl(priv, u)
                         else if (request.userInitiated) url = u
-                        else toast.show("Popup bloccato: " + win.histHost(u))
+                        else toast.show(win.t("Popup bloccato: ", "Popup blocked: ") + win.histHost(u))
                     }
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
@@ -1773,7 +1855,7 @@ ${histCss}
                                 // niente reload: l'app handler si apre sopra la pagina
                                 var de = win.dlFind(mOpen[1])
                                 if (!(de && typeof rtNative !== "undefined" && rtNative.openFile(de.path)))
-                                    toast.show("File non trovato (spostato o cancellato?)")
+                                    toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
                             } else {
                                 if (mCanc) win.dlCancel(mCanc[1])
                                 else if (u === "https://downloads.local/clear") win.dlClear()
@@ -1800,6 +1882,11 @@ ${histCss}
                             var mPerm = u.match(/^https:\/\/permissions\.local\/reset\?o=([^&]*)&t=(\d+)$/)
                             if (mPerm) win.permReset(decodeURIComponent(mPerm[1]), parseInt(mPerm[2]))
                             win.loadInternal(this, "permissions", win.permissionsHtml(), "https://permissions.local/")
+                        } else if (u.indexOf("https://permsapp.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z]+)&v=([a-z0-9]*)$/)
+                            if (mAp) win.applySetting(mAp[1], mAp[2])
+                            win.loadInternal(this, "permsapp", win.permsAppHtml(), "https://permsapp.local/")
                         }
                     }
                     // richiesta permesso di un sito (geoloc/notifiche/camera/mic/…):
@@ -1808,7 +1895,7 @@ ${histCss}
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
                     onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
                     onTitleChanged: {
-                        tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : "Nuova scheda")
+                        tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
                     }
                     onContextMenuRequested: function(request) {
@@ -1834,8 +1921,8 @@ ${histCss}
                     // esito di printToPdf (Salva pagina come PDF)
                     onPdfPrintingFinished: function(filePath, success) {
                         var name = ("" + filePath).replace(/^.*\//, "")
-                        toast.show(success ? "PDF salvato in Documenti: " + name
-                                           : "Salvataggio PDF fallito")
+                        toast.show(success ? win.t("PDF salvato in Documenti: ", "PDF saved to Documents: ") + name
+                                           : win.t("Salvataggio PDF fallito", "PDF save failed"))
                     }
                     // video a tutto schermo: senza accept() la richiesta JS viene
                     // rifiutata e il player resta inline. Accettata → landscape auto
@@ -1880,7 +1967,7 @@ ${histCss}
             }
             onAccepted: win.findNextMatch(false)
             Text { anchors.verticalCenter: parent.verticalCenter; visible: findInput.text.length === 0
-                   text: "Cerca nella pagina"; color: "#6a6a72"; font.pixelSize: 22 * win.u }
+                   text: win.t("Cerca nella pagina", "Find in page"); color: "#6a6a72"; font.pixelSize: 22 * win.u }
         }
         Text {
             id: findCount
@@ -2025,7 +2112,7 @@ ${histCss}
                 Rectangle {
                     width: 130*win.u; height: 50*win.u; radius: 25*win.u
                     color: !switcher.showPrivate ? "#33333e" : "transparent"
-                    Text { anchors.centerIn: parent; text: "Schede " + win.tabCount(false); color: "#e6e6ea"; font.pixelSize: 18*win.u }
+                    Text { anchors.centerIn: parent; text: win.t("Schede ", "Tabs ") + win.tabCount(false); color: "#e6e6ea"; font.pixelSize: 18*win.u }
                     MouseArea { anchors.fill: parent; onClicked: switcher.showPrivate = false }
                 }
                 Rectangle {
@@ -2192,7 +2279,7 @@ ${histCss}
                         width: annullaTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
                         visible: jsDlg.dtype !== JavaScriptDialogRequest.DialogTypeAlert
                         color: jcma.pressed ? "#3a3a44" : "transparent"
-                        Text { id: annullaTxt; anchors.centerIn: parent; text: "Annulla"; color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        Text { id: annullaTxt; anchors.centerIn: parent; text: win.t("Annulla", "Cancel"); color: "#8ab4f8"; font.pixelSize: 20*win.u }
                         MouseArea { id: jcma; anchors.fill: parent; onClicked: win.jsDialogDone(false) }
                     }
                     Rectangle {
@@ -2231,20 +2318,62 @@ ${histCss}
                 spacing: 14*win.u
                 Text { width: parent.width; text: permDlg.host; visible: permDlg.host.length > 0
                     color: "#9aa0a6"; font.pixelSize: 17*win.u; elide: Text.ElideRight }
-                Text { width: parent.width; text: "Vuole: " + permDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
+                Text { width: parent.width; text: win.t("Vuole: ", "Wants to: ") + permDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
                 Row {
                     anchors.right: parent.right; spacing: 10*win.u
                     Rectangle {
                         width: permNoTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
                         color: pnma.pressed ? "#3a3a44" : "transparent"
-                        Text { id: permNoTxt; anchors.centerIn: parent; text: "Blocca"; color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        Text { id: permNoTxt; anchors.centerIn: parent; text: win.t("Blocca", "Block"); color: "#8ab4f8"; font.pixelSize: 20*win.u }
                         MouseArea { id: pnma; anchors.fill: parent; onClicked: win.permDecide(false) }
                     }
                     Rectangle {
                         width: permYesTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
                         color: pyma.pressed ? "#4a6fd0" : "#3a5fc0"
-                        Text { id: permYesTxt; anchors.centerIn: parent; text: "Consenti"; color: "white"; font.pixelSize: 20*win.u }
+                        Text { id: permYesTxt; anchors.centerIn: parent; text: win.t("Consenti", "Allow"); color: "white"; font.pixelSize: 20*win.u }
                         MouseArea { id: pyma; anchors.fill: parent; onClicked: win.permDecide(true) }
+                    }
+                }
+            }
+        }
+    }
+
+    // pop-up una-tantum al primo avvio: spiega dove gestire i permessi.
+    Rectangle {
+        id: firstRunDlg
+        property bool open: false
+        anchors.fill: parent
+        color: "#99000000"
+        visible: open; z: 95
+        MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale
+        function dismiss() {
+            win.cfgFirstRunSeen = true
+            win.kvSet("first_run_seen", "1")
+            open = false
+        }
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.min(firstRunDlg.width - 48*win.u, 470*win.u)
+            height: frCol.height + 36*win.u
+            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            Column {
+                id: frCol
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.top: parent.top; anchors.topMargin: 18*win.u
+                width: parent.width - 44*win.u
+                spacing: 14*win.u
+                Text { width: parent.width; text: win.t("Permessi in RooTitanium", "Permissions in RooTitanium"); color: "#eaeaf0"
+                    font.pixelSize: 22*win.u; font.bold: true; wrapMode: Text.Wrap }
+                Text { width: parent.width; color: "#c8c8d0"; font.pixelSize: 17*win.u; wrapMode: Text.Wrap
+                    lineHeight: 1.25
+                    text: win.t("Puoi decidere tu cosa l'app può usare. In <b>Impostazioni › Permessi App</b> attivi o revochi in blocco fotocamera, microfono, posizione, notifiche e download. In <b>Permessi siti</b> gestisci le scelte per ogni singolo sito.\n\nSe revochi una voce in «Permessi App», nessun sito potrà più chiederla.", "You decide what the app can use. In <b>Settings › App Permissions</b> you enable or revoke camera, microphone, location, notifications and downloads all at once. In <b>Site Permissions</b> you manage the choices for each individual site.\n\nIf you revoke an item in «App Permissions», no site can ask for it anymore.") ; textFormat: Text.RichText }
+                Row {
+                    anchors.right: parent.right; spacing: 10*win.u
+                    Rectangle {
+                        width: frOkTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
+                        color: frma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        Text { id: frOkTxt; anchors.centerIn: parent; text: win.t("Ho capito", "Got it"); color: "white"; font.pixelSize: 20*win.u }
+                        MouseArea { id: frma; anchors.fill: parent; onClicked: firstRunDlg.dismiss() }
                     }
                 }
             }

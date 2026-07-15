@@ -20,8 +20,9 @@ Name:       harbour-rootitanium
 Version:    1.0
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
-License:    BSD and LGPLv3 and Qt-GPL-exception-1.0
-# Chromium (BSD) + Qt6 (LGPLv3). Vedi LICENSE nel repo.
+License:    GPLv3+ and LGPLv3 and BSD
+# Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
+# Vedi LICENSE (GPL-3.0) e NOTICE.md (terze parti) nel repo.
 Group:      Applications/Internet
 BuildArch:  aarch64
 AutoReqProv: no
