@@ -43,11 +43,11 @@ Window {
           ? ':root{--bg:#16161c;--card:#2c2c31;--input:#1c1c22;--line:#24242c;--swoff:#3a3a44;'
             + '--fg:#e8eaed;--fg2:#c8c8d0;--muted:#9aa0a6;--muted2:#8a8a92;--faint:#6a6a72;'
             + '--accent:#3a5fc0;--link:#8ab4f8;--danger:#f28b82;--ok:#4ea866;--pill:#2e2e38;'
-            + '--incbg:#202124;--inccard:#292a2d}'
+            + '--incbg:#202124;--inccard:#292a2d;--knob:#e8eaed}'
           : ':root{--bg:#f2f2f5;--card:#ffffff;--input:#ffffff;--line:#e2e2e8;--swoff:#cdced4;'
             + '--fg:#1b1b20;--fg2:#33333a;--muted:#5c5c66;--muted2:#6a6a74;--faint:#9a9aa4;'
             + '--accent:#3a5fc0;--link:#1a56d0;--danger:#c0392b;--ok:#2e7d46;--pill:#e6e6ec;'
-            + '--incbg:#e9e9ec;--inccard:#ffffff}'
+            + '--incbg:#e9e9ec;--inccard:#ffffff;--knob:#ffffff}'
     }
 
     // --- rotazione landscape ---
@@ -448,7 +448,7 @@ Window {
         for (var i = 0; i < tabsRepeater.count; i++) {
             var v = tabsRepeater.itemAt(i)
             if (!v) continue
-            try { v.settings.forceDarkMode = cfgDark } catch(e) {}
+            try { v.settings.forceDarkMode = cfgDark && v.localPage === "" } catch(e) {}
             v.userScripts.collection = buildScripts()
         }
     }
@@ -470,6 +470,8 @@ Window {
     function loadInternal(view, kind, html, base) {
         if (!view) return
         view.localPage = kind
+        // le pagine interne (già a tema nostro) NON vanno force-darkate da Chromium
+        try { view.settings.forceDarkMode = false } catch(e) {}
         view.loadHtml(html, base)
     }
 
@@ -958,7 +960,7 @@ h2{font-size:13px;color:var(--muted);font-weight:600;margin:26px 0 4px;text-tran
 .sd{font-size:12px;color:var(--muted2);margin-top:2px}
 .sw{flex:none;width:46px;height:26px;border-radius:13px;background:var(--swoff);position:relative;transition:background .15s}
 .sw.on{background:var(--accent)}
-.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--fg);transition:left .15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--knob);transition:left .15s}
 .sw.on::after{left:23px}
 .rad{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--faint)}
 .rad.on{border-color:var(--accent);background:radial-gradient(circle,var(--link) 0 5px,transparent 6px)}
@@ -1124,7 +1126,7 @@ h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .sd{font-size:12px;color:var(--muted2);margin-top:2px}
 .sw{flex:none;width:46px;height:26px;border-radius:13px;background:var(--swoff);position:relative}
 .sw.on{background:var(--accent)}
-.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--fg)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--knob)}
 .sw.on::after{left:23px}
 </style></head><body>
 <h1>${win.t("Permessi App", "App Permissions")}</h1>
@@ -1928,7 +1930,7 @@ ${histCss}
                     // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
-                    onUrlChanged: { localPage = ""; tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
+                    onUrlChanged: { localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
