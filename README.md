@@ -4,6 +4,10 @@ A **Chromium web browser for Sailfish OS 5.1**, built on **Qt 6 QtWebEngine** wi
 a UI written from scratch in QML — not a fork of an existing browser. Part of the
 `RooT*` app family.
 
+---
+
+## [ENGLISH]
+
 Prerequisite: SFOS 5.1.0.11 · **aarch64 only**  
 Telegram Group: https://t.me/+E7V-a7x4JbY1Njhk  
 RooTitanium is tested on:  
@@ -12,15 +16,7 @@ RooTitanium is tested on:
 This application was developed using artificial intelligence technologies, specifically Warp Terminal and Claude Code Opus, but Warp Terminal has been gradually phased out in favor of Claude Code. Therefore, if the use of an application generated via a large-scale language model (LLM) is not comfortable for the user, it is recommended to avoid its installation and use. It is specified that any negative comment regarding this circumstance will not only be ignored but will result in the immediate blocking of the user.
 I hereby disclaim any and all responsibility for the application, its functionality, and any consequences arising from its use. By choosing to use this application, the user acknowledges and accepts that they do so entirely at their own risk, and agrees that the developer shall not be held liable for any damages, losses, or adverse effects—whether direct, indirect, incidental, or consequential—resulting from the use or misuse of the application.
 
-Requisiti: SFOS 5.1.0.11 · **solo aarch64**  
-Gruppo Telegram: https://t.me/+E7V-a7x4JbY1Njhk  
-RooTitanium è testato:  
-- Sony Xperia 10 III (SFOS 5.1.0.11)  
-
-Questa applicazione è stata sviluppata utilizzando tecnologie di intelligenza artificiale, in particolare Warp Terminal e Claude Code Opus, ma Warp Terminal è stato abbandonato in favore di Claude Code. Pertanto, se l'uso di un'applicazione generata tramite un modello linguistico su larga scala (LLM) non fosse per l'utente confortevole, si raccomanda di evitarne l'installazione e l'uso. Si specifica che qualsiasi commento negativo riguardante questa circostanza non verrà solo ignorato, ma comporterà il blocco immediato dell'utente.
-Con la presente declino ogni responsabilità relativa all’applicazione, al suo funzionamento e a qualsiasi conseguenza derivante dal suo utilizzo. L’utente, scegliendo di utilizzare l’applicazione, riconosce e accetta di farlo a proprio ed esclusivo rischio, e concorda che lo sviluppatore non potrà essere ritenuto responsabile per eventuali danni, perdite o effetti negativi — diretti, indiretti, incidentali o consequenziali — derivanti dall’uso o dall’uso improprio dell’applicazione.
-
-## Browser engine — self-contained bundle
+### Browser engine — self-contained bundle
 
 On Sailfish OS, Qt 6 is **not** an official platform component, and
 `qt6-qtwebengine` is not precompiled anywhere. RooTitanium therefore ships a
@@ -41,7 +37,7 @@ with the platform.
   sets the bundle environment and execs the browser, forging `argv[0]` so
   Lipstick matches the window to a single app cover.
 
-## Features (1.0)
+### Features (1.0)
 
 - **Tabs and private (incognito) tabs**, with a tab switcher and per-mode counts;
   optional "start in private", "close all tabs on exit" or session restore.
@@ -73,12 +69,12 @@ with the platform.
 - **Bilingual UI (English / Italian)**: Italian on Italian devices, English
   everywhere else — chosen automatically from the system language.
 
-## Roadmap
+### Roadmap
 
 - Further refinements to permissions, downloads and per-site settings; more UI
   polish.
 
-## Building from source (English)
+### Building from source
 
 RooTitanium is built in **two stages**: first the Qt 6 / QtWebEngine **engine**,
 then the application **bundle + RPM**. The engine is a full Chromium build (tens
@@ -124,7 +120,99 @@ The RPM payload goes to `/home/rootitanium/` (the `/home` partition), while the
 shared with the `RooT*` family: package `harbour-rootitanium`, version
 single-sourced from the spec.
 
-## Compilare dai sorgenti (Italiano)
+### Engine, compatibility & trademarks
+
+RooTitanium renders pages with **Qt 6 QtWebEngine** (Chromium 122), bundled as
+described above and in [NOTICE.md](NOTICE.md). For site compatibility the browser
+presents itself as **Google Chrome** through a Client-Hints / user-agent
+interceptor; this is identification only and does not make it a Google product.
+
+*"Chromium" and "Google Chrome" are trademarks of Google LLC, and "Qt" is a
+trademark of The Qt Company Ltd. RooTitanium is an independent project, **not
+affiliated with, sponsored by or endorsed by** Google LLC or The Qt Company; the
+names are used solely for identification.*
+
+### License
+
+GPL-3.0-or-later © 2026 RootGPT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md)
+for the third-party components (Qt 6 / QtWebEngine, Chromium) bundled in the RPM.
+
+---
+
+## [ITALIANO]
+
+Un **browser web Chromium per Sailfish OS 5.1**, basato su **Qt 6 QtWebEngine**,
+con una UI scritta da zero in QML — non un fork di un browser esistente. Parte
+della famiglia di app `RooT*`.
+
+Requisiti: SFOS 5.1.0.11 · **solo aarch64**  
+Gruppo Telegram: https://t.me/+E7V-a7x4JbY1Njhk  
+RooTitanium è testato:  
+- Sony Xperia 10 III (SFOS 5.1.0.11)  
+
+Questa applicazione è stata sviluppata utilizzando tecnologie di intelligenza artificiale, in particolare Warp Terminal e Claude Code Opus, ma Warp Terminal è stato abbandonato in favore di Claude Code. Pertanto, se l'uso di un'applicazione generata tramite un modello linguistico su larga scala (LLM) non fosse per l'utente confortevole, si raccomanda di evitarne l'installazione e l'uso. Si specifica che qualsiasi commento negativo riguardante questa circostanza non verrà solo ignorato, ma comporterà il blocco immediato dell'utente.
+Con la presente declino ogni responsabilità relativa all’applicazione, al suo funzionamento e a qualsiasi conseguenza derivante dal suo utilizzo. L’utente, scegliendo di utilizzare l’applicazione, riconosce e accetta di farlo a proprio ed esclusivo rischio, e concorda che lo sviluppatore non potrà essere ritenuto responsabile per eventuali danni, perdite o effetti negativi — diretti, indiretti, incidentali o consequenziali — derivanti dall’uso o dall’uso improprio dell’applicazione.
+
+### Motore del browser — bundle self-contained
+
+Su Sailfish OS, Qt 6 **non** è un componente ufficiale della piattaforma, e
+`qt6-qtwebengine` non è precompilato da nessuna parte. RooTitanium distribuisce
+quindi un **bundle self-contained**: l'intero runtime Qt 6 + QtWebEngine
+(Chromium 122) è compilato dai sorgenti sopra lo stack Qt 6 della community e
+installato sotto `/home/rootitanium/`, così l'app **non richiede alcun Qt 6 di
+sistema** e non interferisce con la piattaforma.
+
+- **Rendering accelerato in hardware.** QtWebEngine renderizza tramite **EGL su
+  libhybris** (i driver GPU Android del dispositivo). Sull'Xperia 10 III (Adreno
+  619) l'accelerazione hardware è confermata via `chrome://gpu`.
+- **Gira senza sandbox, by design.** Poiché il bundle vive fuori dal rootfs e
+  richiede accesso pieno a `/home/rootitanium/`, alle librerie di sistema hybris
+  e alla modalità `--no-sandbox` di Chromium, l'app dichiara `Sandboxing=Disabled`
+  nel suo `.desktop`. Sono i **Permessi App** in-app (sotto) a controllare
+  davvero cosa i siti possono usare.
+- **Launcher ELF dedicato.** Un piccolo launcher in `/usr/bin/harbour-rootitanium`
+  imposta l'ambiente del bundle ed esegue il browser, forgiando `argv[0]` così
+  che Lipstick agganci la finestra a un'unica cover dell'app.
+
+### Funzionalità (1.0)
+
+- **Schede e schede private (incognito)**, con selettore schede e conteggi per
+  modalità; opzioni "avvia in privata", "chiudi tutte le schede all'uscita" o
+  ripristino sessione.
+- **Pagina HOME** con una griglia **Preferiti** (i segnalibri che scegli tu) e un
+  elenco **Cronologia**, modificabili al volo.
+- **Barra degli indirizzi** con inserimento cerca-o-URL e motore di ricerca
+  selezionabile (DuckDuckGo, Google, Bing, Startpage).
+- **Segnalibri** (persistenti, SQLite) con toggle Preferiti-in-HOME e riordino, e
+  **Cronologia** con svuota-tutto.
+- **Download** con cartella di destinazione a scelta (Download / Documenti /
+  Immagini / Video / Musica), progresso live, apri e annulla.
+- **Cerca nella pagina**, **Condividi**, **Salva pagina come PDF**, toggle
+  **sito Desktop/Mobile** e **rotazione orizzontale** (manuale, più automatica
+  per il video a tutto schermo).
+- **Menu contestuali** dall'aspetto nativo (link / immagine / testo), menu di
+  selezione touch e **dialoghi JavaScript** personalizzati (alert / confirm /
+  prompt) scalati per il dispositivo.
+- **Tastiera a schermo personalizzata** (QtVirtualKeyboard, a tema col browser).
+- **Controlli privacy**: Do-Not-Track, **anti-fingerprinting** (farbling stile
+  Brave/Cromite), **rifiuto automatico dei banner cookie**, un **interceptor
+  Client-Hints / user-agent** che presenta il browser come Google Chrome per
+  compatibilità coi siti, pulizia dei cookie di sessione, toggle per JavaScript e
+  popup, modalità scura forzata e **pulizia dati di navigazione** con un tap.
+- **Permessi App** (interruttori master per fotocamera, microfono, posizione,
+  notifiche e download — un cancello sopra le scelte per-sito) e **Permessi siti**
+  (per singolo sito: fotocamera / microfono / posizione / notifiche).
+- **Ciclo di vita delle schede in background** (freeze / discard) per evitare che
+  i siti pesanti blocchino il browser.
+- **UI bilingue (Inglese / Italiano)**: italiano sui dispositivi italiani,
+  inglese altrove — scelta automaticamente dalla lingua di sistema.
+
+### Roadmap
+
+- Ulteriori rifiniture a permessi, download e impostazioni per-sito; più cura
+  della UI.
+
+### Compilare dai sorgenti
 
 RooTitanium si compila in **due fasi**: prima il **motore** Qt 6 / QtWebEngine,
 poi il **bundle applicativo + RPM**. Il motore è un build Chromium completo
@@ -170,19 +258,7 @@ Il payload dell'RPM va in `/home/rootitanium/` (partizione `/home`), mentre il
 condivise con la famiglia `RooT*`: pacchetto `harbour-rootitanium`, versione
 single-source dallo spec.
 
-## Engine, compatibility & trademarks
-
-RooTitanium renders pages with **Qt 6 QtWebEngine** (Chromium 122), bundled as
-described above and in [NOTICE.md](NOTICE.md). For site compatibility the browser
-presents itself as **Google Chrome** through a Client-Hints / user-agent
-interceptor; this is identification only and does not make it a Google product.
-
-*"Chromium" and "Google Chrome" are trademarks of Google LLC, and "Qt" is a
-trademark of The Qt Company Ltd. RooTitanium is an independent project, **not
-affiliated with, sponsored by or endorsed by** Google LLC or The Qt Company; the
-names are used solely for identification.*
-
-## Motore, compatibilità e marchi (Italiano)
+### Motore, compatibilità e marchi
 
 RooTitanium mostra le pagine con **Qt 6 QtWebEngine** (Chromium 122), impacchettato
 come descritto sopra e in [NOTICE.md](NOTICE.md). Per compatibilità con i siti il
@@ -194,7 +270,7 @@ The Qt Company Ltd. RooTitanium è un progetto indipendente, **non affiliato,
 sponsorizzato o approvato** da Google LLC o The Qt Company; i nomi sono usati solo
 a scopo identificativo.*
 
-## License
+### Licenza
 
-GPL-3.0-or-later © 2026 RootGPT. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md)
-for the third-party components (Qt 6 / QtWebEngine, Chromium) bundled in the RPM.
+GPL-3.0-or-later © 2026 RootGPT. Vedi [LICENSE](LICENSE) e [NOTICE.md](NOTICE.md)
+per i componenti di terze parti (Qt 6 / QtWebEngine, Chromium) inclusi nell'RPM.
