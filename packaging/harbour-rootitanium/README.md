@@ -25,9 +25,12 @@ lipstick salta sailjail e lancia `invoker --type=generic -- /usr/bin/harbour-roo
 Serve il SailfishOS SDK (build engine + target aarch64) e uno *staging* con:
 ```
 <staging>/bundle/                     il bundle trimmato (payload)
+<staging>/bundle/LICENSES/            testi licenza terze parti (vedi "Licenze")
 <staging>/rootitanium-launch          launcher compilato (vedi sotto)
 <staging>/harbour-rootitanium.desktop
 <staging>/icons/{86,108,128,172}.png
+<staging>/LICENSE                      GPL-3.0 dell'app (dal root del repo)
+<staging>/NOTICE.md                   mappa terze parti (dal root del repo)
 <staging>/harbour-rootitanium.spec
 ```
 Compilazione del launcher (dentro il build engine, target aarch64):
@@ -51,6 +54,27 @@ Dal bundle completo (~383 MB) si rimuovono, in modo sicuro:
 - file di sviluppo (`main.cpp`, `run-log.sh`, `*.bak`).
 Metodo obbligato: trim nello staging, poi **testare che l'app renderizzi** (es.
 via CDP) prima di impacchettare.
+
+## Licenze (obbligo GPL/LGPL)
+Il testo di licenza deve **accompagnare il binario distribuito**, non basta averlo
+nel repo. Lo spec quindi installa (da `<staging>`):
+- `LICENSE` + `NOTICE.md` → `/usr/share/licenses/harbour-rootitanium/` (marcati
+  `%license`): GPL-3.0 dell'app + mappa componente→licenza→sorgente delle terze parti.
+
+Inoltre nel payload va la cartella `bundle/LICENSES/` (finisce in
+`/home/rootitanium/LICENSES/` via `%{_apphome}`) con i testi delle terze parti
+bundled. Si popola dal clone upstream:
+```
+cp qt6-qtwebengine/upstream/LICENSES/*.txt   <staging>/bundle/LICENSES/
+cp qt6-qtwebengine/upstream/LICENSE.Chromium <staging>/bundle/LICENSES/Chromium-BSD-3-Clause.txt
+# + un README.txt che mappa componente→licenza (vedi NOTICE.md)
+```
+Copre: Qt6/QtWebEngine LGPL-3.0 (+ GPL-2.0/3.0 con eccezione, GFDL per i doc),
+Chromium BSD-3, e BSD/Apache/MIT/CC0 dei componenti assortiti.
+
+**Nota GPL + repo privato**: distribuendo l'RPM scatta l'obbligo di fornire il
+*sorgente corrispondente*. L'URL sorgente in `NOTICE.md` deve essere pubblico (o
+i sorgenti forniti su richiesta) prima del rilascio pubblico.
 
 ## Rilascio
 `run.sh` nel payload ha logging verboso e remote-debugging SPENTI (build di
