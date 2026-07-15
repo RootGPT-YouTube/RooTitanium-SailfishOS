@@ -8,7 +8,7 @@ Window {
     id: win
     visible: true
     visibility: Window.FullScreen
-    color: "#101014"
+    color: win.pal.bg
 
     // u basato sul lato corto: resta costante quando il contenuto ruota in landscape
     readonly property real u: Math.min(width, height) / 540
@@ -19,6 +19,36 @@ Window {
     // LANG è vuoto, quindi su device non-italiano qui arriva la lingua reale).
     readonly property bool uiIt: ("" + Qt.locale().name).toLowerCase().indexOf("it") === 0
     function t(it, en) { return uiIt ? it : en }
+
+    // --- tema UI: Scuro (default) / Chiaro, scelto manualmente in Impostazioni ---
+    // uiDark pilota sia la palette QML (pal) sia le variabili CSS delle pagine
+    // interne (themeVars). Cambiando cfgUiTheme le property si riaggiornano da sole.
+    property string cfgUiTheme: "dark"
+    readonly property bool uiDark: cfgUiTheme !== "light"
+    // palette per la chrome/dialoghi QML (i colori delle pagine HTML stanno in themeVars)
+    readonly property var pal: uiDark ? ({
+        bg: "#101014", surface: "#1c1c22", card: "#2c2c31", border: "#3a3a42",
+        fg: "#e6e6ea", fg2: "#c8c8d0", muted: "#9aa0a6", faint: "#6a6a72",
+        line: "#3a3a44", link: "#8ab4f8", accent: "#3a5fc0", accentPress: "#4a6fd0",
+        neutralPress: "#3a3a44", focus: "#5a7fd0", incAccent: "#c9b8e0"
+    }) : ({
+        bg: "#e9e9ec", surface: "#ffffff", card: "#ffffff", border: "#d6d6dc",
+        fg: "#1b1b20", fg2: "#33333a", muted: "#5c5c66", faint: "#9a9aa4",
+        line: "#d0d0d6", link: "#1a56d0", accent: "#3a5fc0", accentPress: "#2f4fa8",
+        neutralPress: "#e0e0e6", focus: "#5a7fd0", incAccent: "#7a4fd0"
+    })
+    // variabili CSS iniettate in <head> di ogni pagina interna: le regole usano var(--x)
+    function themeVars() {
+        return uiDark
+          ? ':root{--bg:#16161c;--card:#2c2c31;--input:#1c1c22;--line:#24242c;--swoff:#3a3a44;'
+            + '--fg:#e8eaed;--fg2:#c8c8d0;--muted:#9aa0a6;--muted2:#8a8a92;--faint:#6a6a72;'
+            + '--accent:#3a5fc0;--link:#8ab4f8;--danger:#f28b82;--ok:#4ea866;--pill:#2e2e38;'
+            + '--incbg:#202124;--inccard:#292a2d}'
+          : ':root{--bg:#f2f2f5;--card:#ffffff;--input:#ffffff;--line:#e2e2e8;--swoff:#cdced4;'
+            + '--fg:#1b1b20;--fg2:#33333a;--muted:#5c5c66;--muted2:#6a6a74;--faint:#9a9aa4;'
+            + '--accent:#3a5fc0;--link:#1a56d0;--danger:#c0392b;--ok:#2e7d46;--pill:#e6e6ec;'
+            + '--incbg:#e9e9ec;--inccard:#ffffff}'
+    }
 
     // --- rotazione landscape ---
     // lipstick NON ruota le superfici wayland (le app SFOS si ruotano da sole):
@@ -206,6 +236,7 @@ Window {
         cfgPermNotif    = kvGet("set_perm_notif", "1") === "1"
         cfgPermDownload = kvGet("set_perm_dl", "1") === "1"
         cfgFirstRunSeen = kvGet("first_run_seen", "0") === "1"
+        cfgUiTheme      = kvGet("set_uitheme", "dark") === "light" ? "light" : "dark"
         cfgHome         = kvGet("set_homepage", "")
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
@@ -237,6 +268,7 @@ Window {
         else if (k === "permloc")   { cfgPermLoc = on;      kvSet("set_perm_loc", v) }
         else if (k === "permnotif") { cfgPermNotif = on;    kvSet("set_perm_notif", v) }
         else if (k === "permdl")    { cfgPermDownload = on; kvSet("set_perm_dl", v) }
+        else if (k === "uitheme")   { cfgUiTheme = (v === "light") ? "light" : "dark"; kvSet("set_uitheme", cfgUiTheme) }
     }
     // sessione (solo schede normali, mai incognito né pagine interne .local);
     // salvata a ogni navigazione/chiusura scheda: non esiste un "on exit"
@@ -453,11 +485,11 @@ Window {
     function colorizeUrl(u) {
         u = "" + u
         var m = u.match(/^([a-z][a-z0-9+.-]*):\/\/([^\/]*)(.*)$/i)
-        if (!m) return '<span style="color:#e8e8e8">' + u + '</span>'
-        return '<span style="color:#4ea866">' + m[1] + '</span>'
-             + '<span style="color:#6a6a72">://</span>'
-             + '<span style="color:#f0f0f0">' + m[2] + '</span>'
-             + '<span style="color:#8a8a92">' + m[3] + '</span>'
+        if (!m) return '<span style="color:var(--fg)">' + u + '</span>'
+        return '<span style="color:var(--ok)">' + m[1] + '</span>'
+             + '<span style="color:var(--faint)">://</span>'
+             + '<span style="color:var(--fg)">' + m[2] + '</span>'
+             + '<span style="color:var(--muted2)">' + m[3] + '</span>'
     }
 
     readonly property var menuModel: [
@@ -861,16 +893,16 @@ Window {
         }).join("") : '<div class="empty">' + win.t("Nessun download. I file scaricati finiscono in ", "No downloads. Downloaded files go to ") + win.dlDirs[win.cfgDlDir].n + '.</div>'
         var clear = rows.some(function(e) { return e.state !== "run" })
             ? '<a class="clear" href="https://downloads.local/clear">' + win.t("Svuota elenco", "Clear list") + '</a>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Download", "Downloads")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Download", "Downloads")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
-.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
-.clear{display:inline-block;color:#f28b82;font-size:14px;text-decoration:none;margin:6px 0 10px}
-.drow{display:flex;align-items:center;gap:14px;padding:10px 2px;border-bottom:1px solid #24242c}
-.dact{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
-.dact.stop{color:#f28b82}
-.bar{display:block;height:4px;background:#2e2e38;border-radius:2px;margin-top:6px;overflow:hidden}
-.fill{display:block;height:100%;background:#5a7fd0;border-radius:2px}
+.empty{color:var(--faint);font-size:14px;padding:14px 2px}
+.clear{display:inline-block;color:var(--danger);font-size:14px;text-decoration:none;margin:6px 0 10px}
+.drow{display:flex;align-items:center;gap:14px;padding:10px 2px;border-bottom:1px solid var(--line)}
+.dact{flex:none;color:var(--link);font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
+.dact.stop{color:var(--danger)}
+.bar{display:block;height:4px;background:var(--pill);border-radius:2px;margin-top:6px;overflow:hidden}
+.fill{display:block;height:100%;background:var(--accent);border-radius:2px}
 ${histCss}
 </style></head><body>
 <h1>${win.t("Download", "Downloads")}</h1>${clear}
@@ -909,36 +941,36 @@ ${body}
                  + '<span class="sd">' + dlDirs[k].p.replace("/home/defaultuser", "~") + '</span></span></a>'
         }).join("")
         var clearRow = settingsClearArm
-            ? '<div class="srow"><span class="sbody"><span class="st" style="color:#f28b82">' + win.t("Pulire i dati di navigazione?", "Clear browsing data?") + '</span>'
+            ? '<div class="srow"><span class="sbody"><span class="st" style="color:var(--danger)">' + win.t("Pulire i dati di navigazione?", "Clear browsing data?") + '</span>'
               + '<span class="sd">' + win.t("Cronologia, elenco download, cache e sessione", "History, download list, cache and session") + '</span></span>'
               + '<a class="act red" href="https://settings.local/cleardata2">' + win.t("Pulisci", "Clear") + '</a>'
               + '<a class="act" href="https://settings.local/cancelclear">' + win.t("Annulla", "Cancel") + '</a></div>'
             : '<a class="srow" href="https://settings.local/cleardata"><span class="sbody">'
               + '<span class="st">' + win.t("Pulisci dati navigazione", "Clear browsing data") + '</span>'
               + '<span class="sd">' + win.t("Cronologia, elenco download e cache", "History, download list and cache") + '</span></span></a>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Impostazioni", "Settings")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Impostazioni", "Settings")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
-h2{font-size:13px;color:#9aa0a6;font-weight:600;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.6px}
-.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid #24242c;text-decoration:none;color:#e8eaed}
+h2{font-size:13px;color:var(--muted);font-weight:600;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.6px}
+.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid var(--line);text-decoration:none;color:var(--fg)}
 .sbody{flex:1;min-width:0;display:flex;flex-direction:column}
 .st{font-size:15px}
-.sd{font-size:12px;color:#8a8a92;margin-top:2px}
-.sw{flex:none;width:46px;height:26px;border-radius:13px;background:#3a3a44;position:relative;transition:background .15s}
-.sw.on{background:#3a5fc0}
-.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#e8eaed;transition:left .15s}
+.sd{font-size:12px;color:var(--muted2);margin-top:2px}
+.sw{flex:none;width:46px;height:26px;border-radius:13px;background:var(--swoff);position:relative;transition:background .15s}
+.sw.on{background:var(--accent)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--fg);transition:left .15s}
 .sw.on::after{left:23px}
-.rad{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid #6a6a72}
-.rad.on{border-color:#3a5fc0;background:radial-gradient(circle,#8ab4f8 0 5px,transparent 6px)}
-.dis .st{color:#6a6a72}
-.badge{flex:none;font-size:11px;color:#9aa0a6;border:1px solid #3a3a44;border-radius:9px;padding:3px 9px}
-.chev{flex:none;color:#6a6a72;font-size:22px;line-height:1}
-.act{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
-.act.red{color:#f28b82}
-form{display:flex;gap:10px;padding:13px 2px;border-bottom:1px solid #24242c}
-input{flex:1;min-width:0;background:#1c1c22;border:1px solid #3a3a44;border-radius:8px;color:#e8eaed;font-size:15px;padding:10px 12px;outline:none}
-input:focus{border-color:#5a7fd0}
-button{flex:none;background:#3a5fc0;border:0;border-radius:8px;color:#fff;font-size:14px;padding:10px 16px}
+.rad{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--faint)}
+.rad.on{border-color:var(--accent);background:radial-gradient(circle,var(--link) 0 5px,transparent 6px)}
+.dis .st{color:var(--faint)}
+.badge{flex:none;font-size:11px;color:var(--muted);border:1px solid var(--swoff);border-radius:9px;padding:3px 9px}
+.chev{flex:none;color:var(--faint);font-size:22px;line-height:1}
+.act{flex:none;color:var(--link);font-size:14px;text-decoration:none;padding:10px 4px 10px 12px}
+.act.red{color:var(--danger)}
+form{display:flex;gap:10px;padding:13px 2px;border-bottom:1px solid var(--line)}
+input{flex:1;min-width:0;background:var(--input);border:1px solid var(--swoff);border-radius:8px;color:var(--fg);font-size:15px;padding:10px 12px;outline:none}
+input:focus{border-color:var(--accent)}
+button{flex:none;background:var(--accent);border:0;border-radius:8px;color:#fff;font-size:14px;padding:10px 16px}
 </style></head><body>
 <h1>${win.t("Impostazioni", "Settings")}</h1>
 <h2>${win.t("Pagina iniziale", "Home page")}</h2>
@@ -963,8 +995,11 @@ ${sToggle("nocookie", cfgNoCookieBanner, win.t("Rifiuta i banner cookie", "Rejec
 ${clearRow}
 <h2>${win.t("Download — Destinazione", "Downloads — Location")}</h2>
 ${dldirs}
-<h2>${win.t("Aspetto", "Appearance")}</h2>
-${sToggle("dark", cfgDark, win.t("Schema di colori scuro", "Dark color scheme"), win.t("Forza la resa scura delle pagine", "Forces dark rendering of pages"))}
+<h2>${win.t("Tema dell'app", "App theme")}</h2>
+<a class="srow" href="https://settings.local/set?k=uitheme&v=dark"><span class="rad${win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Scuro", "Dark")}</span></span></a>
+<a class="srow" href="https://settings.local/set?k=uitheme&v=light"><span class="rad${!win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Chiaro", "Light")}</span></span></a>
+<h2>${win.t("Pagine web", "Web pages")}</h2>
+${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
 </body></html>`
     }
 
@@ -1053,17 +1088,17 @@ ${sToggle("dark", cfgDark, win.t("Schema di colori scuro", "Dark color scheme"),
                  + '<span class="pst" style="color:' + st[1] + '">' + st[0] + '</span>'
                  + '<a class="pact" href="https://permissions.local/reset?o=' + enc + '">' + win.t("Revoca", "Revoke") + '</a></div>'
         }).join("") : '<div class="empty">' + win.t("Nessun permesso concesso o bloccato. Quando un sito chiede fotocamera, microfono, posizione o notifiche, la tua scelta comparirà qui.", "No permissions granted or blocked. When a site asks for camera, microphone, location or notifications, your choice will appear here.") + '</div>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi siti", "Site Permissions")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi siti", "Site Permissions")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
-.hint{color:#6a6a72;font-size:12px;margin:2px 0 10px}
-.empty{color:#6a6a72;font-size:14px;padding:14px 2px;line-height:1.5}
-.prow{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid #24242c}
+.hint{color:var(--faint);font-size:12px;margin:2px 0 10px}
+.empty{color:var(--faint);font-size:14px;padding:14px 2px;line-height:1.5}
+.prow{display:flex;align-items:center;gap:12px;padding:12px 2px;border-bottom:1px solid var(--line)}
 .pbody{flex:1;min-width:0;display:flex;flex-direction:column}
 .pt{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pu{font-size:12px;color:#8a8a92;margin-top:2px}
+.pu{font-size:12px;color:var(--muted2);margin-top:2px}
 .pst{flex:none;font-size:12px}
-.pact{flex:none;color:#8ab4f8;font-size:14px;text-decoration:none;padding:10px 2px 10px 10px}
+.pact{flex:none;color:var(--link);font-size:14px;text-decoration:none;padding:10px 2px 10px 10px}
 </style></head><body>
 <h1>${win.t("Permessi siti", "Site Permissions")}</h1>
 <div class="hint">${win.t("Consenti o blocca l'accesso dei siti a fotocamera, microfono, posizione e notifiche. Revoca = il sito tornerà a chiedere.", "Allow or block sites from using camera, microphone, location and notifications. Revoke = the site will ask again.")}</div>
@@ -1079,17 +1114,17 @@ ${body}
                  + '<span class="sbody"><span class="st">' + title + '</span><span class="sd">' + desc + '</span></span>'
                  + '<span class="sw ' + (on ? 'on' : '') + '"></span></a>'
         }
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi App", "App Permissions")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi App", "App Permissions")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
-.hint{color:#8a8a92;font-size:12px;margin:2px 0 14px;line-height:1.5}
-.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid #24242c;text-decoration:none;color:#e8eaed}
+.hint{color:var(--muted2);font-size:12px;margin:2px 0 14px;line-height:1.5}
+.srow{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid var(--line);text-decoration:none;color:var(--fg)}
 .sbody{flex:1;min-width:0;display:flex;flex-direction:column}
 .st{font-size:15px}
-.sd{font-size:12px;color:#8a8a92;margin-top:2px}
-.sw{flex:none;width:46px;height:26px;border-radius:13px;background:#3a3a44;position:relative}
-.sw.on{background:#3a5fc0}
-.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#e8eaed}
+.sd{font-size:12px;color:var(--muted2);margin-top:2px}
+.sw{flex:none;width:46px;height:26px;border-radius:13px;background:var(--swoff);position:relative}
+.sw.on{background:var(--accent)}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:var(--fg)}
 .sw.on::after{left:23px}
 </style></head><body>
 <h1>${win.t("Permessi App", "App Permissions")}</h1>
@@ -1105,13 +1140,13 @@ ${aRow("permdl", cfgPermDownload, win.t("Download / File", "Downloads / Files"),
     // landing incognito (stile Chrome/Cromite)
     function incognitoHtml() {
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${win.t("Nuova scheda in incognito", "New incognito tab")}</title><style>
-*{box-sizing:border-box} body{background:#202124;color:#e8eaed;font-family:sans-serif;margin:0;padding:28px}
-.wrap{max-width:640px;margin:32px auto} .ico{width:76px;height:76px;border-radius:50%;background:#3c4043;
+<title>${win.t("Nuova scheda in incognito", "New incognito tab")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--incbg);color:var(--fg);font-family:sans-serif;margin:0;padding:28px}
+.wrap{max-width:640px;margin:32px auto} .ico{width:76px;height:76px;border-radius:50%;background:var(--pill);
 display:flex;align-items:center;justify-content:center;margin-bottom:22px}
-h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:#9aa0a6;line-height:1.55;font-size:15px}
-.box{background:#292a2d;border-radius:10px;padding:16px 20px;margin-top:18px}
-.box b{color:#e8eaed;display:block;margin-bottom:6px} ul{margin:0;padding-left:20px;color:#9aa0a6;line-height:1.7;font-size:15px}
+h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:var(--muted);line-height:1.55;font-size:15px}
+.box{background:var(--inccard);border-radius:10px;padding:16px 20px;margin-top:18px}
+.box b{color:var(--fg);display:block;margin-bottom:6px} ul{margin:0;padding-left:20px;color:var(--muted);line-height:1.7;font-size:15px}
 </style></head><body><div class="wrap">
 <div class="ico"><svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#e8eaed" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="15" r="3.1"/><circle cx="17" cy="15" r="3.1"/><path d="M10.1 14.6h3.8"/><path d="M3.8 12.2 5.3 7.6A2 2 0 0 1 7.2 6.2h9.6a2 2 0 0 1 1.9 1.4l1.5 4.6"/></svg></div>
 <h1>${win.t("Stai navigando in incognito", "You've gone incognito")}</h1>
@@ -1125,7 +1160,7 @@ h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:#9aa0a6;line-height:1
     // query pointer/hover viste dalla pagina, logga gli eventi input per ogni tap
     // e ha un <video> H.264 con bottone fullscreen per isolare il nero da YouTube
     function probeHtml() {
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${win.themeVars()}
 body{background:#111;color:#eee;font-family:monospace;margin:0;padding:12px;font-size:14px}
 #big{background:#274;padding:30px 0;text-align:center;font-size:20px;border-radius:10px;margin:10px 0;-webkit-user-select:none;user-select:none}
 pre{white-space:pre-wrap;font-size:13px;color:#8f8;min-height:180px}
@@ -1303,18 +1338,18 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
               }).join("")
             : '<div class="empty">' + win.t("Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.", "No bookmarks. Add the page you're viewing from the ⋮ menu → “Add bookmark”.") + '</div>'
         var hint = items.length ? '<div class="hint">' + win.t("⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro", "⌂ green = shown in HOME Favorites · ✕ = delete the bookmark") + '</div>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 10px}
-.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
-.hint{color:#6a6a72;font-size:12px;margin:2px 0 8px}
-.brow{display:flex;align-items:center;border-bottom:1px solid #24242c}
-.bmain{display:flex;align-items:center;gap:14px;flex:1;min-width:0;text-decoration:none;color:#c8c8d0;padding:10px 2px}
+.empty{color:var(--faint);font-size:14px;padding:14px 2px}
+.hint{color:var(--faint);font-size:12px;margin:2px 0 8px}
+.brow{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.bmain{display:flex;align-items:center;gap:14px;flex:1;min-width:0;text-decoration:none;color:var(--fg2);padding:10px 2px}
 .bmov{flex:none;display:flex;flex-direction:column;gap:2px;margin-left:4px}
 .bar{color:#5a5a64;font-size:12px;line-height:14px;text-decoration:none;padding:2px 8px}
 .bhome{flex:none;color:#4a4a54;font-size:21px;text-decoration:none;padding:10px 8px}
-.bhome.on{color:#4ea866}
-.bdel{flex:none;color:#8a8a92;font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
+.bhome.on{color:var(--ok)}
+.bdel{flex:none;color:var(--muted2);font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
 ${histCss}
 </style></head><body>
 <h1>${win.t("Segnalibri", "Bookmarks")}</h1>${hint}
@@ -1335,13 +1370,13 @@ ${body}
         }).join("")
     }
     readonly property string histCss: `
-.hrow{display:flex;align-items:center;gap:14px;text-decoration:none;color:#c8c8d0;padding:10px 2px;border-bottom:1px solid #24242c}
-.hfav{flex:none;width:38px;height:38px;border-radius:50%;background:#2e2e38;color:#e8eaed;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
+.hrow{display:flex;align-items:center;gap:14px;text-decoration:none;color:var(--fg2);padding:10px 2px;border-bottom:1px solid var(--line)}
+.hfav{flex:none;width:38px;height:38px;border-radius:50%;background:var(--pill);color:var(--fg);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700}
 .hbody{display:flex;flex-direction:column;min-width:0;flex:1}
-.ht{color:#e8eaed;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hu{color:#8a8a92;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hw{flex:none;color:#6a6a72;font-size:12px;margin-left:8px}
-.hmore{display:block;text-align:right;color:#8ab4f8;font-size:14px;text-decoration:none;padding:12px 2px}`
+.ht{color:var(--fg);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hu{color:var(--muted2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hw{flex:none;color:var(--faint);font-size:12px;margin-left:8px}
+.hmore{display:block;text-align:right;color:var(--link);font-size:14px;text-decoration:none;padding:12px 2px}`
 
     // vista completa (menù ⋮ → Cronologia, o link dalla HOME); "svuota" =
     // link sentinella https://history.local/clear intercettato in onNavigationRequested
@@ -1353,11 +1388,11 @@ ${body}
         var clear = items.length
             ? '<a class="clear" href="https://history.local/clear">' + win.t("Svuota cronologia", "Clear history") + '</a>'
             : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Cronologia", "History")}</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:22px}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Cronologia", "History")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
-.empty{color:#6a6a72;font-size:14px;padding:14px 2px}
-.clear{display:inline-block;color:#f28b82;font-size:14px;text-decoration:none;margin:6px 0 10px}
+.empty{color:var(--faint);font-size:14px;padding:14px 2px}
+.clear{display:inline-block;color:var(--danger);font-size:14px;text-decoration:none;margin:6px 0 10px}
 ${histCss}
 </style></head><body>
 <h1>${win.t("Cronologia", "History")}</h1>${clear}
@@ -1398,16 +1433,16 @@ ${body}
             ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">' + win.t("Tutta la cronologia →", "All history →") + '</a>'
             : '<div class="empty">' + win.t("La cronologia apparirà qui.", "Your history will appear here.") + '</div>'
         if (_histErr.length) histSection += '<!-- histErr: ' + htmlEsc(_histErr) + ' -->'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home</title><style>
-*{box-sizing:border-box} body{background:#16161c;color:#e8eaed;font-family:sans-serif;margin:0;padding:26px}
-h2{font-size:14px;color:#9aa0a6;font-weight:600;margin:28px 0 14px;text-transform:uppercase;letter-spacing:.6px}
-.logo{text-align:center;font-size:30px;font-weight:700;margin:18px 0 6px;color:#f0f0f0}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:26px}
+h2{font-size:14px;color:var(--muted);font-weight:600;margin:28px 0 14px;text-transform:uppercase;letter-spacing:.6px}
+.logo{text-align:center;font-size:30px;font-weight:700;margin:18px 0 6px;color:var(--fg)}
 .logo span{background:linear-gradient(180deg,#d3dbe3 0%,#9aa8b6 45%,#71808f 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
-.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#c8c8d0;gap:9px;position:relative;min-width:0;max-width:100%}
+.tile{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:var(--fg2);gap:9px;position:relative;min-width:0;max-width:100%}
 .fav{width:58px;height:58px;border-radius:16px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:25px;font-weight:700}
 .tl{font-size:13px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.empty{color:#6a6a72;font-size:14px;padding:6px 2px}
+.empty{color:var(--faint);font-size:14px;padding:6px 2px}
 .bx{display:none;position:absolute;top:-8px;left:calc(50% + 16px);width:26px;height:26px;border-radius:50%;background:#e35b5b;color:#fff;font-size:15px;line-height:26px;text-align:center;font-weight:700;z-index:2}
 body.edit .bx{display:block}
 body.edit .fav{opacity:.7}
@@ -1591,13 +1626,13 @@ ${histCss}
             width: parent.width
             height: 78 * win.u
             visible: !win.videoFS     // video a tutto schermo → via la toolbar
-            color: win.currentPrivate ? "#2a2233" : "#16161c"
+            color: win.currentPrivate ? "#2a2233" : win.pal.bg
 
             Item {
                 id: homeBtn
                 anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 6 * win.u
                 width: 48 * win.u; height: parent.height
-                Text { anchors.centerIn: parent; text: "⌂"; color: "#e6e6ea"; font.pixelSize: 30 * win.u }
+                Text { anchors.centerIn: parent; text: "⌂"; color: win.pal.fg; font.pixelSize: 30 * win.u }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: hma.pressed ? 0.10 : 0 }
                 MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; win.goHome(win.currentView) } }
             }
@@ -1619,7 +1654,7 @@ ${histCss}
                     onPaint: {
                         var c = getContext("2d"); c.reset()
                         var s = width
-                        c.strokeStyle = "#e6e6ea"; c.lineWidth = Math.max(1, s*0.09); c.lineCap = "round"; c.lineJoin = "round"
+                        c.strokeStyle = win.pal.fg; c.lineWidth = Math.max(1, s*0.09); c.lineCap = "round"; c.lineJoin = "round"
                         if (backBtn.loading) {
                             c.beginPath(); c.arc(s/2, s/2, s*0.44, 0, 2*Math.PI); c.stroke()
                             c.beginPath(); c.moveTo(s*0.34,s*0.34); c.lineTo(s*0.66,s*0.66)
@@ -1646,7 +1681,7 @@ ${histCss}
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 6 * win.u
                 width: 44 * win.u; height: parent.height
                 Column { anchors.centerIn: parent; spacing: 5 * win.u
-                    Repeater { model: 3; Rectangle { width: 6*win.u; height: 6*win.u; radius: width/2; color: "#e6e6ea" } } }
+                    Repeater { model: 3; Rectangle { width: 6*win.u; height: 6*win.u; radius: width/2; color: win.pal.fg } } }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: mma.pressed ? 0.10 : 0 }
                 MouseArea { id: mma; anchors.fill: parent; onClicked: menu.open = !menu.open }
             }
@@ -1659,8 +1694,8 @@ ${histCss}
                 Rectangle {
                     anchors.centerIn: parent
                     width: 30 * win.u; height: 30 * win.u; radius: 6 * win.u
-                    color: "transparent"; border.color: "#c8c8d0"; border.width: 2 * win.u
-                    Text { anchors.centerIn: parent; text: tabsModel.count; color: "#e6e6ea"; font.pixelSize: 18 * win.u; font.bold: true }
+                    color: "transparent"; border.color: win.pal.fg2; border.width: 2 * win.u
+                    Text { anchors.centerIn: parent; text: tabsModel.count; color: win.pal.fg; font.pixelSize: 18 * win.u; font.bold: true }
                 }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: tma.pressed ? 0.10 : 0 }
                 MouseArea { id: tma; anchors.fill: parent; onClicked: { urlbar.focus = false; switcher.showPrivate = win.currentPrivate; switcher.open = true } }
@@ -1671,8 +1706,8 @@ ${histCss}
                 anchors.left: backBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 4 * win.u; anchors.rightMargin: 4 * win.u
                 height: 54 * win.u; radius: height / 2; clip: true
-                color: urlbar.activeFocus ? "#303039" : (win.currentPrivate ? "#352b44" : "#26262c")
-                border.color: urlbar.activeFocus ? "#5a7fd0" : "#33333c"; border.width: 1
+                color: urlbar.activeFocus ? win.pal.card : (win.currentPrivate ? "#352b44" : win.pal.surface)
+                border.color: urlbar.activeFocus ? win.pal.focus : win.pal.border; border.width: 1
 
                 // icona: lucchetto (normale) o incognito (privata)
                 Item {
@@ -1682,13 +1717,13 @@ ${histCss}
                     // lucchetto
                     Item {
                         anchors.fill: parent; visible: !win.currentPrivate
-                        Rectangle { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 20*win.u; height: 13*win.u; radius: 3*win.u; color: "#9aa0a6" }
-                        Rectangle { anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; width: 12*win.u; height: 14*win.u; radius: 6*win.u; color: "transparent"; border.color: "#9aa0a6"; border.width: 2.5*win.u }
+                        Rectangle { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 20*win.u; height: 13*win.u; radius: 3*win.u; color: win.pal.muted }
+                        Rectangle { anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; width: 12*win.u; height: 14*win.u; radius: 6*win.u; color: "transparent"; border.color: win.pal.muted; border.width: 2.5*win.u }
                     }
                     // incognito (occhiali) disegnato a Canvas
                     Canvas {
                         anchors.fill: parent; visible: win.currentPrivate
-                        onPaint: { var c=getContext("2d"); c.reset(); var s=width; c.strokeStyle="#c9b8e0"; c.fillStyle="#c9b8e0"; c.lineWidth=s*0.09; c.lineCap="round"
+                        onPaint: { var c=getContext("2d"); c.reset(); var s=width; c.strokeStyle=win.pal.incAccent; c.fillStyle=win.pal.incAccent; c.lineWidth=s*0.09; c.lineCap="round"
                             c.beginPath(); c.arc(s*0.30,s*0.58,s*0.16,0,2*Math.PI); c.arc(s*0.70,s*0.58,s*0.16,0,2*Math.PI); c.stroke()
                             c.beginPath(); c.moveTo(s*0.44,s*0.55); c.lineTo(s*0.56,s*0.55); c.stroke()
                             c.beginPath(); c.arc(s*0.5,s*0.30,s*0.22,Math.PI*0.15,Math.PI*0.85); c.stroke() }
@@ -1702,7 +1737,7 @@ ${histCss}
                     text: {
                         if (!win.currentView) return ""
                         var u = "" + win.currentView.url
-                        if (u === "" || u === "about:blank") return '<span style="color:#6a6a72">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
+                        if (u === "" || u === "about:blank") return '<span style="color:var(--faint)">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
                         return win.colorizeUrl(u)
                     }
                     textFormat: Text.RichText; font.pixelSize: 22 * win.u
@@ -1948,8 +1983,8 @@ ${histCss}
         anchors.top: parent.top
         width: parent.width; height: toolbar.height
         visible: open && !win.videoFS; z: 40
-        color: "#1e1e26"
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#33333c" }
+        color: win.pal.surface
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.pal.border }
 
         MenuIcon { id: findIco; kind: "search"; anchors.left: parent.left; anchors.leftMargin: 18*win.u; anchors.verticalCenter: parent.verticalCenter; width: 26*win.u; height: 26*win.u }
 
@@ -1967,25 +2002,25 @@ ${histCss}
             }
             onAccepted: win.findNextMatch(false)
             Text { anchors.verticalCenter: parent.verticalCenter; visible: findInput.text.length === 0
-                   text: win.t("Cerca nella pagina", "Find in page"); color: "#6a6a72"; font.pixelSize: 22 * win.u }
+                   text: win.t("Cerca nella pagina", "Find in page"); color: win.pal.faint; font.pixelSize: 22 * win.u }
         }
         Text {
             id: findCount
             anchors.right: findPrev.left; anchors.rightMargin: 6 * win.u
             anchors.verticalCenter: parent.verticalCenter
             text: win.findTot ? (win.findCur + "/" + win.findTot) : (findInput.text.length ? "0/0" : "")
-            color: "#8a8a92"; font.pixelSize: 18 * win.u
+            color: win.pal.muted; font.pixelSize: 18 * win.u
         }
         Item { id: findPrev; anchors.right: findNextB.left; width: 46*win.u; height: parent.height
-            Text { anchors.centerIn: parent; text: "▲"; color: "#e6e6ea"; font.pixelSize: 20*win.u }
+            Text { anchors.centerIn: parent; text: "▲"; color: win.pal.fg; font.pixelSize: 20*win.u }
             Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fpma.pressed ? 0.10 : 0 }
             MouseArea { id: fpma; anchors.fill: parent; onClicked: win.findNextMatch(true) } }
         Item { id: findNextB; anchors.right: findClose.left; width: 46*win.u; height: parent.height
-            Text { anchors.centerIn: parent; text: "▼"; color: "#e6e6ea"; font.pixelSize: 20*win.u }
+            Text { anchors.centerIn: parent; text: "▼"; color: win.pal.fg; font.pixelSize: 20*win.u }
             Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fnma.pressed ? 0.10 : 0 }
             MouseArea { id: fnma; anchors.fill: parent; onClicked: win.findNextMatch(false) } }
         Item { id: findClose; anchors.right: parent.right; anchors.rightMargin: 4*win.u; width: 46*win.u; height: parent.height
-            Text { anchors.centerIn: parent; text: "✕"; color: "#e6e6ea"; font.pixelSize: 22*win.u }
+            Text { anchors.centerIn: parent; text: "✕"; color: win.pal.fg; font.pixelSize: 22*win.u }
             Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: fcma.pressed ? 0.10 : 0 }
             MouseArea { id: fcma; anchors.fill: parent; onClicked: win.closeFind() } }
     }
@@ -2000,7 +2035,7 @@ ${histCss}
         property bool open: false
         anchors.right: parent.right; anchors.top: toolbar.bottom
         width: 340 * win.u; height: menuCol.height + 16 * win.u
-        color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+        color: win.pal.card; border.color: win.pal.border; border.width: 1
         visible: open; z: 50
         Column {
             id: menuCol; width: parent.width; y: 8 * win.u
@@ -2019,22 +2054,22 @@ ${histCss}
         id: sepComp
         Item { height: 13 * win.u
             Rectangle { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.right: parent.right
-                anchors.leftMargin: 18*win.u; anchors.rightMargin: 18*win.u; height: 1; color: "#43434c" } }
+                anchors.leftMargin: 18*win.u; anchors.rightMargin: 18*win.u; height: 1; color: win.pal.border } }
     }
 
     Component {
         id: rowComp
         Rectangle {
             property var entry
-            height: 62 * win.u; color: rma.pressed ? "#3a3a44" : "transparent"
+            height: 62 * win.u; color: rma.pressed ? win.pal.line : "transparent"
             MenuIcon { id: ic; anchors.left: parent.left; anchors.leftMargin: 22*win.u; anchors.verticalCenter: parent.verticalCenter
                 width: 32*win.u; height: 32*win.u; kind: entry ? entry.ic : "" }
             Text { anchors.left: parent.left; anchors.leftMargin: 74*win.u; anchors.right: toggleDot.left; anchors.rightMargin: 8*win.u
-                anchors.verticalCenter: parent.verticalCenter; text: entry ? entry.l : ""; color: "#eaeaf0"; font.pixelSize: 21*win.u; elide: Text.ElideRight }
+                anchors.verticalCenter: parent.verticalCenter; text: entry ? entry.l : ""; color: win.pal.fg; font.pixelSize: 21*win.u; elide: Text.ElideRight }
             Rectangle { id: toggleDot; anchors.right: parent.right; anchors.rightMargin: 22*win.u; anchors.verticalCenter: parent.verticalCenter
                 width: 16*win.u; height: 16*win.u; radius: width/2; visible: entry && entry.toggle === true
                 color: (entry && entry.a === "rotate" ? win.manualLandscape : win.desktopMode) ? "#4ea866" : "transparent"
-                border.color: "#7a7a82"; border.width: 2*win.u }
+                border.color: win.pal.muted; border.width: 2*win.u }
             MouseArea { id: rma; anchors.fill: parent; onClicked: win.doAction(entry.a) }
         }
     }
@@ -2051,7 +2086,7 @@ ${histCss}
         height: ctxCol.height + 16 * win.u
         x: Math.max(8*win.u, Math.min(px, appRoot.width  - width  - 8*win.u))
         y: Math.max(8*win.u, Math.min(py, appRoot.height - height - 8*win.u))
-        color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1; radius: 6 * win.u
+        color: win.pal.card; border.color: win.pal.border; border.width: 1; radius: 6 * win.u
         visible: open; z: 60
         Column {
             id: ctxCol; width: parent.width; y: 8 * win.u
@@ -2071,13 +2106,13 @@ ${histCss}
         Rectangle {
             property var entry
             height: 58 * win.u
-            color: (entry && entry.dis === true) ? "transparent" : (crma.pressed ? "#3a3a44" : "transparent")
+            color: (entry && entry.dis === true) ? "transparent" : (crma.pressed ? win.pal.line : "transparent")
             Text {
                 anchors.left: parent.left; anchors.leftMargin: 24*win.u
                 anchors.right: parent.right; anchors.rightMargin: 20*win.u
                 anchors.verticalCenter: parent.verticalCenter
                 text: entry ? entry.l : ""
-                color: (entry && entry.dis === true) ? "#6a6a72" : "#eaeaf0"
+                color: (entry && entry.dis === true) ? win.pal.faint : win.pal.fg
                 font.pixelSize: 21*win.u; elide: Text.ElideRight
             }
             MouseArea { id: crma; anchors.fill: parent
@@ -2092,7 +2127,7 @@ ${histCss}
         property bool open: false
         property bool showPrivate: false
         anchors.fill: parent
-        color: showPrivate ? "#17121f" : "#0e0e12"
+        color: showPrivate ? "#17121f" : win.pal.bg
         visible: open; z: 80
 
         // barra superiore
@@ -2103,7 +2138,7 @@ ${histCss}
 
             // chiudi switcher
             Text { anchors.left: parent.left; anchors.leftMargin: 20*win.u; anchors.verticalCenter: parent.verticalCenter
-                text: "✕"; color: "#e6e6ea"; font.pixelSize: 28*win.u
+                text: "✕"; color: win.pal.fg; font.pixelSize: 28*win.u
                 MouseArea { anchors.fill: parent; anchors.margins: -14*win.u; onClicked: switcher.open = false } }
 
             // segmenti Normali / Incognito
@@ -2111,14 +2146,14 @@ ${histCss}
                 anchors.centerIn: parent; spacing: 8 * win.u
                 Rectangle {
                     width: 130*win.u; height: 50*win.u; radius: 25*win.u
-                    color: !switcher.showPrivate ? "#33333e" : "transparent"
-                    Text { anchors.centerIn: parent; text: win.t("Schede ", "Tabs ") + win.tabCount(false); color: "#e6e6ea"; font.pixelSize: 18*win.u }
+                    color: !switcher.showPrivate ? win.pal.card : "transparent"
+                    Text { anchors.centerIn: parent; text: win.t("Schede ", "Tabs ") + win.tabCount(false); color: win.pal.fg; font.pixelSize: 18*win.u }
                     MouseArea { anchors.fill: parent; onClicked: switcher.showPrivate = false }
                 }
                 Rectangle {
                     width: 150*win.u; height: 50*win.u; radius: 25*win.u
                     color: switcher.showPrivate ? "#3a3050" : "transparent"
-                    Text { anchors.centerIn: parent; text: "Incognito " + win.tabCount(true); color: "#c9b8e0"; font.pixelSize: 18*win.u }
+                    Text { anchors.centerIn: parent; text: "Incognito " + win.tabCount(true); color: win.pal.incAccent; font.pixelSize: 18*win.u }
                     MouseArea { anchors.fill: parent; onClicked: switcher.showPrivate = true }
                 }
             }
@@ -2126,7 +2161,7 @@ ${histCss}
             // nuova scheda (nel filtro corrente)
             Rectangle {
                 anchors.right: parent.right; anchors.rightMargin: 18*win.u; anchors.verticalCenter: parent.verticalCenter
-                width: 50*win.u; height: 50*win.u; radius: 12*win.u; color: pma.pressed ? "#4a6fd0" : "#3a5fc0"
+                width: 50*win.u; height: 50*win.u; radius: 12*win.u; color: pma.pressed ? win.pal.accentPress : win.pal.accent
                 Text { anchors.centerIn: parent; text: "+"; color: "white"; font.pixelSize: 32*win.u }
                 MouseArea { id: pma; anchors.fill: parent; onClicked: win.newTab(switcher.showPrivate) }
             }
@@ -2147,26 +2182,26 @@ ${histCss}
                         width: (cardsFlow.width - 16*win.u) / 2
                         height: width * 1.35
                         radius: 12 * win.u
-                        color: "#1c1c24"
-                        border.color: index === win.currentTab ? "#5a7fd0" : "#2e2e38"; border.width: index === win.currentTab ? 3*win.u : 1
+                        color: win.pal.surface
+                        border.color: index === win.currentTab ? win.pal.focus : win.pal.line; border.width: index === win.currentTab ? 3*win.u : 1
 
                         // header: titolo + chiudi
                         Rectangle {
                             id: cardHead
                             anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                             height: 46 * win.u; radius: 12 * win.u
-                            color: model.priv ? "#2c2440" : "#26262f"
+                            color: model.priv ? "#2c2440" : win.pal.surface
                             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12*win.u; color: parent.color }  // squadra il basso
                             Text { anchors.left: parent.left; anchors.leftMargin: 12*win.u; anchors.right: closeX.left; anchors.rightMargin: 6*win.u
-                                anchors.verticalCenter: parent.verticalCenter; text: model.mtitle; color: "#e6e6ea"; font.pixelSize: 16*win.u; elide: Text.ElideRight }
+                                anchors.verticalCenter: parent.verticalCenter; text: model.mtitle; color: win.pal.fg; font.pixelSize: 16*win.u; elide: Text.ElideRight }
                             Text { id: closeX; anchors.right: parent.right; anchors.rightMargin: 12*win.u; anchors.verticalCenter: parent.verticalCenter
-                                text: "✕"; color: "#b0b0b8"; font.pixelSize: 20*win.u
+                                text: "✕"; color: win.pal.fg2; font.pixelSize: 20*win.u
                                 MouseArea { anchors.fill: parent; anchors.margins: -10*win.u; onClicked: win.closeTab(index) } }
                         }
                         // corpo: url (placeholder anteprima)
                         Text {
                             anchors.top: cardHead.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.margins: 12*win.u
-                            text: ("" + model.murl).replace(/^https?:\/\//, ""); color: "#8a8a94"; font.pixelSize: 14*win.u
+                            text: ("" + model.murl).replace(/^https?:\/\//, ""); color: win.pal.muted; font.pixelSize: 14*win.u
                             wrapMode: Text.WrapAnywhere; maximumLineCount: 3; elide: Text.ElideRight
                         }
                         MouseArea { anchors.fill: parent; anchors.topMargin: 46*win.u; onClicked: win.switchTab(index) }
@@ -2184,7 +2219,7 @@ ${histCss}
         onPaint: {
             var ctx = getContext("2d"); ctx.reset()
             var s = width, m = s * 0.14, cx = s/2, cy = s/2
-            ctx.strokeStyle = "#dcdce2"; ctx.fillStyle = "#dcdce2"
+            ctx.strokeStyle = win.pal.fg2; ctx.fillStyle = win.pal.fg2
             ctx.lineWidth = Math.max(1, s * 0.07); ctx.lineCap = "round"; ctx.lineJoin = "round"
             function rrect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath() }
             var k = kind
@@ -2255,7 +2290,7 @@ ${histCss}
             anchors.centerIn: parent
             width: Math.min(jsDlg.width - 48*win.u, 460*win.u)
             height: dlgCol.height + 36*win.u
-            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            radius: 14*win.u; color: win.pal.card; border.color: win.pal.border; border.width: 1
             Column {
                 id: dlgCol
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -2263,12 +2298,12 @@ ${histCss}
                 width: parent.width - 44*win.u
                 spacing: 14*win.u
                 Text { width: parent.width; text: jsDlg.host; visible: jsDlg.host.length > 0
-                    color: "#9aa0a6"; font.pixelSize: 17*win.u; elide: Text.ElideRight }
-                Text { width: parent.width; text: jsDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
+                    color: win.pal.muted; font.pixelSize: 17*win.u; elide: Text.ElideRight }
+                Text { width: parent.width; text: jsDlg.msg; color: win.pal.fg; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
                 Rectangle {
                     width: parent.width; height: 54*win.u; radius: 8*win.u
                     visible: jsDlg.isPrompt
-                    color: "#1c1c22"; border.color: jsInput.activeFocus ? "#5a7fd0" : "#3a3a42"; border.width: 1
+                    color: win.pal.surface; border.color: jsInput.activeFocus ? win.pal.focus : win.pal.border; border.width: 1
                     TextInput { id: jsInput; anchors.fill: parent; anchors.leftMargin: 14*win.u; anchors.rightMargin: 14*win.u
                         verticalAlignment: TextInput.AlignVCenter; color: "white"; font.pixelSize: 20*win.u; clip: true
                         onAccepted: win.jsDialogDone(true) }
@@ -2278,13 +2313,13 @@ ${histCss}
                     Rectangle {
                         width: annullaTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
                         visible: jsDlg.dtype !== JavaScriptDialogRequest.DialogTypeAlert
-                        color: jcma.pressed ? "#3a3a44" : "transparent"
-                        Text { id: annullaTxt; anchors.centerIn: parent; text: win.t("Annulla", "Cancel"); color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        color: jcma.pressed ? win.pal.line : "transparent"
+                        Text { id: annullaTxt; anchors.centerIn: parent; text: win.t("Annulla", "Cancel"); color: win.pal.link; font.pixelSize: 20*win.u }
                         MouseArea { id: jcma; anchors.fill: parent; onClicked: win.jsDialogDone(false) }
                     }
                     Rectangle {
                         width: okTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
-                        color: joma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        color: joma.pressed ? win.pal.accentPress : win.pal.accent
                         Text { id: okTxt; anchors.centerIn: parent; text: "OK"; color: "white"; font.pixelSize: 20*win.u }
                         MouseArea { id: joma; anchors.fill: parent; onClicked: win.jsDialogDone(true) }
                     }
@@ -2309,7 +2344,7 @@ ${histCss}
             anchors.centerIn: parent
             width: Math.min(permDlg.width - 48*win.u, 460*win.u)
             height: permCol.height + 36*win.u
-            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            radius: 14*win.u; color: win.pal.card; border.color: win.pal.border; border.width: 1
             Column {
                 id: permCol
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -2317,19 +2352,19 @@ ${histCss}
                 width: parent.width - 44*win.u
                 spacing: 14*win.u
                 Text { width: parent.width; text: permDlg.host; visible: permDlg.host.length > 0
-                    color: "#9aa0a6"; font.pixelSize: 17*win.u; elide: Text.ElideRight }
-                Text { width: parent.width; text: win.t("Vuole: ", "Wants to: ") + permDlg.msg; color: "#eaeaf0"; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
+                    color: win.pal.muted; font.pixelSize: 17*win.u; elide: Text.ElideRight }
+                Text { width: parent.width; text: win.t("Vuole: ", "Wants to: ") + permDlg.msg; color: win.pal.fg; font.pixelSize: 21*win.u; wrapMode: Text.Wrap }
                 Row {
                     anchors.right: parent.right; spacing: 10*win.u
                     Rectangle {
                         width: permNoTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
-                        color: pnma.pressed ? "#3a3a44" : "transparent"
-                        Text { id: permNoTxt; anchors.centerIn: parent; text: win.t("Blocca", "Block"); color: "#8ab4f8"; font.pixelSize: 20*win.u }
+                        color: pnma.pressed ? win.pal.line : "transparent"
+                        Text { id: permNoTxt; anchors.centerIn: parent; text: win.t("Blocca", "Block"); color: win.pal.link; font.pixelSize: 20*win.u }
                         MouseArea { id: pnma; anchors.fill: parent; onClicked: win.permDecide(false) }
                     }
                     Rectangle {
                         width: permYesTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
-                        color: pyma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        color: pyma.pressed ? win.pal.accentPress : win.pal.accent
                         Text { id: permYesTxt; anchors.centerIn: parent; text: win.t("Consenti", "Allow"); color: "white"; font.pixelSize: 20*win.u }
                         MouseArea { id: pyma; anchors.fill: parent; onClicked: win.permDecide(true) }
                     }
@@ -2355,23 +2390,23 @@ ${histCss}
             anchors.centerIn: parent
             width: Math.min(firstRunDlg.width - 48*win.u, 470*win.u)
             height: frCol.height + 36*win.u
-            radius: 14*win.u; color: "#2c2c31"; border.color: "#3a3a42"; border.width: 1
+            radius: 14*win.u; color: win.pal.card; border.color: win.pal.border; border.width: 1
             Column {
                 id: frCol
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.top: parent.top; anchors.topMargin: 18*win.u
                 width: parent.width - 44*win.u
                 spacing: 14*win.u
-                Text { width: parent.width; text: win.t("Permessi in RooTitanium", "Permissions in RooTitanium"); color: "#eaeaf0"
+                Text { width: parent.width; text: win.t("Permessi in RooTitanium", "Permissions in RooTitanium"); color: win.pal.fg
                     font.pixelSize: 22*win.u; font.bold: true; wrapMode: Text.Wrap }
-                Text { width: parent.width; color: "#c8c8d0"; font.pixelSize: 17*win.u; wrapMode: Text.Wrap
+                Text { width: parent.width; color: win.pal.fg2; font.pixelSize: 17*win.u; wrapMode: Text.Wrap
                     lineHeight: 1.25
                     text: win.t("Puoi decidere tu cosa l'app può usare. In <b>Impostazioni › Permessi App</b> attivi o revochi in blocco fotocamera, microfono, posizione, notifiche e download. In <b>Permessi siti</b> gestisci le scelte per ogni singolo sito.\n\nSe revochi una voce in «Permessi App», nessun sito potrà più chiederla.", "You decide what the app can use. In <b>Settings › App Permissions</b> you enable or revoke camera, microphone, location, notifications and downloads all at once. In <b>Site Permissions</b> you manage the choices for each individual site.\n\nIf you revoke an item in «App Permissions», no site can ask for it anymore.") ; textFormat: Text.RichText }
                 Row {
                     anchors.right: parent.right; spacing: 10*win.u
                     Rectangle {
                         width: frOkTxt.paintedWidth + 40*win.u; height: 56*win.u; radius: 28*win.u
-                        color: frma.pressed ? "#4a6fd0" : "#3a5fc0"
+                        color: frma.pressed ? win.pal.accentPress : win.pal.accent
                         Text { id: frOkTxt; anchors.centerIn: parent; text: win.t("Ho capito", "Got it"); color: "white"; font.pixelSize: 20*win.u }
                         MouseArea { id: frma; anchors.fill: parent; onClicked: firstRunDlg.dismiss() }
                     }
