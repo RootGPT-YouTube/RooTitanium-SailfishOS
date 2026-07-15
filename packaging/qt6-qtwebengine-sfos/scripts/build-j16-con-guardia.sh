@@ -22,7 +22,8 @@
 
 set -u
 
-REPO=/home/RootGPT/Developing/SailfishOS/RooTitanium
+# Root del repo, derivata dalla posizione dello script (scripts/ è 3 livelli sotto)
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-6.8.3/upstream
 TARGET=SailfishOS-5.1.0.11-aarch64
 ENGINE=sailfish-sdk-build-engine_RootGPT

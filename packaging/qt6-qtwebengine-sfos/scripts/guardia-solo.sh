@@ -10,7 +10,8 @@
 # Termina da solo quando il processo sfdk della build sparisce.
 
 set -u
-REPO=/home/RootGPT/Developing/SailfishOS/RooTitanium
+# Root del repo, derivata dalla posizione dello script (scripts/ è 3 livelli sotto)
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 ENGINE=sailfish-sdk-build-engine_RootGPT
 CHIP=it8689-isa-0a40
 SOGLIA_STOP=85
