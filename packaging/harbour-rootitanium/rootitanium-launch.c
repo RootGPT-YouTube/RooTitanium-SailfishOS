@@ -76,7 +76,10 @@ int main(int argc, char **argv) {
            "--no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox "
            "--touch-events=enabled "
            "--blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 "
-           "--force-device-scale-factor=2.6214 --touch-slop-distance=28", 0);
+           "--force-device-scale-factor=2.6214 --touch-slop-distance=28 "
+           /* pinch zoom a due dita: pipeline page-scale mobile; non cambia le
+            * metriche viste dalle pagine (innerWidth/dpr/screen.* invariati) */
+           "--enable-viewport", 0);
 
     /* execv del binario webengine-smoke, ma con argv[0] FORGIATO =
      * /home/rootitanium/harbour-rootitanium. Due requisiti in uno:

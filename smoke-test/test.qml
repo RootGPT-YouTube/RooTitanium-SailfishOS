@@ -912,7 +912,7 @@ Window {
         }).join("") : '<div class="empty">' + win.t("Nessun download. I file scaricati finiscono in ", "No downloads. Downloaded files go to ") + win.dlDirs[win.cfgDlDir].n + '.</div>'
         var clear = rows.some(function(e) { return e.state !== "run" })
             ? '<a class="clear" href="https://downloads.local/clear">' + win.t("Svuota elenco", "Clear list") + '</a>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Download", "Downloads")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Download", "Downloads")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .empty{color:var(--faint);font-size:14px;padding:14px 2px}
@@ -967,7 +967,7 @@ ${body}
             : '<a class="srow" href="https://settings.local/cleardata"><span class="sbody">'
               + '<span class="st">' + win.t("Pulisci dati navigazione", "Clear browsing data") + '</span>'
               + '<span class="sd">' + win.t("Cronologia, elenco download e cache", "History, download list and cache") + '</span></span></a>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Impostazioni", "Settings")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Impostazioni", "Settings")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 h2{font-size:13px;color:var(--muted);font-weight:600;margin:26px 0 4px;text-transform:uppercase;letter-spacing:.6px}
@@ -1107,7 +1107,7 @@ ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), 
                  + '<span class="pst" style="color:' + st[1] + '">' + st[0] + '</span>'
                  + '<a class="pact" href="https://permissions.local/reset?o=' + enc + '">' + win.t("Revoca", "Revoke") + '</a></div>'
         }).join("") : '<div class="empty">' + win.t("Nessun permesso concesso o bloccato. Quando un sito chiede fotocamera, microfono, posizione o notifiche, la tua scelta comparirà qui.", "No permissions granted or blocked. When a site asks for camera, microphone, location or notifications, your choice will appear here.") + '</div>'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi siti", "Site Permissions")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Permessi siti", "Site Permissions")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .hint{color:var(--faint);font-size:12px;margin:2px 0 10px}
@@ -1133,7 +1133,7 @@ ${body}
                  + '<span class="sbody"><span class="st">' + title + '</span><span class="sd">' + desc + '</span></span>'
                  + '<span class="sw ' + (on ? 'on' : '') + '"></span></a>'
         }
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Permessi App", "App Permissions")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Permessi App", "App Permissions")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .hint{color:var(--muted2);font-size:12px;margin:2px 0 14px;line-height:1.5}
@@ -1158,7 +1158,7 @@ ${aRow("permdl", cfgPermDownload, win.t("Download / File", "Downloads / Files"),
 
     // landing incognito (stile Chrome/Cromite)
     function incognitoHtml() {
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <title>${win.t("Nuova scheda in incognito", "New incognito tab")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--incbg);color:var(--fg);font-family:sans-serif;margin:0;padding:28px}
 .wrap{max-width:640px;margin:32px auto} .ico{width:76px;height:76px;border-radius:50%;background:var(--pill);
@@ -1179,7 +1179,7 @@ h1{font-size:23px;font-weight:500;margin:0 0 14px} p{color:var(--muted);line-hei
     // query pointer/hover viste dalla pagina, logga gli eventi input per ogni tap
     // e ha un <video> H.264 con bottone fullscreen per isolare il nero da YouTube
     function probeHtml() {
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>${win.themeVars()}
 body{background:#111;color:#eee;font-family:monospace;margin:0;padding:12px;font-size:14px}
 #big{background:#274;padding:30px 0;text-align:center;font-size:20px;border-radius:10px;margin:10px 0;-webkit-user-select:none;user-select:none}
 pre{white-space:pre-wrap;font-size:13px;color:#8f8;min-height:180px}
@@ -1357,7 +1357,7 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
               }).join("")
             : '<div class="empty">' + win.t("Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.", "No bookmarks. Add the page you're viewing from the ⋮ menu → “Add bookmark”.") + '</div>'
         var hint = items.length ? '<div class="hint">' + win.t("⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro", "⌂ green = shown in HOME Favorites · ✕ = delete the bookmark") + '</div>' : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .empty{color:var(--faint);font-size:14px;padding:14px 2px}
@@ -1407,7 +1407,7 @@ ${body}
         var clear = items.length
             ? '<a class="clear" href="https://history.local/clear">' + win.t("Svuota cronologia", "Clear history") + '</a>'
             : ''
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${win.t("Cronologia", "History")}</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Cronologia", "History")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .empty{color:var(--faint);font-size:14px;padding:14px 2px}
@@ -1452,7 +1452,7 @@ ${body}
             ? histRowsHtml(hist, false) + '<a class="hmore" href="https://history.local/">' + win.t("Tutta la cronologia →", "All history →") + '</a>'
             : '<div class="empty">' + win.t("La cronologia apparirà qui.", "Your history will appear here.") + '</div>'
         if (_histErr.length) histSection += '<!-- histErr: ' + htmlEsc(_histErr) + ' -->'
-        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Home</title><style>${win.themeVars()}
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>Home</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:26px}
 h2{font-size:14px;color:var(--muted);font-weight:600;margin:28px 0 14px;text-transform:uppercase;letter-spacing:.6px}
 .logo{text-align:center;font-size:30px;font-weight:700;margin:18px 0 6px;color:var(--fg)}

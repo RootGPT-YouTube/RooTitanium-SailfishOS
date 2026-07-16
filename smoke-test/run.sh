@@ -48,13 +48,17 @@ export QTWEBENGINE_DISABLE_SANDBOX=1
 # player YouTube (vedi spoof in test.qml). NB: NON cambia il DSF della view
 # (QtWebEngine usa il dpr della QQuickWindow): il viewport resta gestito dallo
 # zoomFactor 2.62 nel QML.
+# --enable-viewport: accende la pipeline page-scale mobile (pinch zoom a due
+# dita). NON cambia nessuna metrica vista dalle pagine (verificato via CDP:
+# innerWidth/dpr/screen.* identici con e senza flag): lo zoom resta gestito
+# dallo zoomFactor QML, la flag abilita solo il pinch sopra di esso.
 # --touch-slop-distance=28: il gesture detector (aura) lavora in px della VIEW
 # (=FISICI qui, DSF view 1): lo slop default ≈15px vale ~1,4mm su questo
 # pannello ~450dpi → un dito che scivola di 2mm ANNULLA il click (pointercancel
 # → scroll; verificato con tap iniettati da /dev/input: jitter 15px = niente
 # click, tap fermo = ok). Android usa 8dp ≈ 21px fisici; 28px ≈ 2,6mm. Migliora
 # anche longpress (stesso slop) e pinch (span_slop = 2x questo valore).
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 --force-device-scale-factor=2.6214 --touch-slop-distance=28}"
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 --force-device-scale-factor=2.6214 --touch-slop-distance=28 --enable-viewport}"
 
 # log utile per diagnosi
 export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"
