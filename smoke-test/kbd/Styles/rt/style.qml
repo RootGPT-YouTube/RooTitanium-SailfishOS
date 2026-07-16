@@ -469,6 +469,12 @@ KeyboardStyle {
                 opacity: inputLocaleIndicatorOpacity
                 Behavior on opacity { PropertyAnimation { duration: 250 } }
                 anchors.centerIn: parent
+                width: parent.width - keyBackgroundMargin * 2
+                horizontalAlignment: Text.AlignHCenter
+                // i nomi lunghi (es. "norsk bokmål") rimpiccioliscono invece di sforare il tasto
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 30 * scaleHint
+                elide: Text.ElideRight
                 font {
                     family: fontFamily
                     weight: Font.Normal
