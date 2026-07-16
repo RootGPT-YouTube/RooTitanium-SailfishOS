@@ -30,8 +30,10 @@ export QT_IM_MODULE=qtvirtualkeyboard
 export QT_VIRTUALKEYBOARD_STYLE="${QT_VIRTUALKEYBOARD_STYLE:-rt}"
 export QT_VIRTUALKEYBOARD_LAYOUT_PATH="${QT_VIRTUALKEYBOARD_LAYOUT_PATH:-$HERE/kbd-layouts}"
 # [Maliit nativo SCARTATO: lipstick non espone wayland text-input, plugin maliit e' Qt5-only]
-# lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo)
-export LANG="${LANG:-it_IT.UTF-8}"
+# lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo).
+# Fallback neutro come nel launcher C: LANG pilota Qt.locale() e quindi
+# l'Accept-Language, un default italiano darebbe pagine italiane a stranieri.
+export LANG="${LANG:-en_US.UTF-8}"
 
 # --- Chromium: niente sandbox (bundle non installato, no helper setuid); usa EGL ---
 export QTWEBENGINE_DISABLE_SANDBOX=1

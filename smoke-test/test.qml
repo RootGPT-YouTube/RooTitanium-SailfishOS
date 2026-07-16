@@ -20,6 +20,22 @@ Window {
     readonly property bool uiIt: ("" + Qt.locale().name).toLowerCase().indexOf("it") === 0
     function t(it, en) { return uiIt ? it : en }
 
+    // --- Accept-Language dei profili: derivato dal locale reale ---
+    // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
+    // (YouTube in testa) riportavano la lingua a italiano a ogni navigazione,
+    // sovrascrivendo la scelta dell'utente. L'header non va MAI rimosso: la sua
+    // assenza è un segnale bot (#7). Su device italiano il risultato è identico
+    // alla vecchia stringa hardcoded.
+    readonly property string acceptLang: {
+        var full = ("" + Qt.locale().name).replace(/_/g, "-")   // it_IT → it-IT
+        var lang = full.split("-")[0].toLowerCase()
+        if (lang.length < 2 || lang.length > 3) return "en-US,en;q=0.9"  // locale "C" o non valido
+        var out = [full]
+        if (full !== lang) out.push(lang + ";q=0.9")
+        if (lang !== "en") out.push("en-US;q=0.8", "en;q=0.7")
+        return out.join(",")
+    }
+
     // --- tema UI: Scuro (default) / Chiaro, scelto manualmente in Impostazioni ---
     // uiDark pilota sia la palette QML (pal) sia le variabili CSS delle pagine
     // interne (themeVars). Cambiando cfgUiTheme le property si riaggiornano da sole.
@@ -721,7 +737,7 @@ Window {
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         // senza, l'header Accept-Language MANCAVA del tutto (nessun browser
         // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
-        httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+        httpAcceptLanguage: win.acceptLang
         onDownloadRequested: function(download) { win.handleDownload(download, false) }
         // installa (dal C++) l'interceptor header Sec-CH-UA. QQuickWebEngineProfile
         // espone setUrlRequestInterceptor come metodo C++ pubblico → rtNative lo
@@ -734,7 +750,7 @@ Window {
         // incognito: permessi solo in memoria, nessuna traccia su disco
         persistentPermissionsPolicy: WebEngineProfile.StoreInMemory
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
-        httpAcceptLanguage: "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7"
+        httpAcceptLanguage: win.acceptLang
         onDownloadRequested: function(download) { win.handleDownload(download, true) }
         // stesso interceptor header Sec-CH-UA anche in incognito
         Component.onCompleted: rtNative.setupProfile(this)

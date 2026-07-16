@@ -65,7 +65,10 @@ int main(int argc, char **argv) {
     setenv("QT_IM_MODULE", "qtvirtualkeyboard", 1);
     setenv("QT_VIRTUALKEYBOARD_STYLE", "rt", 0);
     set_here("QT_VIRTUALKEYBOARD_LAYOUT_PATH", "/kbd-layouts", 0);
-    setenv("LANG", "it_IT.UTF-8", 0);
+    /* solo se la sessione non lo passa: fallback neutro, non italiano. LANG
+     * pilota Qt.locale() e quindi l'Accept-Language dei profili: un default
+     * italiano servirebbe pagine in italiano a utenti stranieri. */
+    setenv("LANG", "en_US.UTF-8", 0);
 
     /* Chromium: no sandbox (bundle non installato di sistema), EGL, fix touch */
     setenv("QTWEBENGINE_DISABLE_SANDBOX", "1", 1);
