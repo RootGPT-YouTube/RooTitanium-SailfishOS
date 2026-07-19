@@ -3,6 +3,7 @@ import QtQuick.Window
 import QtQuick.VirtualKeyboard
 import QtWebEngine
 import QtQuick.LocalStorage
+import Qt.labs.folderlistmodel
 
 Window {
     id: win
@@ -673,6 +674,59 @@ Window {
         if (ok) jsReq.dialogAccept(jsDlg.dtype === JavaScriptDialogRequest.DialogTypePrompt ? jsDlg.input : "")
         else jsReq.dialogReject()
         jsReq = null
+    }
+
+    // ===================== FILE PICKER (<input type=file>) =====================
+    // QtWebEngine altrimenti cadrebbe sul FileDialog desktop di serie (minuscolo,
+    // non scalato). Prendiamo il controllo con onFileDialogRequested e mostriamo un
+    // overlay QML nativo che naviga il filesystem con FolderListModel. Versione
+    // snella: gestiamo la selezione di un singolo file (apre/carica); save e
+    // upload-cartella (rari nel browsing reale) vengono rifiutati.
+    property var fileReq: null
+    function openFilePicker(req) {
+        // solo modalità "apri file": gli altri mode non hanno una UI sensata qui
+        if (req.mode === FileDialogRequest.FileModeSave
+                || req.mode === FileDialogRequest.FileModeUploadFolder) {
+            req.dialogReject()
+            return
+        }
+        fileReq = req
+        filePicker.multi = (req.mode === FileDialogRequest.FileModeOpenMultiple)
+        filePicker.chosen = []
+        // riparti sempre dai Download: è la cartella di sbarco tipica degli upload
+        fileModel.folder = "file:///home/defaultuser/Downloads"
+        filePicker.open = true
+    }
+    // accetta: la selezione multipla accumula, quella singola chiude subito
+    function filePickerPick(url) {
+        if (!fileReq) { filePicker.open = false; return }
+        if (filePicker.multi) {
+            var a = filePicker.chosen.slice()
+            var s = "" + url, i = a.indexOf(s)
+            if (i >= 0) a.splice(i, 1); else a.push(s)
+            filePicker.chosen = a
+        } else {
+            fileReq.dialogAccept(["" + url])   // file:// URL: QtWebEngine lo converte in path locale
+            fileReq = null
+            filePicker.open = false
+        }
+    }
+    function filePickerConfirm() {   // solo modalità multipla
+        if (!fileReq) { filePicker.open = false; return }
+        if (filePicker.chosen.length > 0) fileReq.dialogAccept(filePicker.chosen)
+        else fileReq.dialogReject()
+        fileReq = null
+        filePicker.open = false
+    }
+    function filePickerCancel() {
+        if (fileReq) { fileReq.dialogReject(); fileReq = null }
+        filePicker.open = false
+    }
+    function fmtFileSize(b) {
+        if (b < 1024) return b + " B"
+        if (b < 1048576) return Math.round(b / 1024) + " KB"
+        if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"
+        return (b / 1073741824).toFixed(1) + " GB"
     }
 
     // menù longpress della barra indirizzi (TextInput QML, non WebEngine)
@@ -1971,6 +2025,11 @@ ${histCss}
                         request.accepted = true
                         win.showJsDialog(request)
                     }
+                    // <input type=file>: soppresso il FileDialog desktop, picker QML nostro
+                    onFileDialogRequested: function(request) {
+                        request.accepted = true
+                        win.openFilePicker(request)
+                    }
                     onTooltipRequested: function(request) { request.accepted = true }  // niente tooltip nativi minuscoli
                     onFindTextFinished: function(result) {
                         win.findCur = result.activeMatch
@@ -2290,6 +2349,161 @@ ${histCss}
             } else if (k === "settings") {
                 ctx.beginPath(); ctx.arc(cx,cy,s*0.16,0,2*Math.PI); ctx.stroke()
                 for (var g2=0; g2<8; g2++){ var a2 = g2*Math.PI/4; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a2)*s*0.22, cy+Math.sin(a2)*s*0.22); ctx.lineTo(cx+Math.cos(a2)*s*0.32, cy+Math.sin(a2)*s*0.32); ctx.stroke() }
+            } else if (k === "folder") {
+                ctx.beginPath(); ctx.moveTo(s*0.16,s*0.30); ctx.lineTo(s*0.42,s*0.30); ctx.lineTo(s*0.50,s*0.40); ctx.lineTo(s*0.84,s*0.40)
+                ctx.arcTo(s*0.86,s*0.40,s*0.86,s*0.46,s*0.04); ctx.lineTo(s*0.86,s*0.72); ctx.arcTo(s*0.86,s*0.76,s*0.82,s*0.76,s*0.04)
+                ctx.lineTo(s*0.18,s*0.76); ctx.arcTo(s*0.14,s*0.76,s*0.14,s*0.72,s*0.04); ctx.lineTo(s*0.14,s*0.34); ctx.arcTo(s*0.14,s*0.30,s*0.18,s*0.30,s*0.04); ctx.stroke()
+            } else if (k === "file") {
+                ctx.beginPath(); ctx.moveTo(s*0.28,s*0.16); ctx.lineTo(s*0.58,s*0.16); ctx.lineTo(s*0.74,s*0.32); ctx.lineTo(s*0.74,s*0.84); ctx.lineTo(s*0.28,s*0.84); ctx.closePath(); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(s*0.58,s*0.16); ctx.lineTo(s*0.58,s*0.32); ctx.lineTo(s*0.74,s*0.32); ctx.stroke()
+            } else if (k === "up") {
+                ctx.beginPath(); ctx.moveTo(cx,s*0.78); ctx.lineTo(cx,s*0.24); ctx.moveTo(cx-s*0.20,s*0.44); ctx.lineTo(cx,s*0.22); ctx.lineTo(cx+s*0.20,s*0.44); ctx.stroke()
+            }
+        }
+    }
+
+    // ===================== FILE PICKER (overlay) =====================
+    // foglio opaco a tutto schermo sopra la pagina: header + scorciatoie + lista.
+    // FolderListModel dà la navigazione quasi gratis (folder/parentFolder + ruoli).
+    FolderListModel {
+        id: fileModel
+        showDirsFirst: true
+        showDotAndDotDot: false
+        showHidden: false
+        sortField: FolderListModel.Name
+        folder: "file:///home/defaultuser/Downloads"
+    }
+    Rectangle {
+        id: filePicker
+        property bool open: false
+        property bool multi: false
+        property var chosen: []
+        readonly property string curPath: ("" + fileModel.folder).replace(/^file:\/\//, "")
+        anchors.fill: parent
+        color: win.pal.bg
+        visible: open; z: 92
+        onOpenChanged: if (!open) fileList.positionViewAtBeginning()
+        MouseArea { anchors.fill: parent }   // foglio modale: assorbe i tap che sfuggono
+
+        // scorciatoie: token del path + etichetta bilingue
+        readonly property var shortcuts: [
+            { l: win.t("Home", "Home"),        p: "/home/defaultuser" },
+            { l: win.t("Download", "Downloads"), p: "/home/defaultuser/Downloads" },
+            { l: win.t("Immagini", "Pictures"),  p: "/home/defaultuser/Pictures" },
+            { l: win.t("Documenti", "Documents"), p: "/home/defaultuser/Documents" },
+            { l: win.t("Video", "Videos"),      p: "/home/defaultuser/Videos" }
+        ]
+
+        // --- header ---
+        Rectangle {
+            id: fpHeader
+            anchors.top: parent.top; width: parent.width; height: 64*win.u
+            color: win.pal.surface
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.pal.border }
+            MenuIcon { id: fpUp; kind: "up"; width: 30*win.u; height: 30*win.u
+                anchors.left: parent.left; anchors.leftMargin: 18*win.u; anchors.verticalCenter: parent.verticalCenter }
+            MouseArea { anchors.fill: fpUp; anchors.margins: -12*win.u
+                onClicked: { if (("" + fileModel.parentFolder).length > 0) fileModel.folder = fileModel.parentFolder } }
+            Text {
+                anchors.left: fpUp.right; anchors.leftMargin: 16*win.u
+                anchors.right: fpCancel.left; anchors.rightMargin: 12*win.u
+                anchors.verticalCenter: parent.verticalCenter
+                text: filePicker.curPath.replace("/home/defaultuser", "~")
+                color: win.pal.fg; font.pixelSize: 20*win.u; elide: Text.ElideLeft
+            }
+            Rectangle {
+                id: fpCancel
+                anchors.right: parent.right; anchors.rightMargin: 12*win.u
+                anchors.verticalCenter: parent.verticalCenter
+                width: fpCancelTxt.paintedWidth + 28*win.u; height: 46*win.u; radius: 23*win.u
+                color: fpCancelMa.pressed ? win.pal.neutralPress : "transparent"
+                Text { id: fpCancelTxt; anchors.centerIn: parent; text: win.t("Annulla", "Cancel"); color: win.pal.link; font.pixelSize: 19*win.u }
+                MouseArea { id: fpCancelMa; anchors.fill: parent; onClicked: win.filePickerCancel() }
+            }
+        }
+
+        // --- scorciatoie ---
+        Flickable {
+            id: fpShortRow
+            anchors.top: fpHeader.bottom; width: parent.width; height: 58*win.u
+            contentWidth: fpShortInner.width; clip: true; flickableDirection: Flickable.HorizontalFlick
+            Row {
+                id: fpShortInner
+                height: parent.height; spacing: 8*win.u
+                leftPadding: 16*win.u; rightPadding: 16*win.u
+                Repeater {
+                    model: filePicker.shortcuts
+                    Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: scTxt.paintedWidth + 32*win.u; height: 40*win.u; radius: 20*win.u
+                        property bool sel: filePicker.curPath === modelData.p
+                        color: scMa.pressed ? win.pal.accentPress : (sel ? win.pal.accent : win.pal.card)
+                        border.color: win.pal.border; border.width: sel ? 0 : 1
+                        Text { id: scTxt; anchors.centerIn: parent; text: modelData.l
+                            color: sel ? "white" : win.pal.fg2; font.pixelSize: 17*win.u }
+                        MouseArea { id: scMa; anchors.fill: parent; onClicked: fileModel.folder = "file://" + modelData.p }
+                    }
+                }
+            }
+        }
+        Rectangle { anchors.top: fpShortRow.bottom; width: parent.width; height: 1; color: win.pal.border }
+
+        // --- lista file/cartelle ---
+        ListView {
+            id: fileList
+            anchors.top: fpShortRow.bottom; anchors.bottom: fpConfirm.visible ? fpConfirm.top : parent.bottom
+            width: parent.width; clip: true
+            model: fileModel
+            delegate: Rectangle {
+                width: ListView.view.width; height: 66*win.u
+                color: rowMa.pressed ? win.pal.neutralPress : "transparent"
+                property bool picked: filePicker.multi && !fileIsDir && filePicker.chosen.indexOf("" + fileURL) >= 0
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1
+                    anchors.leftMargin: 66*win.u; color: win.pal.line; opacity: 0.5 }
+                MenuIcon { id: rowIco; kind: fileIsDir ? "folder" : "file"
+                    width: 30*win.u; height: 30*win.u
+                    anchors.left: parent.left; anchors.leftMargin: 20*win.u; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    anchors.left: rowIco.right; anchors.leftMargin: 16*win.u
+                    anchors.right: rowEnd.left; anchors.rightMargin: 12*win.u
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: fileName; color: win.pal.fg; font.pixelSize: 20*win.u; elide: Text.ElideRight
+                }
+                // a destra: chevron per le cartelle, dimensione per i file, spunta se scelto
+                Item {
+                    id: rowEnd; width: 40*win.u; height: parent.height
+                    anchors.right: parent.right; anchors.rightMargin: 16*win.u
+                    Text { visible: fileIsDir; anchors.centerIn: parent; text: "›"; color: win.pal.muted; font.pixelSize: 26*win.u }
+                    Text { visible: !fileIsDir && !parent.parent.picked; anchors.verticalCenter: parent.verticalCenter; anchors.right: parent.right
+                        text: win.fmtFileSize(fileSize); color: win.pal.muted; font.pixelSize: 15*win.u }
+                    Text { visible: parent.parent.picked; anchors.centerIn: parent; text: "✓"; color: win.pal.ok; font.pixelSize: 24*win.u; font.bold: true }
+                }
+                MouseArea { id: rowMa; anchors.fill: parent
+                    onClicked: fileIsDir ? (fileModel.folder = fileURL) : win.filePickerPick(fileURL) }
+            }
+            // cartella vuota
+            Text {
+                anchors.centerIn: parent; visible: fileModel.count === 0 && fileModel.status === FolderListModel.Ready
+                text: win.t("Cartella vuota", "Empty folder"); color: win.pal.muted; font.pixelSize: 19*win.u
+            }
+        }
+
+        // --- barra conferma (solo selezione multipla) ---
+        Rectangle {
+            id: fpConfirm
+            visible: filePicker.multi
+            anchors.bottom: parent.bottom; width: parent.width; height: 72*win.u
+            color: win.pal.surface
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: win.pal.border }
+            Text { anchors.left: parent.left; anchors.leftMargin: 20*win.u; anchors.verticalCenter: parent.verticalCenter
+                text: win.t("Selezionati: ", "Selected: ") + filePicker.chosen.length; color: win.pal.fg2; font.pixelSize: 18*win.u }
+            Rectangle {
+                anchors.right: parent.right; anchors.rightMargin: 16*win.u; anchors.verticalCenter: parent.verticalCenter
+                width: fpOkTxt.paintedWidth + 44*win.u; height: 52*win.u; radius: 26*win.u
+                opacity: filePicker.chosen.length > 0 ? 1 : 0.4
+                color: fpOkMa.pressed ? win.pal.accentPress : win.pal.accent
+                Text { id: fpOkTxt; anchors.centerIn: parent; text: win.t("Carica", "Upload"); color: "white"; font.pixelSize: 19*win.u }
+                MouseArea { id: fpOkMa; anchors.fill: parent; enabled: filePicker.chosen.length > 0; onClicked: win.filePickerConfirm() }
             }
         }
     }
