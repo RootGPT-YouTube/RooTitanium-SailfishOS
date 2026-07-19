@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.0
-Release:    2
+Version:    1.1
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -69,6 +69,16 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sun Jul 19 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.1-1
+- Versione 1.1: file picker mobile per upload (<input type=file>), Modalita'
+  Lettura (Readability.js 0.6.0 bundled, Apache-2.0 in NOTICE), Accept-Language
+  dal locale reale, pinch zoom a due dita, fix tasto spazio tastiera.
+- Launcher: QML_XHR_ALLOW_FILE_READ=1 (lettura Readability.js dal bundle).
+- Trim bundle (~19 MB): rimossi Widgets/LabsPlatform/Pdf(+plugin qpdf)/
+  PositioningQuick/Test/QuickTest/WaylandCompositor e moduli QML morti
+  (QtTest, Qt/test, QtSensors, QtLocation, QtPositioning, Qt/labs/platform,
+  Controls/Imagine, QtQuick/Pdf, QtWayland); strip launcher+webengine-smoke.
+
 * Thu Jul 16 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.0-2
 - Includo LICENSE (GPL-3.0) e NOTICE.md (terze parti) sotto %{_defaultlicensedir}
   (obbligo GPL/LGPL: il testo di licenza accompagna il binario distribuito).
