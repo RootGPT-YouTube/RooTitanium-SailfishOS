@@ -259,6 +259,7 @@ Window {
         if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
         cfgDlDir        = kvGet("set_dldir", "downloads")
         if (!dlDirs[cfgDlDir]) cfgDlDir = "downloads"
+        cfgReaderPx     = parseInt(kvGet("set_readerpx", "19")) || 19
     }
     function applySetting(k, v) {
         if (k === "homepage") {
@@ -519,6 +520,7 @@ Window {
         { t: "item", ic: "search",   l: win.t("Cerca nella pagina", "Find in page"), a: "find" },
         { t: "item", ic: "share",    l: win.t("Condividi", "Share"),                a: "share" },
         { t: "item", ic: "pdf",      l: win.t("Salva pagina come PDF", "Save page as PDF"), a: "pdf" },
+        { t: "item", ic: "reader",   l: win.t("Modalità Lettura", "Reader Mode"),   a: "reader" },
         { t: "sep" },
         { t: "item", ic: "desktop",  l: win.t("Versione desktop", "Desktop site"),   a: "desktop", toggle: true },
         { t: "item", ic: "rotate",   l: win.t("Ruota in orizzontale", "Rotate to landscape"), a: "rotate",  toggle: true },
@@ -537,6 +539,7 @@ Window {
         else if (a === "desktop") setDesktop(!win.desktopMode)
         else if (a === "rotate") manualLandscape = !manualLandscape
         else if (a === "pdf") savePdf()
+        else if (a === "reader") openReaderMode()
         else if (a === "share") shareUrl()
         else if (a === "history") loadInternal(currentView, "history", historyHtml(), "https://history.local/")
         else if (a === "addbookmark") { if (currentView) bmAdd(currentView.url, currentView.title) }
@@ -727,6 +730,85 @@ Window {
         if (b < 1048576) return Math.round(b / 1024) + " KB"
         if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB"
         return (b / 1073741824).toFixed(1) + " GB"
+    }
+
+    // ===================== MODALITÀ LETTURA (Readability.js) =====================
+    // DOM Distiller di Chromium non è compilato in QtWebEngine → iniettiamo
+    // Readability.js (Mozilla, Apache-2.0, bundled accanto a test.qml) via
+    // runJavaScript e rendiamo l'articolo in una pagina interna reader.local.
+    // Uscita = goBack() (la loadHtml è un'entry di history, l'articolo resta in
+    // cache con lo scroll); il corpo A−/A+ cambia font-size live senza reload.
+    property int cfgReaderPx: 19
+    property var readerArt: null          // { t: titolo, b: byline, s: siteName, c: HTML }
+    property string readerUrl: ""
+    property string readabilitySrc: ""    // sorgente Readability.js, letta una volta
+    function loadReadability(cb) {
+        if (readabilitySrc.length) { cb(true); return }
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", Qt.resolvedUrl("Readability.js"))
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) return
+            if (xhr.responseText && xhr.responseText.length > 1000) { readabilitySrc = xhr.responseText; cb(true) }
+            else cb(false)
+        }
+        xhr.send()
+    }
+    function openReaderMode() {
+        var v = currentView
+        if (!v) return
+        var u = "" + v.url
+        if (v.localPage !== "" || !/^https?:\/\//i.test(u) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(u)) {
+            toast.show(t("Modalità Lettura non disponibile qui", "Reader Mode not available here"))
+            return
+        }
+        loadReadability(function(ok) {
+            if (!ok) { toast.show(win.t("Readability.js non trovato nel bundle", "Readability.js missing from bundle")); return }
+            // tutto in un'unica IIFE: Readability resta locale, niente globali sporcati
+            var js = "(function(){try{" + win.readabilitySrc
+                   + "\nvar a=new Readability(document.cloneNode(true),{}).parse();"
+                   + "if(!a||!a.content)return '';"
+                   + "return JSON.stringify({t:a.title||'',b:a.byline||'',s:a.siteName||'',c:a.content})"
+                   + "}catch(e){return ''}})()"
+            v.runJavaScript(js, function(res) {
+                var art = null
+                try { art = JSON.parse(res) } catch(e) {}
+                if (!art || !art.c) {
+                    toast.show(win.t("Nessun articolo leggibile in questa pagina", "No readable article on this page"))
+                    return
+                }
+                win.readerArt = art
+                win.readerUrl = u
+                win.loadInternal(v, "reader", win.readerHtml(), "https://reader.local/")
+            })
+        })
+    }
+    function readerHtml() {
+        var a = readerArt || { t: "", b: "", s: "", c: "" }
+        var host = ("" + readerUrl).replace(/^[a-z]+:\/\//i, "").replace(/\/.*$/, "")
+        var sub = [a.b, a.s || host].filter(function(x){ return x && x.length }).join(" · ")
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${htmlEsc(a.t || host)}</title><style>${win.themeVars()}
+html{font-size:${cfgReaderPx}px}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:serif;line-height:1.65}
+.bar{position:sticky;top:0;z-index:9;background:var(--card);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:9px 12px;font-family:sans-serif}
+.bar .host{flex:1;color:var(--muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+.bar a{display:inline-block;min-width:40px;padding:7px 10px;border-radius:20px;background:var(--pill);color:var(--fg);text-decoration:none;font-size:16px;text-align:center}
+article{padding:16px 20px 48px;max-width:42em;margin:0 auto;font-size:1rem;overflow-wrap:break-word}
+article h1.rtitle{font-size:1.5em;line-height:1.25;margin:.4em 0 .2em}
+.rbyline{color:var(--muted);font-family:sans-serif;font-size:.78em;margin:0 0 1.6em}
+article img,article video,article iframe{max-width:100%;height:auto}
+article figure{margin:1.2em 0}article figcaption{color:var(--muted);font-size:.82em;font-family:sans-serif}
+article a{color:var(--link)}
+article pre{overflow-x:auto;background:var(--card);padding:10px 12px;border-radius:8px;font-size:.82em}
+article code{background:var(--card);border-radius:4px;padding:1px 4px;font-size:.9em}
+article blockquote{border-left:3px solid var(--line);margin:1em 0;padding-left:1em;color:var(--fg2)}
+article table{display:block;overflow-x:auto;border-collapse:collapse;font-size:.9em}
+article td,article th{border:1px solid var(--line);padding:4px 8px}
+article hr{border:none;border-top:1px solid var(--line)}
+</style></head><body>
+<div class="bar"><a href="https://reader.local/font?d=dn">A−</a><a href="https://reader.local/font?d=up">A+</a><span class="host">${htmlEsc(host)}</span><a href="https://reader.local/close">✕</a></div>
+<article><h1 class="rtitle">${htmlEsc(a.t || host)}</h1>${sub.length ? '<p class="rbyline">' + htmlEsc(sub) + '</p>' : ''}
+${a.c}
+</article></body></html>`
     }
 
     // menù longpress della barra indirizzi (TextInput QML, non WebEngine)
@@ -1994,6 +2076,21 @@ ${histCss}
                             var mPerm = u.match(/^https:\/\/permissions\.local\/reset\?o=([^&]*)&t=(\d+)$/)
                             if (mPerm) win.permReset(decodeURIComponent(mPerm[1]), parseInt(mPerm[2]))
                             win.loadInternal(this, "permissions", win.permissionsHtml(), "https://permissions.local/")
+                        } else if (u.indexOf("https://reader.local/") === 0) {
+                            request.action = WebEngineNavigationRequest.IgnoreRequest
+                            // font?d= cambia il corpo LIVE (niente reload: history pulita
+                            // e scroll intatto) e lo persiste; close torna all'articolo
+                            var mFont = u.match(/^https:\/\/reader\.local\/font\?d=(up|dn)$/)
+                            if (this.localPage !== "reader") {
+                                // sentinelle valide solo DENTRO il reader: un sito
+                                // esterno che navigasse qui non deve toccare nulla
+                            } else if (mFont) {
+                                win.cfgReaderPx = Math.max(15, Math.min(27, win.cfgReaderPx + (mFont[1] === "up" ? 2 : -2)))
+                                win.kvSet("set_readerpx", "" + win.cfgReaderPx)
+                                this.runJavaScript("document.documentElement.style.fontSize='" + win.cfgReaderPx + "px'")
+                            } else if (u === "https://reader.local/close") {
+                                this.goBack()
+                            }
                         } else if (u.indexOf("https://permsapp.local/") === 0) {
                             request.action = WebEngineNavigationRequest.IgnoreRequest
                             var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z]+)&v=([a-z0-9]*)$/)
@@ -2349,6 +2446,14 @@ ${histCss}
             } else if (k === "settings") {
                 ctx.beginPath(); ctx.arc(cx,cy,s*0.16,0,2*Math.PI); ctx.stroke()
                 for (var g2=0; g2<8; g2++){ var a2 = g2*Math.PI/4; ctx.beginPath(); ctx.moveTo(cx+Math.cos(a2)*s*0.22, cy+Math.sin(a2)*s*0.22); ctx.lineTo(cx+Math.cos(a2)*s*0.32, cy+Math.sin(a2)*s*0.32); ctx.stroke() }
+            } else if (k === "reader") {
+                // articolo: riga titolo spessa + righe di testo
+                ctx.lineWidth = Math.max(1, s * 0.11)
+                ctx.beginPath(); ctx.moveTo(s*0.18,s*0.24); ctx.lineTo(s*0.60,s*0.24); ctx.stroke()
+                ctx.lineWidth = Math.max(1, s * 0.07)
+                ctx.beginPath(); ctx.moveTo(s*0.18,s*0.46); ctx.lineTo(s*0.82,s*0.46); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(s*0.18,s*0.62); ctx.lineTo(s*0.82,s*0.62); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(s*0.18,s*0.78); ctx.lineTo(s*0.58,s*0.78); ctx.stroke()
             } else if (k === "folder") {
                 ctx.beginPath(); ctx.moveTo(s*0.16,s*0.30); ctx.lineTo(s*0.42,s*0.30); ctx.lineTo(s*0.50,s*0.40); ctx.lineTo(s*0.84,s*0.40)
                 ctx.arcTo(s*0.86,s*0.40,s*0.86,s*0.46,s*0.04); ctx.lineTo(s*0.86,s*0.72); ctx.arcTo(s*0.86,s*0.76,s*0.82,s*0.76,s*0.04)

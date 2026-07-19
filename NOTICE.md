@@ -58,6 +58,14 @@ it lean.
   QtWebEngine 6.8.3 snapshot
 - © The Chromium Authors
 
+**Readability.js** (mozilla/readability 0.6.0)
+- Role: article extraction for the browser's Reader Mode (injected into the page
+  on demand, rendered in an internal reader page)
+- License: Apache-2.0 — text bundled in `/home/rootitanium/LICENSES/Apache-2.0.txt`
+- Distribution: **bundled** as `/home/rootitanium/Readability.js` (unmodified)
+- Source: https://github.com/mozilla/readability (tag 0.6.0)
+- © 2010 Arc90 Inc, Mozilla and contributors
+
 **libhybris** and the Android HAL (EGL / GPU)
 - Role: GPU acceleration on SailfishOS — QtWebEngine renders through EGL over the
   device's Android graphics drivers via libhybris

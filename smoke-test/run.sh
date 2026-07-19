@@ -15,6 +15,9 @@ export QML_IMPORT_PATH="$HERE/qml"
 export QTWEBENGINEPROCESS_PATH="$HERE/libexec/QtWebEngineProcess"
 export QTWEBENGINE_RESOURCES_PATH="$HERE/resources"
 export QTWEBENGINE_LOCALES_PATH="$HERE/locales"
+# Modalità Lettura: test.qml legge Readability.js dal bundle via XHR file://,
+# che Qt6 blocca di default senza questa variabile
+export QML_XHR_ALLOW_FILE_READ=1
 
 # --- piattaforma grafica: wayland+EGL (lipstick/hybris) ---
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland-egl}"

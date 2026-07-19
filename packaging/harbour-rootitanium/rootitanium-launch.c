@@ -41,6 +41,9 @@ int main(int argc, char **argv) {
     set_here("QTWEBENGINEPROCESS_PATH", "/libexec/QtWebEngineProcess", 1);
     set_here("QTWEBENGINE_RESOURCES_PATH", "/resources", 1);
     set_here("QTWEBENGINE_LOCALES_PATH", "/locales", 1);
+    /* Modalita' Lettura: test.qml legge Readability.js dal bundle via XHR
+     * file://, che Qt6 blocca di default senza questa variabile */
+    setenv("QML_XHR_ALLOW_FILE_READ", "1", 1);
 
     /* piattaforma grafica: solo se non gia' forniti (lipstick li passa) */
     setenv("QT_QPA_PLATFORM", "wayland-egl", 0);
