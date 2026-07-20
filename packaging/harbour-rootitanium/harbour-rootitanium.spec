@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.1
+Version:    1.2
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -46,12 +46,6 @@ install -m0755 %{stagingdir}/rootitanium-launch %{buildroot}%{_bindir}/harbour-r
 # 3) .desktop -> /usr/share/applications
 mkdir -p %{buildroot}%{_datadir}/applications
 install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}/applications/harbour-rootitanium.desktop
-# 3b) .service DBus -> attivazione ad app spenta per i link da altre app.
-#     sailjaild lo genera da ExecDBus solo per le app sandboxate; la nostra ha
-#     Sandboxing=Disabled, quindi va spedito nel pacchetto.
-mkdir -p %{buildroot}%{_datadir}/dbus-1/services
-install -m0644 %{stagingdir}/com.github.RootGPT_YouTube.rootitanium.service \
-  %{buildroot}%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 # 3) icone -> hicolor (le taglie disponibili nello staging)
 for s in 86 108 128 172; do
   if [ -f %{stagingdir}/icons/${s}.png ]; then
@@ -72,10 +66,19 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_apphome}
 %{_bindir}/harbour-rootitanium
 %{_datadir}/applications/harbour-rootitanium.desktop
-%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Mon Jul 20 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.2-1
+- Versione 1.2: i link tappati in altre app (RooTelegram & co.) ora si aprono
+  anche quando RooTitanium e' gia' in esecuzione, sempre in una scheda NUOVA.
+- .desktop: riga invoker scritta per esteso, senza «--single-instance» (che
+  lipstick aggiungeva da se'): con l'app viva quel flag faceva uscire il
+  processo prima di consegnare l'URL di %u.
+- webengine-smoke: servizio di sessione com.github.RootGPT_YouTube.rootitanium
+  (org.freedesktop.Application.openUrl); il processo lanciato per il link passa
+  l'URL all'istanza viva e termina, mai una seconda finestra.
+
 * Sun Jul 19 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.1-1
 - Versione 1.1: file picker mobile per upload (<input type=file>), Modalita'
   Lettura (Readability.js 0.6.0 bundled, Apache-2.0 in NOTICE), Accept-Language

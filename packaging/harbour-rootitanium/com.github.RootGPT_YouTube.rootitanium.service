@@ -1,9 +1,0 @@
-[D-BUS Service]
-# Attivazione DBus: con l'app SPENTA, la chiamata openUrl di libcontentaction
-# (vedi X-Maemo-* nel .desktop) fa avviare RooTitanium e viene consegnata dopo.
-# Per le app sandboxate questo file lo genera sailjaild dalla chiave ExecDBus;
-# la nostra ha Sandboxing=Disabled, quindi lo spediamo noi nel pacchetto —
-# senza, il link ad app spenta non aprirebbe piu' nulla.
-# invoker --single-instance = stessa strada del lancio da icona: mai due istanze.
-Name=com.github.RootGPT_YouTube.rootitanium
-Exec=/usr/bin/invoker --type=generic --id=harbour-rootitanium --single-instance /usr/bin/harbour-rootitanium

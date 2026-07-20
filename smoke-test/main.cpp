@@ -45,56 +45,28 @@ public:
     }
 };
 
-// Ricezione link da ALTRE app (task 1.2 #1). Il .desktop dichiara i campi
-// X-Maemo-Service/Object-Path/Method: libcontentaction (quello che sta dietro a
-// Qt.openUrlExternally, al foglio «Apri con» e ai tap sui link in RooTelegram &
-// co.) allora consegna l'URL con una chiamata DBus a questa interfaccia INVECE
-// di rieseguire la riga Exec. Serve perche' l'Exec passa da
-// «invoker --single-instance»: con l'app gia' viva il secondo processo non parte
-// nemmeno, lipstick porta avanti la finestra esistente e l'URL va perso.
-// L'interfaccia e' la standard org.freedesktop.Application (stesso schema di
-// RooTheater); l'attivazione DBus quando l'app e' spenta la copre il .service
-// generato da sailjaild dalla chiave X-Sailjail ExecDBus.
+// Link aperti da ALTRE app quando RooTitanium e' GIA' in esecuzione (task 1.2 #1).
+// Lipstick consegna l'URL eseguendo la riga Exec del .desktop con %u, quindi il
+// secondo processo nasce comunque (l'Exec e' scritto per esteso senza
+// «invoker --single-instance», che altrimenti lo farebbe uscire subito). Quel
+// processo trova il nome di sessione gia' occupato, chiama qui via DBus e muore:
+// e' questo l'unico canale verso l'istanza viva. Interfaccia standard
+// org.freedesktop.Application, come in RooTheater.
 class OpenHandler : public QObject
 {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Application")
-    // URL arrivato PRIMA che il QML fosse pronto (caso attivazione DBus: il
-    // processo parte per la chiamata stessa). test.qml lo legge all'avvio.
-    Q_PROPERTY(QString pendingUrl READ pendingUrl NOTIFY openRequested)
-public:
-    using QObject::QObject;
-    QString pendingUrl() const { return m_pendingUrl; }
-    void setPendingUrl(const QString &u) { m_pendingUrl = u; }
-
 public slots:
-    // ── org.freedesktop.Application ──────────────────────────────────────────
-    void Activate(const QVariantMap &) { emit activated(); }
-    void Open(const QStringList &uris, const QVariantMap &)
-    {
-        if (uris.isEmpty()) { emit activated(); return; }
-        handle(uris.first());
-    }
-    void ActivateAction(const QString &, const QVariantList &, const QVariantMap &) {}
-
-    // libcontentaction invoca l'X-Maemo-Method passando gli URI come ARRAY di
-    // stringhe (signature "as"): e' questo l'overload che scatta davvero.
-    // La variante a stringa singola resta per i chiamanti che passano "s".
+    // due overload: "as" e' quello che usa libcontentaction, "s" i chiamanti
+    // che passano un URI solo (la nostra riga di inoltro in main()).
     void openUrl(const QStringList &uris) { if (!uris.isEmpty()) handle(uris.first()); }
     void openUrl(const QString &url) { handle(url); }
 
 signals:
     void openRequested(const QString &url);   // → QML: apri in NUOVA scheda
-    void activated();                         // attivazione nuda (nessun URL)
 
 private:
-    void handle(const QString &uri)
-    {
-        if (uri.isEmpty()) return;
-        m_pendingUrl = uri;
-        emit openRequested(uri);
-    }
-    QString m_pendingUrl;
+    void handle(const QString &uri) { if (!uri.isEmpty()) emit openRequested(uri); }
 };
 
 // Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
@@ -226,22 +198,19 @@ int main(int argc, char **argv)
     QDBusConnection bus = QDBusConnection::sessionBus();
     bus.registerObject(objPath, &openHandler, QDBusConnection::ExportAllSlots);
     if (!bus.registerService(busName)) {
-        // Nome gia' occupato = c'e' gia' un'istanza viva. Rete di sicurezza per
-        // i percorsi che NON passano dal DBus (Exec ... %u lanciato a mano, o un
-        // invoker senza --single-instance): inoltriamo l'URL a quella istanza e
-        // usciamo, invece di aprire una seconda finestra.
+        // Nome gia' occupato = l'istanza viva e' un'altra. Le passiamo l'URL
+        // (che aprira' in una scheda nuova) e usciamo senza mai creare una
+        // seconda finestra. Senza URL non c'e' niente da dire: usciamo e basta,
+        // il foreground della finestra esistente lo fa lipstick.
         if (!openUrl.isEmpty()) {
             QDBusMessage fwd = QDBusMessage::createMethodCall(
                 busName, objPath, QStringLiteral("org.freedesktop.Application"),
                 QStringLiteral("openUrl"));
-            fwd.setArguments({ QStringList{ openUrl } });
-            bus.call(fwd, QDBus::NoBlock);
+            fwd.setArguments({ openUrl });
+            bus.call(fwd, QDBus::Block);   // Block: il processo esce subito dopo
         }
         return 0;
     }
-    // URL arrivato da argv: consegnalo al QML per la stessa strada del DBus.
-    if (!openUrl.isEmpty())
-        openHandler.setPendingUrl(openUrl);
 
     QQmlApplicationEngine engine;
     NativeHelper native;
