@@ -39,15 +39,48 @@ produce un bug invisibile dai lanci da icona.
 | `Referer` azzerato sulle navigazioni cross-origin | Confronto `requestUrl()` con `firstPartyUrl()`; entrambi disponibili nell'API 6.8.3. |
 | `Authorization` rimosso sui redirect cross-origin | Stessa logica. |
 
-🔬 **Incognita da sciogliere per prima** (test da ~10 minuti, prima di scrivere il
-resto): `QWebEngineUrlRequestInfo` espone `setHttpHeader()` ma **non** un
-`removeHttpHeader()`. Va verificato empiricamente se `setHttpHeader("Referer", "")`
-azzera davvero l'header o se Chromium lo reimposta a valle. Verifica: caricare
-`httpbin.org/headers` (o un endpoint locale) da un link cross-origin e leggere
-cosa è arrivato. Gli switch `--no-referrers` e `--reduced-referrer-granularity`
-**non esistono più in 122** (verificato): se il test fallisce, il ripiego è una
-`<meta name="referrer" content="no-referrer">` iniettata a DocumentCreation, che
-però copre le sottorisorse e non la richiesta di navigazione iniziale.
+### Perché il referrer conta (motivazione dell'utente, 20 lug)
+
+Il valore NON è nascondere quale pagina si stava leggendo: quello lo copre già la
+policy di default di Chromium 122, `strict-origin-when-cross-origin` (verificato
+in `blink/common/loader/referrer_utils.cc`), che cross-origin manda solo l'origine.
+
+Il valore è un altro: **ogni terza parte incorporata in un sito riceve
+`Referer: https://quel-sito/`** in ogni richiesta di pixel, font o script. Un
+tracker apprende cosi' che l'utente sta su quel sito **anche con i cookie di terze
+parti bloccati**. Per chi non vuole far sapere che frequenta determinati siti,
+questo e' il canale che conta — non e' una rifinitura.
+
+Conseguenza pratica: il toggle ha senso **in entrambi gli esiti** del test qui
+sotto; cambia solo l'implementazione.
+
+### 🔬 Incognita da sciogliere per prima
+
+`QWebEngineUrlRequestInfo` espone `setHttpHeader()` ma **non** un
+`removeHttpHeader()`: va verificato empiricamente se `setHttpHeader("Referer", "")`
+azzera davvero l'header o se Chromium lo reimposta a valle. Gli switch
+`--no-referrers` e `--reduced-referrer-granularity` **non esistono più in 122**
+(verificato).
+
+Ripiego: `<meta name="referrer" content="no-referrer">` iniettata a
+DocumentCreation. Imposta la policy **del documento**, che governa tutte le
+richieste generate da quel documento — quindi in teoria copre sia le sottorisorse
+verso terze parti sia le navigazioni in uscita. Da confermare sul campo (una
+pagina può dichiarare una propria policy).
+
+Il test deve misurare **quattro** casi, non uno (endpoint tipo `httpbin.org/headers`
+o un server locale che rimanda gli header ricevuti):
+
+| # | Via | Caso | Esito atteso |
+|---|---|---|---|
+| 1 | interceptor | navigazione cross-origin | nessun `Referer` |
+| 2 | interceptor | sottorisorsa verso terza parte | nessun `Referer` ← **il caso che conta** |
+| 3 | meta no-referrer | sottorisorsa verso terza parte | nessun `Referer` |
+| 4 | meta no-referrer | navigazione in uscita | nessun `Referer` |
+
+Se 1-2 passano si usa l'interceptor (piu' pulito, non tocca il DOM); altrimenti si
+adotta il ripiego per i casi che 3-4 dimostrano coperti, documentando nella UI del
+toggle cosa resta scoperto.
 
 ## C. API Qt — blocco cookie di terze parti
 
