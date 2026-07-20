@@ -11,6 +11,27 @@ Window {
     visibility: Window.FullScreen
     color: win.pal.bg
 
+    // Geometria imposta, non subita: senza questi due binding la finestra accetta
+    // qualunque dimensione le passi il compositor. Segnalato su X10 III/5.1.0.11
+    // (non riproducibile qui, stesso device e stessa versione): l'app usava solo
+    // la fascia di schermo non coperta dalla tastiera di sistema, e la nostra
+    // InputPanel si sommava sopra → ~40% visibile. Lo schermo fisico è la sola
+    // misura affidabile; l'app è disegnata in verticale, quindi lato corto =
+    // width anche se lo Screen viene riportato ruotato (home in landscape).
+    // La rotazione del contenuto resta gestita da `orient`/appRoot, non da qui.
+    width: Math.min(Screen.width, Screen.height)
+    height: Math.max(Screen.width, Screen.height)
+    // diagnostica: se il compositor ci rimpicciolisce comunque, resta nel log
+    onWidthChanged: rtGeomCheck()
+    onHeightChanged: rtGeomCheck()
+    function rtGeomCheck() {
+        var sw = Math.min(Screen.width, Screen.height)
+        var sh = Math.max(Screen.width, Screen.height)
+        if (width !== sw || height !== sh)
+            console.warn("[rt] geometria finestra " + width + "x" + height
+                         + " diversa dallo schermo " + sw + "x" + sh)
+    }
+
     // u basato sul lato corto: resta costante quando il contenuto ruota in landscape
     readonly property real u: Math.min(width, height) / 540
 
