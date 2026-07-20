@@ -54,7 +54,46 @@ questo e' il canale che conta — non e' una rifinitura.
 Conseguenza pratica: il toggle ha senso **in entrambi gli esiti** del test qui
 sotto; cambia solo l'implementazione.
 
-### 🔬 Incognita da sciogliere per prima
+### ✅ Incognita SCIOLTA — test eseguito il 20 lug 2026
+
+**Esito: funzionano entrambe le vie. Si adotta l'interceptor.**
+
+Metodo: due origini servite dal device stesso (`http://localhost:8099` = sito A,
+`http://127.0.0.1:8100` = terza parte B — host diversi, quindi `Sec-Fetch-Site:
+cross-site` confermato nei log). A carica un pixel da B (sottorisorsa) e poi ci
+naviga (navigazione). B registra il `Referer` ricevuto. Il browser è stato
+pilotato da remoto con `lca-tool --scheme --triggerdefault`, cioè il percorso
+link della 1.2 — nessun tap sullo schermo.
+
+| # | Via | Caso | Referer ricevuto | Esito |
+|---|---|---|---|---|
+| — | *baseline* (binario 1.2-1) | sottorisorsa | `http://localhost:8099/` | riferimento |
+| — | *baseline* (binario 1.2-1) | navigazione | `http://localhost:8099/` | riferimento |
+| 1 | interceptor | navigazione | *assente* | ✅ |
+| 2 | interceptor | sottorisorsa | *assente* | ✅ |
+| 3 | meta no-referrer | sottorisorsa | *assente* | ✅ |
+| 4 | meta no-referrer | navigazione | *assente* | ✅ |
+
+`setHttpHeader("Referer", QByteArray())` **azzera davvero** l'header: Chromium non
+lo reimposta a valle. Prova di controllo eseguita (stesso URL, stesso test, solo
+il binario cambia) per escludere che la differenza venisse dal cambio di host.
+
+Conferme secondarie: il baseline manda **solo l'origine**, non l'URL completo →
+`strict-origin-when-cross-origin` è davvero il default; le richieste same-host
+mantengono il Referer, quindi il criterio non tocca la navigazione interna ai siti.
+
+**Scelta: interceptor** — non tocca il DOM, la pagina non può sovrascriverlo con
+una propria policy, e vale anche per le richieste che non nascono dal parsing HTML.
+Il meta resta documentato come ripiego, non serve implementarlo.
+
+⚠️ **Da decidere in implementazione:** il test confrontava `firstPartyUrl().host()`
+con `requestUrl().host()`. Così `www.sito.it` → `cdn.sito.it` risulta "cross" e
+perde il Referer, il che può rompere CDN dello stesso proprietario. Qt non espone
+il registrable domain (eTLD+1), quindi o si accetta questo comportamento (più
+rigoroso, coerente con l'intento del toggle) o si scrive un confronto approssimato
+sul suffisso. Da valutare col toggle acceso su siti reali.
+
+### Nota storica: come si era posto il problema
 
 `QWebEngineUrlRequestInfo` espone `setHttpHeader()` ma **non** un
 `removeHttpHeader()`: va verificato empiricamente se `setHttpHeader("Referer", "")`
