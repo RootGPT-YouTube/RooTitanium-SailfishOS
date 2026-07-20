@@ -1,0 +1,47 @@
+--- a/src/3rdparty/chromium/third_party/devtools-frontend/src/node_modules/rollup-plugin-terser/rollup-plugin-terser.js
++++ b/src/3rdparty/chromium/third_party/devtools-frontend/src/node_modules/rollup-plugin-terser/rollup-plugin-terser.js
+@@ -18,14 +18,13 @@
+     name: "terser",
+ 
+     async renderChunk(code, chunk, outputOptions) {
+-      if (!this.worker) {
+-        this.worker = new Worker(require.resolve("./transform.js"), {
+-          numWorkers: userOptions.numWorkers,
+-        });
+-        this.numOfBundles = 0;
+-      }
+-
+-      this.numOfBundles++;
++      // RooTitanium (7 lug 2026): cross-build sotto qemu-aarch64. jest-worker
++      // fa fork di un processo figlio node che sotto emulazione qemu crasha
++      // all'avvio (SIGABRT + write EPIPE in ChildProcessWorker.initialize;
++      // build fallita su acorn.js). Ne' 31 ne' 1 worker cambiano: il problema
++      // e' il fork/IPC di node sotto qemu. Bypassiamo il worker ed eseguiamo
++      // terser IN-PROCESS via transform.js (nessun fork). Reversibile.
++      const { transform: terserTransform } = require("./transform.js");
+ 
+       const defaultOptions = {
+         sourceMap:
+@@ -51,7 +50,7 @@
+       const serializedOptions = serialize(normalizedOptions);
+ 
+       try {
+-        const result = await this.worker.transform(code, serializedOptions);
++        const result = await terserTransform(code, serializedOptions);
+ 
+         if (result.nameCache) {
+           let { vars, props } = userOptions.nameCache;
+@@ -87,13 +86,6 @@
+           codeFrameColumns(code, { start: { line, column } }, { message })
+         );
+         throw error;
+-      } finally {
+-        this.numOfBundles--;
+-
+-        if (this.numOfBundles === 0) {
+-          this.worker.end();
+-          this.worker = 0;
+-        }
+       }
+     },
+   };

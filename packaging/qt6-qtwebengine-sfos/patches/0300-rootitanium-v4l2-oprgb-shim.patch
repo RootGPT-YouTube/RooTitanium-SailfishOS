@@ -1,0 +1,19 @@
+--- a/src/3rdparty/chromium/media/capture/video/linux/v4l2_capture_delegate.cc
++++ b/src/3rdparty/chromium/media/capture/video/linux/v4l2_capture_delegate.cc
+@@ -7,6 +7,16 @@
+ #include <fcntl.h>
+ #include <linux/version.h>
+ #include <linux/videodev2.h>
++// RooTitanium (7 lug 2026): i kernel-headers del target SailfishOS 5.1 sono
++// anteriori a Linux 4.18, dove V4L2_COLORSPACE_ADOBERGB/V4L2_XFER_FUNC_ADOBERGB
++// furono rinominati in ..._OPRGB (stessi valori 9 e 3, semantica identica:
++// "OPRGB is same as ADOBE_RGB"). Shim di compatibilita' per compilare.
++#ifndef V4L2_COLORSPACE_OPRGB
++#define V4L2_COLORSPACE_OPRGB V4L2_COLORSPACE_ADOBERGB
++#endif
++#ifndef V4L2_XFER_FUNC_OPRGB
++#define V4L2_XFER_FUNC_OPRGB V4L2_XFER_FUNC_ADOBERGB
++#endif
+ #include <poll.h>
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>

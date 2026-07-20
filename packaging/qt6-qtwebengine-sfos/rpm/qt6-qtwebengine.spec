@@ -94,6 +94,17 @@ Patch80:  qtwebengine-fix-arm-build.patch
 # SFOS patches
 Patch1001: qtwebengine-fix-build-on-SFOS-Comment-out-GL-includes.patch
 
+# RooTitanium: fix del build tree convertite in patch (20 lug 2026).
+# Erano edit a mano dentro build/BUILD/, che sparivano a ogni rigenerazione
+# dell'albero; qui diventano riproducibili. Le fix NON esprimibili come patch
+# (args.gn, toolchain.ninja, link flags, qemu) stanno in
+# scripts/apply-build-fixes.sh — vedi patches/README.md.
+Patch300: 0300-rootitanium-v4l2-oprgb-shim.patch
+Patch301: 0301-rootitanium-sockaddr-include-order.patch
+Patch302: 0302-rootitanium-browser-interface-binders-O1.patch
+Patch303: 0303-rootitanium-terser-in-process.patch
+Patch304: 0304-rootitanium-compress-files-sequential.patch
+
 # handled by qt6-srpm-macros, which defines %%qt6_qtwebengine_arches
 # FIXME use/update qt6_qtwebengine_arches
 # 32-bit arches not supported (https://bugreports.qt.io/browse/QTBUG-102143)
@@ -404,6 +415,14 @@ popd
 # pushd src/3rdparty/chromium
 # %%patch -P201 -p1
 # popd
+
+## RooTitanium: fix ambiente cross-build (kernel-headers vecchi del target,
+## qemu-user, memoria del compilatore). Dettagli nei commenti di ogni patch.
+%patch -P300 -p1 -b .rt-v4l2-oprgb
+%patch -P301 -p1 -b .rt-sockaddr
+%patch -P302 -p1 -b .rt-bib-O1
+%patch -P303 -p1 -b .rt-terser
+%patch -P304 -p1 -b .rt-compress
 
 # ## upstreamable patches
 # %%patch -P110 -p1 -b .webrtc-system-openh264

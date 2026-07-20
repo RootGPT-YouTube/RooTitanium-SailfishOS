@@ -1,0 +1,31 @@
+--- a/src/3rdparty/chromium/third_party/devtools-frontend/src/scripts/build/compress_files.js
++++ b/src/3rdparty/chromium/third_party/devtools-frontend/src/scripts/build/compress_files.js
+@@ -64,7 +64,11 @@
+   const prevHash = fileExists(hashFilename) ? await readTextFile(hashFilename) : '';
+   const sourceData = await readBinaryFile(filename);
+   const currHash = sha1(sourceData);
+-  if (prevHash !== currHash) {
++  // RooTitanium (8 lug 2026): ricomprimi anche se l'output .compressed manca,
++  // non solo se cambia l'hash. Un precedente run crashato (segfault qemu)
++  // poteva aver scritto l'.hash ma NON il .compressed: con il solo check
++  // dell'hash il file resterebbe mancante e la grit fallisce (FileNotFound).
++  if (prevHash !== currHash || !fileExists(compressedFilename)) {
+     await writeTextFile(hashFilename, currHash);
+     await brotli(sourceData, compressedFilename);
+   }
+@@ -75,7 +79,14 @@
+   const fileList = argv[fileListPosition + 1];
+   const fileListContents = await readTextFile(fileList);
+   const files = fileListContents.split(' ');
+-  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
++  // RooTitanium (8 lug 2026): sotto qemu-user, comprimere tutti i file in
++  // parallelo (Promise.all su centinaia di brotli concorrenti) fa segfaultare
++  // node (SIGSEGV). Compressione SEQUENZIALE: piu' lenta ma stabile. Reversibile.
++  for (const filename of files.map(f => f.trim())) {
++    if (filename) {
++      await compressFile(filename);
++    }
++  }
+ }
+ 
+ main(process.argv).catch(err => {
