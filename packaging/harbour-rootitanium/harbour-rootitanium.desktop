@@ -13,6 +13,14 @@ Categories=Network;WebBrowser;
 # MimeType: fa comparire RooTitanium nel chooser «Apri con» di sistema per i
 # link (libcontentaction legge questi handler dal .desktop). %u passa l'URL.
 MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+# X-Maemo-*: con questi campi libcontentaction consegna l'URL via DBus
+# (org.freedesktop.Application.openUrl, implementata in main.cpp) invece di
+# rieseguire l'Exec. Senza, con l'app gia' viva «invoker --single-instance»
+# blocca il secondo processo, lipstick porta avanti la finestra e l'URL si
+# perde (task 1.2 #1). Il metodo apre sempre una NUOVA scheda.
+X-Maemo-Service=com.github.RootGPT_YouTube.rootitanium
+X-Maemo-Object-Path=/com/github/RootGPT_YouTube/rootitanium
+X-Maemo-Method=org.freedesktop.Application.openUrl
 
 [X-Sailjail]
 # Sandboxing=Disabled: l'app NON gira in firejail (serve accesso pieno a
@@ -21,3 +29,6 @@ MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme
 OrganizationName=com.github.RootGPT_YouTube
 ApplicationName=rootitanium
 Sandboxing=Disabled
+# ExecDBus: sailjaild genera da qui il .service di attivazione DBus in
+# /run/user/<uid>/dbus-1/services/, cosi' il link arriva anche ad app spenta.
+ExecDBus=harbour-rootitanium

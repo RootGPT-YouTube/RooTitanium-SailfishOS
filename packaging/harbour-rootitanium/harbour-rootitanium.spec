@@ -46,6 +46,12 @@ install -m0755 %{stagingdir}/rootitanium-launch %{buildroot}%{_bindir}/harbour-r
 # 3) .desktop -> /usr/share/applications
 mkdir -p %{buildroot}%{_datadir}/applications
 install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}/applications/harbour-rootitanium.desktop
+# 3b) .service DBus -> attivazione ad app spenta per i link da altre app.
+#     sailjaild lo genera da ExecDBus solo per le app sandboxate; la nostra ha
+#     Sandboxing=Disabled, quindi va spedito nel pacchetto.
+mkdir -p %{buildroot}%{_datadir}/dbus-1/services
+install -m0644 %{stagingdir}/com.github.RootGPT_YouTube.rootitanium.service \
+  %{buildroot}%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 # 3) icone -> hicolor (le taglie disponibili nello staging)
 for s in 86 108 128 172; do
   if [ -f %{stagingdir}/icons/${s}.png ]; then
@@ -66,6 +72,7 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_apphome}
 %{_bindir}/harbour-rootitanium
 %{_datadir}/applications/harbour-rootitanium.desktop
+%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog

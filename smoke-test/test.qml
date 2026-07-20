@@ -1744,6 +1744,18 @@ ${histCss}
     onOrientChanged: pushOrientation()
 
     ListModel { id: tabsModel }
+
+    // Link aperto da un'ALTRA app mentre RooTitanium e' gia' in esecuzione:
+    // main.cpp lo riceve via DBus (org.freedesktop.Application) e lo rilancia
+    // qui. Sempre in una NUOVA scheda: non si butta via la pagina aperta.
+    // typeof: rtOpen manca se il binario e' piu' vecchio di questo test.qml.
+    Connections {
+        target: (typeof rtOpen !== "undefined") ? rtOpen : null
+        function onOpenRequested(url) {
+            if (!url) return
+            win.newTabUrl(false, "" + url)
+        }
+    }
     // avvio: config dalla kv PRIMA di creare la prima view (cfgJs/cfgCookies
     // sono binding, ma la homepage/incognito di partenza si decide qui);
     // ripristino sessione solo se "chiudi schede all'uscita" è spento
