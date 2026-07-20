@@ -7,7 +7,12 @@ Comment=Browser Qt6 WebEngine
 # Exec = launcher ELF in /usr/bin (sailjail: rifiuta gli script e vuole il
 # binario in /usr/bin/). harbour-rootitanium imposta l'env come run.sh ed esegue
 # /home/rootitanium/webengine-smoke.
-Exec=harbour-rootitanium %u
+# La riga invoker e' scritta per esteso (come fa sailfish-browser) per NON avere
+# «--single-instance», che lipstick aggiungerebbe da solo: con l'app gia' viva
+# quel flag fa uscire il secondo processo prima ancora di eseguirci, e l'URL di
+# %u finisce nel nulla (task 1.2 #1). Senza il flag il processo parte, main.cpp
+# vede il nome DBus gia' occupato, passa l'URL all'istanza viva e termina.
+Exec=/usr/bin/invoker --type=generic --id=harbour-rootitanium /usr/bin/harbour-rootitanium %u
 Icon=harbour-rootitanium
 Categories=Network;WebBrowser;
 # MimeType: fa comparire RooTitanium nel chooser «Apri con» di sistema per i
