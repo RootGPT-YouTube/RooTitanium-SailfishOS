@@ -20,7 +20,15 @@ export QTWEBENGINE_LOCALES_PATH="$HERE/locales"
 export QML_XHR_ALLOW_FILE_READ=1
 
 # --- piattaforma grafica: wayland+EGL (lipstick/hybris) ---
-export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland-egl}"
+# Imposto, NON eredito: la sessione SFOS esporta QT_QPA_PLATFORM=wayland (plugin
+# generico) e con "${VAR:-default}" vinceva lei. Stesso motivo per le due unset:
+# variabili pensate per il Qt5 patchato di Sailfish che il nostro Qt6 upstream
+# legge davvero (QT_WAYLAND_RESIZE_AFTER_SWAP e' dentro libQt6WaylandClient del
+# bundle; e' quella che rinigus rimuove in qt-runner 0.4.0). Vedi il commento
+# esteso in packaging/harbour-rootitanium/rootitanium-launch.c.
+export QT_QPA_PLATFORM=wayland-egl
+unset QT_WAYLAND_RESIZE_AFTER_SWAP
+unset QMLSCENE_DEVICE
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 # session bus (Condividi via org.sailfishos.share): dall'icona lo passa lipstick,

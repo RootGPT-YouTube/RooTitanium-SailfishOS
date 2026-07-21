@@ -122,6 +122,57 @@ più — soprattutto — **`/tmp/rootitanium.log`**, che il `run.sh` scrive semp
 con `qt.qpa*=true` contiene già le geometrie reali della finestra anche in 1.2-1.
 Era il dato da chiedere per primo.
 
+## Igiene dell'ambiente ereditato (21 lug, aggiunta)
+
+`systemctl --user show-environment` su due device (quello di un segnalante e quello
+di sviluppo) dà lo stesso risultato:
+
+```
+QT_QPA_PLATFORM=wayland
+QT_WAYLAND_RESIZE_AFTER_SWAP=1
+QMLSCENE_DEVICE=customcontext
+QT_WAYLAND_FORCE_DPI=96
+QT_IM_MODULE=Maliit
+```
+
+Essendo **identico su device sano e malato, non spiega la fascia nera**. Ma due
+difetti veri sono emersi lo stesso, e sono stati chiusi:
+
+- **`QT_QPA_PLATFORM`**: il launcher usava `setenv(..., 0)`, cioè "non
+  sovrascrivere". Dai lanci da **icona** il bundle usava quindi il plugin wayland
+  *generico*, mai il `wayland-egl` che credevamo di imporre. Ora è forzato.
+- **`QT_WAYLAND_RESIZE_AFTER_SWAP`**: la stringa è presente in
+  `libQt6WaylandClient.so.6` del bundle, quindi il nostro Qt6 la legge davvero. È
+  la stessa che rinigus rimuove in qt-runner 0.4.0 perché bloccava le app Qt. Fa
+  seguire la geometria della finestra al buffer dopo lo swap: ereditarla da una
+  sessione tarata sul Qt5 patchato di SFOS è un azzardo gratuito. Rimossa, insieme
+  a `QMLSCENE_DEVICE` (scenegraph Qt5, inesistente in Qt6).
+
+`QT_WAYLAND_FORCE_DPI=96` resta: è già compensato a valle da
+`--force-device-scale-factor`.
+
+Tre posti aggiornati, come sempre: `smoke-test/run.sh`, il `run.sh` dello staging e
+`rootitanium-launch.c` (**da ricompilare**, altrimenti il fix non esiste per i
+lanci da icona).
+
+## Diagnostica sul campo (il vero collo di bottiglia)
+
+`/tmp/rootitanium.log` **non esiste in produzione**: il redirect vive solo nel
+`run.sh` di sviluppo, mentre il percorso reale è icona → launcher ELF → `execv`,
+senza redirezione. Sul campo eravamo ciechi, e si è visto: sulla fascia nera sono
+state formulate tre ipotesi (plugin di sistema da Qt Runner, variabili d'ambiente,
+homescreen a rotazione automatica) e **tutte e tre sono cadute**, ognuna dopo un
+giro di domande agli utenti.
+
+Aggiunto al launcher un interruttore spento per default: se esiste
+`/home/rootitanium/DEBUG`, stdout+stderr vanno in `/tmp/rootitanium.log` con
+`QT_LOGGING_RULES` verbose. Istruzione per chi segnala:
+
+```
+touch /home/rootitanium/DEBUG     # poi riavvia l'app e manda /tmp/rootitanium.log
+rm /home/rootitanium/DEBUG        # per spegnere
+```
+
 ## Da fare dopo il collaudo
 
 - Verificare che `qt.conf` non tolga nulla che oggi funziona: il bundle è

@@ -25,6 +25,34 @@ int main(int argc, char **argv) {
      * ma il bundle e' installato dall'RPM in /home/rootitanium (path fisso). */
     strncpy(HERE, "/home/rootitanium", sizeof(HERE) - 1); HERE[sizeof(HERE)-1] = '\0';
 
+    /* --- diagnostica sul campo, spenta per default ---
+     * Se esiste /home/rootitanium/DEBUG, stdout+stderr vanno in
+     * /tmp/rootitanium.log e i log Qt diventano verbosi. Il file lo crea
+     * l'utente che segnala un problema:  touch /home/rootitanium/DEBUG
+     * poi riavvia l'app e manda il log; per spegnere, rm del file.
+     *
+     * Perche' esiste: il redirect su /tmp/rootitanium.log vive solo nel run.sh
+     * di SVILUPPO. Dai lanci veri (icona -> questo launcher -> execv) non c'e'
+     * mai stato alcun log, quindi sul campo eravamo ciechi: la fascia nera su
+     * X10 III e' stata inseguita per ipotesi, e tre ipotesi su tre sono cadute.
+     * I descrittori aperti qui sopravvivono all'execv piu' sotto. */
+    {
+        char dbg[PATH_MAX];
+        snprintf(dbg, sizeof(dbg), "%s/DEBUG", HERE);
+        if (access(dbg, F_OK) == 0) {
+            if (freopen("/tmp/rootitanium.log", "w", stdout) &&
+                freopen("/tmp/rootitanium.log", "a", stderr)) {
+                setvbuf(stdout, NULL, _IOLBF, 0);
+                setvbuf(stderr, NULL, _IOLBF, 0);
+                setenv("QT_LOGGING_RULES", "qt.webengine*=true;qt.qpa*=true", 1);
+                /* senza questo i console.log/warning QML non arrivano a stderr
+                 * quando stderr non e' una tty (qui e' un file) */
+                setenv("QT_FORCE_STDERR_LOGGING", "1", 1);
+                fprintf(stderr, "[rt] launcher: diagnostica attiva (%s presente)\n", dbg);
+            }
+        }
+    }
+
     /* LD_LIBRARY_PATH = HERE/lib : path sistema/hybris : LD_LIBRARY_PATH esistente */
     {
         const char *old = getenv("LD_LIBRARY_PATH");
@@ -45,8 +73,28 @@ int main(int argc, char **argv) {
      * file://, che Qt6 blocca di default senza questa variabile */
     setenv("QML_XHR_ALLOW_FILE_READ", "1", 1);
 
-    /* piattaforma grafica: solo se non gia' forniti (lipstick li passa) */
-    setenv("QT_QPA_PLATFORM", "wayland-egl", 0);
+    /* Igiene dell'ambiente ereditato dalla sessione SFOS.
+     * La sessione utente esporta variabili pensate per il Qt5 PATCHATO di
+     * Sailfish, e il nostro Qt6 upstream le eredita e le legge davvero
+     * (QT_WAYLAND_RESIZE_AFTER_SWAP e' presente in libQt6WaylandClient del
+     * bundle). Verificato il 21 lug 2026 con `systemctl --user show-environment`
+     * su due device: QT_QPA_PLATFORM=wayland, QT_WAYLAND_RESIZE_AFTER_SWAP=1,
+     * QMLSCENE_DEVICE=customcontext, QT_WAYLAND_FORCE_DPI=96.
+     *
+     * - QT_QPA_PLATFORM: era setenv(...,0) = "non sovrascrivere". Intento
+     *   dichiarato «rispettiamo quello che passa lipstick», effetto reale: dai
+     *   lanci da ICONA il bundle usava il plugin wayland generico e mai il
+     *   nostro wayland-egl. Ora si impone.
+     * - QT_WAYLAND_RESIZE_AFTER_SWAP: fa seguire la geometria della finestra al
+     *   buffer dopo lo swap; e' la stessa variabile che rinigus rimuove in
+     *   qt-runner 0.4.0 perche' bloccava le app Qt. Fuori.
+     * - QMLSCENE_DEVICE=customcontext: adaptation del scenegraph Qt5 di SFOS,
+     *   inesistente in Qt6. Fuori per igiene.
+     * NB: QT_WAYLAND_FORCE_DPI=96 resta: e' gia' compensato a valle da
+     * --force-device-scale-factor (vedi flag Chromium piu' sotto). */
+    setenv("QT_QPA_PLATFORM", "wayland-egl", 1);
+    unsetenv("QT_WAYLAND_RESIZE_AFTER_SWAP");
+    unsetenv("QMLSCENE_DEVICE");
     {
         const char *xrd = getenv("XDG_RUNTIME_DIR");
         if (!xrd || !*xrd) {
