@@ -29,6 +29,8 @@ export QML_XHR_ALLOW_FILE_READ=1
 export QT_QPA_PLATFORM=wayland-egl
 unset QT_WAYLAND_RESIZE_AFTER_SWAP
 unset QMLSCENE_DEVICE
+# niente decorazione: l'app e' fullscreen e la decorazione le mangia area utile
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 # session bus (Condividi via org.sailfishos.share): dall'icona lo passa lipstick,
@@ -40,7 +42,9 @@ export QT_IM_MODULE=qtvirtualkeyboard
 # stile tastiera custom (glifi armonizzati, look Sailfish/ItalianoX) + layout con "/"
 export QT_VIRTUALKEYBOARD_STYLE="${QT_VIRTUALKEYBOARD_STYLE:-rt}"
 export QT_VIRTUALKEYBOARD_LAYOUT_PATH="${QT_VIRTUALKEYBOARD_LAYOUT_PATH:-$HERE/kbd-layouts}"
-# [Maliit nativo SCARTATO: lipstick non espone wayland text-input, plugin maliit e' Qt5-only]
+# [Maliit: NON usato, ma l'assunzione storica era sbagliata su entrambi i punti —
+#  qt6-sfos-maliit-platforminputcontext (Chum) esiste e parla via DBus, non via
+#  wayland text-input. Vedi Documentation/TASK-2-isolamento-bundle.md, in fondo.]
 # lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo).
 # Fallback neutro come nel launcher C: LANG pilota Qt.locale() e quindi
 # l'Accept-Language, un default italiano darebbe pagine italiane a stranieri.
@@ -69,7 +73,7 @@ export QTWEBENGINE_DISABLE_SANDBOX=1
 # → scroll; verificato con tap iniettati da /dev/input: jitter 15px = niente
 # click, tap fermo = ok). Android usa 8dp ≈ 21px fisici; 28px ≈ 2,6mm. Migliora
 # anche longpress (stesso slop) e pinch (span_slop = 2x questo valore).
-export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 --force-device-scale-factor=2.6214 --touch-slop-distance=28 --enable-viewport}"
+export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---no-sandbox --disable-gpu-sandbox --use-gl=egl --disable-seccomp-filter-sandbox --enable-logging=stderr --log-level=0 --touch-events=enabled --blink-settings=availablePointerTypes=2,availableHoverTypes=1,primaryPointerType=2,primaryHoverType=1 --force-device-scale-factor=2.6214 --touch-slop-distance=28 --enable-viewport --disable-features=WebBluetooth,WebUSB,WebNFC,IdleDetection,FedCm,WebOTP --force-webrtc-ip-handling-policy=default_public_interface_only --enable-features=BlockInsecurePrivateNetworkRequests}"
 
 # log utile per diagnosi
 export QT_LOGGING_RULES="qt.webengine*=true;qt.qpa*=true"

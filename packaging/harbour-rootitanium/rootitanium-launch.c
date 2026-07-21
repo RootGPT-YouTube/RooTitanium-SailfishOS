@@ -95,6 +95,12 @@ int main(int argc, char **argv) {
     setenv("QT_QPA_PLATFORM", "wayland-egl", 1);
     unsetenv("QT_WAYLAND_RESIZE_AFTER_SWAP");
     unsetenv("QMLSCENE_DEVICE");
+    /* Nessuna decorazione client-side: l'app e' fullscreen e la decorazione le
+     * MANGIA area utile. Oggi la variabile arriva dalla sessione SFOS, ma
+     * dipendere da lei e' proprio l'errore che ci e' costato la geometria
+     * (vedi sopra). Misurato il 21 lug lanciando senza: finestra 1074x2487 su
+     * schermo 1080x2520, con la riga "[rt] geometria finestra ..." nel log. */
+    setenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1", 1);
     {
         const char *xrd = getenv("XDG_RUNTIME_DIR");
         if (!xrd || !*xrd) {
@@ -130,7 +136,15 @@ int main(int argc, char **argv) {
            "--force-device-scale-factor=2.6214 --touch-slop-distance=28 "
            /* pinch zoom a due dita: pipeline page-scale mobile; non cambia le
             * metriche viste dalle pagine (innerWidth/dpr/screen.* invariati) */
-           "--enable-viewport", 0);
+           "--enable-viewport "
+           /* task 1.3 §A — superficie d'attacco che non usiamo: sono API che su
+            * questo device non servono a nulla e costano zero da spegnere
+            * (non girano). Verificate presenti in Chromium 122. */
+           "--disable-features=WebBluetooth,WebUSB,WebNFC,IdleDetection,FedCm,WebOTP "
+           /* WebRTC non deve rivelare gli IP locali (LAN) ai siti */
+           "--force-webrtc-ip-handling-policy=default_public_interface_only "
+           /* una pagina pubblica non puo' sondare la rete locale */
+           "--enable-features=BlockInsecurePrivateNetworkRequests", 0);
 
     /* execv del binario webengine-smoke, ma con argv[0] FORGIATO =
      * /home/rootitanium/harbour-rootitanium. Due requisiti in uno:

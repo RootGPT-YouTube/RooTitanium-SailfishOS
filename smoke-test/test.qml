@@ -100,12 +100,40 @@ Window {
     property bool autoRotateFS: true
     readonly property int orient: ((videoFS && autoRotateFS) || manualLandscape) ? 90 : 0
 
+    // ===================== task #3: display sempre acceso durante i video =====================
+    // Tre segnali, perché nessuno basta da solo:
+    //  - recentlyAudible (nativo, gratis) non vede i video MUTI, che sono tanti;
+    //  - il sondaggio JS li vede, ma costa una runJavaScript ogni 20 s;
+    //  - videoFS è immediato e inequivocabile, ma copre solo il fullscreen.
+    // La pausa di blanking va chiesta solo con l'app in primo piano: in background
+    // il display deve poter spegnersi come sempre.
+    property bool videoPollSaysPlaying: false
+    readonly property bool videoPlaying: Qt.application.active
+        && ((currentView && currentView.recentlyAudible) || videoPollSaysPlaying || videoFS)
+    onVideoPlayingChanged: if (typeof rtNative !== "undefined") rtNative.setKeepDisplayOn(videoPlaying)
+    Timer {
+        id: videoPollTimer
+        interval: 20000                 // ampiamente sotto il timeout di blanking più corto
+        repeat: true
+        running: Qt.application.active
+        triggeredOnStart: true
+        onTriggered: {
+            if (!win.currentView) { win.videoPollSaysPlaying = false; return }
+            win.currentView.runJavaScript(
+                "(function(){var m=document.querySelectorAll('video,audio');" +
+                "for(var i=0;i<m.length;i++)" +
+                "if(!m[i].paused&&!m[i].ended&&m[i].readyState>2)return true;return false})()",
+                function(res) { win.videoPollSaysPlaying = (res === true) })
+        }
+    }
+
     // --- schede ---
     property int currentTab: 0
     // stato "Cerca nella pagina" (la barra findBar vive dentro appRoot)
     property int findCur: 0
     property int findTot: 0
-    onCurrentTabChanged: closeFind()
+    // un solo handler per segnale: QML rifiuta i duplicati
+    onCurrentTabChanged: { closeFind(); videoPollSaysPlaying = false }
     function closeFind() {
         if (!findBar.open) return
         findBar.open = false
@@ -213,6 +241,12 @@ Window {
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
+    // --- task 1.3: hardening privacy. TUTTI E TRE SPENTI DI DEFAULT (decisione
+    // del 20 lug): sono le misure che possono rompere siti, quindi l'utente le
+    // accende una per una. Indipendenti fra loro, nessun toggle master.
+    property bool cfg3pCookies: false       // blocca i cookie di terze parti
+    property bool cfgNoReferrer: false      // niente Referer verso siti esterni
+    property bool cfg3pStorage: false       // isola lo storage 3P (flag: al PROSSIMO avvio)
     // Permessi App: gate master di capacità, sopra i permessi per-sito. Se OFF,
     // RooTitanium nega quella capacità a TUTTI i siti (il sito non viene neppure
     // interpellato). Servono perché l'app gira Sandboxing=Disabled: i permessi OS
@@ -281,6 +315,18 @@ Window {
         cfgDlDir        = kvGet("set_dldir", "downloads")
         if (!dlDirs[cfgDlDir]) cfgDlDir = "downloads"
         cfgReaderPx     = parseInt(kvGet("set_readerpx", "19")) || 19
+        cfg3pCookies    = kvGet("set_3pcookies", "0") === "1"
+        cfgNoReferrer   = kvGet("set_noreferrer", "0") === "1"
+        cfg3pStorage    = kvGet("set_3pstorage", "0") === "1"
+        syncPrivacy()
+    }
+
+    // Porta i tre toggle (piu' il DNT, che ora e' anche un header vero e non solo
+    // JS) al lato C++: l'interceptor e il filtro cookie li leggono a ogni
+    // richiesta, quindi accendere o spegnere ha effetto immediato.
+    function syncPrivacy() {
+        if (typeof rtNative === "undefined") return
+        rtNative.setPrivacyFlags(cfgDnt, cfgNoReferrer, cfg3pCookies)
     }
     function applySetting(k, v) {
         if (k === "homepage") {
@@ -295,7 +341,16 @@ Window {
         if (k === "js")            { cfgJs = on;        kvSet("set_js", v) }
         else if (k === "cookies")  { cfgCookies = on;   kvSet("set_cookies", v) }
         else if (k === "popups")   { cfgPopups = on;    kvSet("set_popups", v) }
-        else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs() }
+        else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs(); syncPrivacy() }
+        else if (k === "cookies3p"){ cfg3pCookies = on; kvSet("set_3pcookies", v); syncPrivacy() }
+        else if (k === "noreferrer"){ cfgNoReferrer = on; kvSet("set_noreferrer", v); syncPrivacy() }
+        else if (k === "storage3p"){ cfg3pStorage = on;  kvSet("set_3pstorage", v)
+                                     // flag di Chromium: si legge solo all'avvio del
+                                     // processo, quindi qui si salva soltanto e il
+                                     // testo del toggle avvisa "al prossimo avvio"
+                                     if (typeof rtNative !== "undefined") rtNative.setStartupStoragePartitioning(on)
+                                     toast.show(win.t("Attivo al prossimo avvio dell'app",
+                                                      "Takes effect next time the app starts")) }
         else if (k === "dark")     { cfgDark = on;      kvSet("set_dark", v); applyViewPrefs() }
         else if (k === "startprivate") { cfgStartPrivate = on; kvSet("set_startprivate", v) }
         else if (k === "closetabs")    { cfgCloseTabs = on;    kvSet("set_closetabs", v)
@@ -375,6 +430,24 @@ Window {
     // di fingerprint — canvas, WebGL readPixels, audio. Valori restano PLAUSIBILI
     // (non falsi evidenti), per questo non rompe l'anti-bot: Brave/Cromite girano
     // su X.com. NON tocca gli userscript di coerenza-Chrome: ci si aggiunge sopra.
+    // task 1.3 §D — sostituzioni STATICHE (nessun rumore per chiamata, quindi
+    // nessun costo): valori plausibili di un Android mid-range invece di quelli
+    // veri del device, che insieme fanno impronta. Agganciate al toggle farbling
+    // e NON sempre attive come proponeva il piano: l'identità JS di questo
+    // browser è stata calibrata a fatica per far passare il login di X
+    // (interceptor Sec-CH-UA + cooldown), e cambiarla di default a scatola chiusa
+    // rischierebbe di rompere quel risultato senza nessuno che se ne accorga.
+    // Con il toggle acceso l'utente ha già accettato quel genere di compromesso.
+    readonly property string staticSpoofJs: `(function(){
+  function def(o,k,v){try{Object.defineProperty(o,k,{get:function(){return v},configurable:true})}catch(e){}}
+  def(navigator,'deviceMemory',4);
+  def(navigator,'hardwareConcurrency',8);
+  def(navigator,'connection',{effectiveType:'4g',rtt:100,downlink:10,saveData:false});
+  try{navigator.getBattery=function(){return Promise.resolve(
+    {charging:true,chargingTime:0,dischargingTime:Infinity,level:1,
+     addEventListener:function(){},removeEventListener:function(){}})}}catch(e){}
+})();`
+
     readonly property string farbleJs: `(function(){
   if (window.__rtFarble) return; window.__rtFarble = true;
   function h(s){var x=2166136261>>>0;for(var i=0;i<s.length;i++){x^=s.charCodeAt(i);x=Math.imul(x,16777619);}return x>>>0;}
@@ -466,6 +539,13 @@ Window {
         if (cfgFarble) s.push({
             name: "rtFarble",
             sourceCode: farbleJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        }, {
+            // task 1.3 §D: statiche, stesso toggle del farbling (vedi staticSpoofJs)
+            name: "rtStaticSpoof",
+            sourceCode: staticSpoofJs,
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
@@ -1165,6 +1245,9 @@ ${sToggle("cookies", cfgCookies, win.t("Conserva i cookies alla chiusura", "Keep
 ${sToggle("popups", cfgPopups, win.t("Popup e nuove schede dai siti", "Popups and new tabs from sites"), win.t("Spento: i link si aprono nella scheda corrente", "Off: links open in the current tab"))}
 ${sToggle("farble", cfgFarble, win.t("Disattiva fingerprint", "Disable fingerprinting"), win.t("Anti-tracciamento stile Brave/Cromite: nasconde l'impronta del browser", "Brave/Cromite-style anti-tracking: hides the browser fingerprint"))}
 ${sToggle("nocookie", cfgNoCookieBanner, win.t("Rifiuta i banner cookie", "Reject cookie banners"), win.t("Rifiuta o nasconde automaticamente gli avvisi sui cookie", "Automatically rejects or hides cookie notices"))}
+${sToggle("cookies3p", cfg3pCookies, win.t("Blocca i cookie di terze parti", "Block third-party cookies"), win.t("Più privacy, ma può rompere i login federati («accedi con Google»)", "More privacy, but can break federated logins (“sign in with Google”)"))}
+${sToggle("noreferrer", cfgNoReferrer, win.t("Non inviare il referrer ai siti esterni", "Don't send the referrer to external sites"), win.t("Le terze parti incorporate non sapranno da quale sito arrivi", "Embedded third parties won't learn which site you're on"))}
+${sToggle("storage3p", cfg3pStorage, win.t("Isola lo storage di terze parti", "Isolate third-party storage"), win.t("Attivo al prossimo avvio dell'app", "Takes effect next time the app starts"))}
 <div class="srow dis"><span class="sbody"><span class="st">Password</span><span class="sd">${win.t("Per sicurezza usa un gestore dedicato (Proton Pass, Bitwarden, KeePassXC)", "For security use a dedicated manager (Proton Pass, Bitwarden, KeePassXC)")}</span></span></div>
 <a class="srow" href="https://permsapp.local/"><span class="sbody"><span class="st">${win.t("Permessi App", "App Permissions")}</span><span class="sd">${win.t("Cosa RooTitanium può usare: fotocamera, microfono, posizione, notifiche, download", "What RooTitanium can use: camera, microphone, location, notifications, downloads")}</span></span><span class="chev">›</span></a>
 <a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">${win.t("Permessi siti", "Site Permissions")}</span><span class="sd">${win.t("Decisioni per singolo sito su fotocamera, microfono, posizione, notifiche", "Per-site choices for camera, microphone, location, notifications")}</span></span><span class="chev">›</span></a>
@@ -2093,7 +2176,10 @@ ${histCss}
                             // set?k=&v= dai toggle/radio; sethome?u= dal form GET
                             // (spazi codificati come +); cleardata → conferma
                             // inline → cleardata2 esegue
-                            var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z]+)&v=([a-z0-9]*)$/)
+                            // [a-z0-9]+ e non [a-z]+: le chiavi dei toggle privacy contengono cifre
+                            // (cookies3p, storage3p) e con la vecchia regex l'impostazione
+                            // veniva ignorata IN SILENZIO — trovato al collaudo del 21 lug
+                            var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
                             var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
                             win.settingsClearArm = (u === "https://settings.local/cleardata")
                             if (mSet) win.applySetting(mSet[1], mSet[2])
@@ -2126,7 +2212,7 @@ ${histCss}
                             }
                         } else if (u.indexOf("https://permsapp.local/") === 0) {
                             request.action = WebEngineNavigationRequest.IgnoreRequest
-                            var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z]+)&v=([a-z0-9]*)$/)
+                            var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
                             if (mAp) win.applySetting(mAp[1], mAp[2])
                             win.loadInternal(this, "permsapp", win.permsAppHtml(), "https://permsapp.local/")
                         }

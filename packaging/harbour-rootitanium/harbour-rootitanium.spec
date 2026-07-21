@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.2
-Release:    2
+Version:    1.3
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -85,6 +85,29 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Tue Jul 21 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.3-1
+- Privacy (task 1.3): tre nuovi interruttori in Impostazioni, TUTTI SPENTI di
+  default perche' possono rompere siti: "Blocca i cookie di terze parti",
+  "Non inviare il referrer ai siti esterni", "Isola lo storage di terze parti"
+  (quest'ultimo agisce al riavvio dell'app: e' un flag di Chromium).
+- "Non tenere traccia" ora manda davvero gli header DNT: 1 e Sec-GPC: 1; prima
+  era solo JavaScript e nessun segnale partiva sul filo.
+- Spente le API che questo browser non usa e che allargano la superficie
+  d'attacco: WebBluetooth, WebUSB, WebNFC, IdleDetection, FedCM, WebOTP. WebRTC
+  non rivela piu' gli indirizzi della rete locale; le pagine pubbliche non
+  possono sondare la rete di casa.
+- Il display non si spegne piu' da solo mentre un video e' in riproduzione
+  (task #3), nemmeno se il video e' muto. A video fermo il timeout torna quello
+  di sistema.
+- Correzione: gli interruttori con una cifra nel nome venivano ignorati in
+  silenzio dalla pagina Impostazioni.
+- Fascia nera in basso alta quanto una tastiera (X10 III): la finestra impone
+  ora la propria geometria e non subisce piu' quella del compositor; il bundle
+  non pesca piu' plugin Qt6 di sistema (qt.conf) e non eredita variabili Qt5 di
+  Sailfish che gli spostavano la geometria sotto i piedi.
+- Diagnostica: `touch /home/rootitanium/DEBUG` fa scrivere /tmp/rootitanium.log
+  anche ai lanci dall'icona; `rm` per spegnerla.
+
 * Tue Jul 21 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.2-2
 - Fascia nera in basso alta quanto una tastiera (Xperia X10 III / SFOS 5.1.0.11,
   segnalata da due utenti, entrambi con Qt Runner installato o rimosso di recente).
