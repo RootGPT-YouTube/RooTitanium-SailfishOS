@@ -18,7 +18,7 @@
 
 Name:       harbour-rootitanium
 Version:    1.2
-Release:    1
+Release:    2
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -40,6 +40,22 @@ rm -rf %{buildroot}
 # 1) payload -> /home/rootitanium (staging gia' TRIMMATO a monte)
 mkdir -p %{buildroot}%{_apphome}
 cp -a %{stagingdir}/bundle/. %{buildroot}%{_apphome}/
+# 1b) qt.conf: SOSTITUISCE i path Qt compilati (qt_prfxpath=/usr) invece di
+#     aggiungersi come fa QT_PLUGIN_PATH. Senza, il processo pesca anche in
+#     /usr/lib64/qt6/plugins, che su chi ha (o ha avuto) Qt Runner e' pieno di
+#     plugin Qt6 di sistema. Generato qui e non preso dallo staging: cosi' vale
+#     anche per staging assemblati prima di questa modifica. Vedi
+#     Documentation/TASK-2-isolamento-bundle.md e smoke-test/qt.conf.
+cat > %{buildroot}%{_apphome}/qt.conf <<'RTQTCONF'
+[Paths]
+Prefix = .
+Plugins = plugins
+Imports = qml
+Qml2Imports = qml
+Libraries = lib
+LibraryExecutables = libexec
+RTQTCONF
+chmod 0644 %{buildroot}%{_apphome}/qt.conf
 # 2) launcher ELF -> /usr/bin (sailjail: Exec dev'essere un ELF in /usr/bin)
 mkdir -p %{buildroot}%{_bindir}
 install -m0755 %{stagingdir}/rootitanium-launch %{buildroot}%{_bindir}/harbour-rootitanium
@@ -69,6 +85,17 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Tue Jul 21 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.2-2
+- Fascia nera in basso alta quanto una tastiera (Xperia X10 III / SFOS 5.1.0.11,
+  segnalata da due utenti, entrambi con Qt Runner installato o rimosso di recente).
+  Due cure, su strati diversi dello stesso sintomo:
+- qt.conf accanto al binario: i path Qt del bundle SOSTITUISCONO quelli compilati
+  (qt_prfxpath=/usr), cosi' i plugin Qt6 di sistema lasciati in /usr/lib64/qt6 da
+  Qt Runner non entrano piu' nel nostro processo. QT_PLUGIN_PATH da solo non basta:
+  e' additivo.
+- Finestra: geometria imposta da Screen invece che subita dal compositor, con
+  diagnostica in /tmp/rootitanium.log se viene comunque rimpicciolita.
+
 * Mon Jul 20 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.2-1
 - Versione 1.2: i link tappati in altre app (RooTelegram & co.) ora si aprono
   anche quando RooTitanium e' gia' in esecuzione, sempre in una scheda NUOVA.
