@@ -5,7 +5,15 @@ sono indipendenti e non si contendono niente. La #1 riguarda **cosa il browser
 concede alla rete**; la #2 riguarda **cosa il browser si lascia entrare in casa
 dal device su cui gira**.
 
-Stato: `qt.conf` e spec 1.2-2 **preparati**, build e collaudo **non ancora fatti**.
+Stato: **rilasciata in RPM 1.3-1** il 21 lug 2026 (`qt.conf`, igiene ambiente,
+diagnostica `DEBUG`), installata e collaudata sul device di sviluppo.
+
+Risultato misurato che vale più di tutta la teoria qui sotto: imponendo
+`QT_WAYLAND_DISABLE_WINDOWDECORATION` dal launcher la finestra passa da
+**1074x2487 a 1080x2520 pieni** — la decorazione client-side mangiava area utile,
+e `rtGeomCheck()` lo ha scritto nel log al primo lancio con la diagnostica accesa.
+Non è la fascia alta quanto una tastiera dei due segnalanti (è troppo piccola per
+esserlo), ma è una perdita di area reale, tolta di mezzo.
 
 > ⚠️ **21 lug, sera — la diagnosi qui sotto è SMENTITA come causa della fascia nera.**
 > Sul device di uno dei due segnalanti (che aveva disinstallato Qt Runner)

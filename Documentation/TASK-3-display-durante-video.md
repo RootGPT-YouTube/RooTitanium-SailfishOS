@@ -3,7 +3,14 @@
 Aperta il 21 lug 2026. Affianca la [#1 (1.3) hardening privacy](TASK-1.3-hardening.md)
 e la [#2 isolamento bundle](TASK-2-isolamento-bundle.md); indipendente da entrambe.
 
-Stato: **piano, non implementato.**
+Stato: **FATTA il 21 lug 2026** (commit 6212597, in RPM 1.3-1), collaudata sul
+device. Implementata come previsto qui sotto, senza scostamenti.
+
+Verifica eseguita con `dbus-monitor --system` **come root** (senza root non si
+vede il traffico altrui: il primo test è risultato falsamente negativo):
+con un media in play due `req_display_blanking_pause` in 40 s, alla pausa un
+`req_display_cancel_blanking_pause` e nessun rinnovo successivo. Prova di
+controllo con `dbus-send` manuale per validare il monitor stesso.
 
 ## Il difetto
 

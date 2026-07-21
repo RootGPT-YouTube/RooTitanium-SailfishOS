@@ -1,6 +1,30 @@
 # Task 1.3 — hardening privacy/sicurezza a costo prestazionale zero
 
-Piano di lavoro, **non ancora implementato** (preparato il 20 lug 2026).
+Piano di lavoro — **ESEGUITO il 21 lug 2026** (commit 6212597, rilasciato in RPM
+1.3-1). Esiti e scelte prese in implementazione, rispetto a quanto previsto qui:
+
+| § | Esito |
+|---|---|
+| A flag | fatto; verificato sul device che le API siano `undefined` |
+| B DNT/Sec-GPC | fatto; erano solo JS, ora sono header veri |
+| B Referer | fatto; **cross-site deciso sulle ultime due etichette dell'host**, non host-contro-host, altrimenti `www.sito.it` → `cdn.sito.it` perdeva il Referer |
+| C cookie 3P | filtro installato, **non verificato end-to-end** (il test via httpbin fallisce per CORS in entrambe le direzioni: non distingue acceso da spento) |
+| D override JS | fatto ma **agganciato al toggle farbling**, non sempre attivo come proponeva il piano: l'identità JS è calibrata per il login di X e non va cambiata di default a scatola chiusa |
+| E tre toggle | fatti, spenti di default; il terzo passa da `startup-flags.conf` letto da `main.cpp`, non dalla kv SQLite (il nome del file kv è un hash: sproporzionato per un booleano) |
+
+Verifiche eseguite sul device via CDP: cross-site senza `Referer`, same-site col
+`Referer` intatto, prova di controllo a toggle spento che lo fa riapparire,
+`DNT: 1` + `Sec-GPC: 1` presenti, `Sec-CH-UA` ancora "Google Chrome" (login X non
+toccato), e `ThirdPartyStoragePartitioning` sulla cmdline del renderer dopo il
+riavvio.
+
+Difetto trovato collaudando: il router di `settings.local` accettava solo chiavi
+`[a-z]+`, quindi `cookies3p` e `storage3p` venivano ignorate **in silenzio**.
+Corretto in `[a-z0-9]+`.
+
+---
+
+Piano originale (preparato il 20 lug 2026).
 
 Criterio di ammissione scelto dall'utente: si accetta **solo** ciò che non tocca
 le prestazioni. Sono già state scartate, per questo motivo, misure pur valide:
