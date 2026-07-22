@@ -24,9 +24,17 @@ Modifiche fatte:
   potrebbe non aggiornare il pallino (setting comunque applicato) — da verificare.
 
 **Contestuale (task diversa):** fix fascia nera X10 III — `win.showFullScreen()`
-dentro il `Component.onCompleted` esistente della `Window`. VERIFICATO sul device:
-log con `configure QSize(1080,2520)` costante (zero 1660, zero `rtGeomCheck`) e
-screenshot a schermo pieno senza banda nera. Cfr. [[rootitanium-fascia-nera-x10iii]].
+dentro il `Component.onCompleted` esistente della `Window`. VERIFICATO sul device
+di sviluppo: log con `configure QSize(1080,2520)` costante (zero 1660, zero
+`rtGeomCheck`) e screenshot a schermo pieno senza banda nera.
+🔴 **22 lug sera — RIAPERTO: NON risolve sul device dell'utente.** Con la 1.4-1
+installata l'utente riporta: «No, sadly, 1.4 does not fix the problem. It still
+only uses 2/3 of the screen». Quindi il set_fullscreen imperativo cura la
+riproduzione locale ma non il suo caso: causa aggiuntiva o difetto affine ma
+diverso. Prossimo passo obbligatorio PRIMA di nuove ipotesi: farsi mandare
+`/tmp/rootitanium.log` della 1.4-1 dal suo device (contiene le geometrie
+`xdg_toplevel.configure`); utile anche sapere se la fascia resta alta quanto la
+tastiera e cosa succede in landscape. Cfr. [[rootitanium-fascia-nera-x10iii]].
 
 ---
 Piano originale (per riferimento):
