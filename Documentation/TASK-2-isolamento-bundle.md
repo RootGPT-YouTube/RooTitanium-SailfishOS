@@ -109,7 +109,7 @@ mette altra roba in `/usr/lib64/qt6` e senza `qt.conf` si ricomincia.
 ## Verifica — ESEGUITA, esito negativo
 
 ```
-[defaultuser@Hera ~]$ ls /usr/lib64/qt6/plugins/platforminputcontexts/ \
+[defaultuser@Sailfish ~]$ ls /usr/lib64/qt6/plugins/platforminputcontexts/ \
                          /usr/lib64/qt6/plugins/wayland-shell-integration/
 ls: /usr/lib64/qt6/plugins/platforminputcontexts/: No such file or directory
 ls: /usr/lib64/qt6/plugins/wayland-shell-integration/: No such file or directory
