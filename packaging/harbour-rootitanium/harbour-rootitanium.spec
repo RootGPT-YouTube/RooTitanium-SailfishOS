@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.3
+Version:    1.4
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,14 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Wed Jul 22 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4-1
+- Impostazioni: ora si aprono in una scheda dedicata, senza sovrascrivere la
+  pagina su cui ti trovavi (torni indietro e la ritrovi).
+- Cambiare un'impostazione (interruttore, motore di ricerca, cartella dei
+  download) non riporta piu' la pagina in cima: resti sull'opzione toccata.
+- Corretta la fascia nera in fondo allo schermo su Xperia 10 III: la finestra
+  ora occupa tutto lo schermo (forzato il fullscreen reale sul compositore).
+
 * Tue Jul 21 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.3-1
 - Privacy (task 1.3): tre nuovi interruttori in Impostazioni, TUTTI SPENTI di
   default perche' possono rompere siti: "Blocca i cookie di terze parti",
