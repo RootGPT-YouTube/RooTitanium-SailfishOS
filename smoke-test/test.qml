@@ -694,6 +694,23 @@ Window {
         Qt.callLater(refreshCurrent)
     }
 
+    // Apre una PAGINA INTERNA in una scheda NUOVA (non-incognito) senza
+    // distruggere la scheda di partenza (task 1.4). La view nasce asincrona dal
+    // Repeater: il "kind" viaggia in model.start ("internal:<kind>") e viene
+    // risolto in Component.onCompleted della delegate via loadInternalStart.
+    // Generico: oggi lo usano solo le Impostazioni, riusabile per
+    // Cronologia/Segnalibri/Download se in futuro vorremo lo stesso comportamento.
+    function openInternalInNewTab(kind, title) {
+        menu.open = false
+        switcher.open = false
+        tabsModel.append({ priv: false, start: "internal:" + kind, murl: "", mtitle: title })
+        currentTab = tabsModel.count - 1
+        Qt.callLater(refreshCurrent)
+    }
+    function loadInternalStart(view, kind) {
+        if (kind === "settings") { settingsClearArm = false; loadInternal(view, "settings", settingsHtml(), "https://settings.local/") }
+    }
+
     property var ctxView: null
     property string ctxLink: ""
     property string ctxImg: ""
@@ -1172,27 +1189,50 @@ ${body}
     // (link sentinella https://settings.local/... + form GET per la homepage):
     // deve funzionare anche col toggle JavaScript spento
     property bool settingsClearArm: false   // "Pulisci dati" chiede conferma inline
+    // task 1.4: le Impostazioni si aprono in una scheda dedicata (non più sopra
+    // la pagina corrente). L'argomento view resta per compatibilità coi chiamanti.
     function openSettings(view) {
-        settingsClearArm = false
-        loadInternal(view, "settings", settingsHtml(), "https://settings.local/")
+        openInternalInNewTab("settings", win.t("Impostazioni", "Settings"))
     }
     function sToggle(k, on, title, desc) {
-        return '<a class="srow" href="https://settings.local/set?k=' + k + '&v=' + (on ? 0 : 1) + '">'
+        // id="r_K" stabile per riga: consente l'aggiornamento DOM mirato al
+        // toggle (task 1.4) senza ricaricare tutta la pagina → niente scroll-to-top
+        return '<a class="srow" id="r_' + k + '" href="https://settings.local/set?k=' + k + '&v=' + (on ? 0 : 1) + '">'
              + '<span class="sbody"><span class="st">' + title + '</span>'
              + (desc ? '<span class="sd">' + desc + '</span>' : '') + '</span>'
              + '<span class="sw' + (on ? ' on' : '') + '"></span></a>'
     }
+    // JS mirato per riflettere un cambio impostazione nel DOM SENZA reload
+    // (task 1.4). Ritorna "" per le chiavi che devono comunque ricaricare
+    // (uitheme ricolora tutta la pagina; cleardata/sethome cambiano struttura).
+    function settingsLiveJs(k, v) {
+        if (k === "search" || k === "dldir") {   // radio: sposta il pallino nel gruppo
+            return "(function(){var g=document.querySelectorAll('.rg_" + k + "');"
+                 + "for(var i=0;i<g.length;i++)g[i].classList.remove('on');"
+                 + "var a=document.getElementById('rad_" + k + "_" + v + "');"
+                 + "if(a){var d=a.querySelector('.rad');if(d)d.classList.add('on');}})();"
+        }
+        var bools = ["js","cookies","popups","dnt","cookies3p","noreferrer",
+                     "storage3p","dark","startprivate","closetabs","farble","nocookie"]
+        if (bools.indexOf(k) >= 0) {           // toggle: commuta .on e inverte l'href
+            var on = v === "1"
+            return "(function(){var a=document.getElementById('r_" + k + "');if(!a)return;"
+                 + "var sw=a.querySelector('.sw');if(sw)sw.classList." + (on ? "add" : "remove") + "('on');"
+                 + "a.setAttribute('href','https://settings.local/set?k=" + k + "&v=" + (on ? 0 : 1) + "');})();"
+        }
+        return ""
+    }
     function settingsHtml() {
         var engines = ["duckduckgo", "google", "bing", "startpage"].map(function(k) {
             var on = cfgSearch === k
-            return '<a class="srow" href="https://settings.local/set?k=search&v=' + k + '">'
-                 + '<span class="rad' + (on ? ' on' : '') + '"></span>'
+            return '<a class="srow" id="rad_search_' + k + '" href="https://settings.local/set?k=search&v=' + k + '">'
+                 + '<span class="rad rg_search' + (on ? ' on' : '') + '"></span>'
                  + '<span class="sbody"><span class="st">' + searchEngines[k].n + '</span></span></a>'
         }).join("")
         var dldirs = ["downloads", "documents", "pictures", "videos", "music"].map(function(k) {
             var on = cfgDlDir === k
-            return '<a class="srow" href="https://settings.local/set?k=dldir&v=' + k + '">'
-                 + '<span class="rad' + (on ? ' on' : '') + '"></span>'
+            return '<a class="srow" id="rad_dldir_' + k + '" href="https://settings.local/set?k=dldir&v=' + k + '">'
+                 + '<span class="rad rg_dldir' + (on ? ' on' : '') + '"></span>'
                  + '<span class="sbody"><span class="st">' + dlDirs[k].n + '</span>'
                  + '<span class="sd">' + dlDirs[k].p.replace("/home/defaultuser", "~") + '</span></span></a>'
         }).join("")
@@ -1864,6 +1904,14 @@ ${histCss}
     // sono binding, ma la homepage/incognito di partenza si decide qui);
     // ripristino sessione solo se "chiudi schede all'uscita" è spento
     Component.onCompleted: {
+        // Su lipstick il FullScreen *dichiarativo* (visibility, sopra) viene
+        // degradato a Maximized: la finestra si ferma all'area sopra la tastiera
+        // di sistema e in fondo resta una fascia nera (X10 III / 5.1.0.11 — log:
+        // configure QSize(1080,1660) invece di 2520, stato WindowMaximized mai
+        // FullScreen). showFullScreen() forza un set_fullscreen Wayland *reale*:
+        // una surface fullscreen copre l'intero output e non subisce la riserva
+        // tastiera del compositor. Idempotente dove il FullScreen già attecchisce.
+        win.showFullScreen()
         loadCfg()
         applyClientHints()
         // pop-up una-tantum: spiega come gestire i permessi via «Permessi App»
@@ -2084,6 +2132,7 @@ ${histCss}
                         try { settings.forceDarkMode = win.cfgDark } catch(e) {}
                         if (model.start === "incognito") win.loadInternal(this, "incognito", win.incognitoHtml(), "about:blank")
                         else if (model.start === "home") win.goHome(this)
+                        else if (("" + model.start).indexOf("internal:") === 0) win.loadInternalStart(this, ("" + model.start).substring(9))
                         else url = model.start
                         win.refreshCurrent()
                     }
@@ -2182,7 +2231,13 @@ ${histCss}
                             var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
                             var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
                             win.settingsClearArm = (u === "https://settings.local/cleardata")
-                            if (mSet) win.applySetting(mSet[1], mSet[2])
+                            if (mSet) {
+                                win.applySetting(mSet[1], mSet[2])
+                                // task 1.4: se la riga sa aggiornarsi da sola, niente
+                                // reload → la vista resta ferma sull'impostazione toccata
+                                var liveJs = win.settingsLiveJs(mSet[1], mSet[2])
+                                if (liveJs.length) { this.runJavaScript(liveJs); return }
+                            }
                             else if (mSHome) {
                                 win.applySetting("homepage", decodeURIComponent(mSHome[1].replace(/\+/g, "%20")))
                                 toast.show(win.cfgHome.length ? "Pagina iniziale salvata" : "Pagina iniziale: HOME di RooTitanium")

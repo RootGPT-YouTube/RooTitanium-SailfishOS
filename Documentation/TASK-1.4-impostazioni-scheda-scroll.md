@@ -1,6 +1,35 @@
 # TASK 1.4 — Impostazioni: scheda dedicata + niente scroll-to-top al toggle
 
-Stato: **PIANO** (da eseguire). Richiesta utente del 22 lug 2026.
+Stato: **CODICE SCRITTO E DEPLOYATO, DA COLLAUDARE A MANO** (22 lug 2026).
+
+## Stato esecuzione (22 lug 2026)
+Implementato in `smoke-test/test.qml` (commit di checkpoint), deployato sul device
+e l'app **carica senza errori QML** (render completo verificato). Il comportamento
+interattivo NON è stato verificato da remoto: il menu QML non è tappabile via CDP
+(cfr. [[collaudo-app-device-trappole]] punto 5) e il tentativo di pilotarlo con una
+copia usa-e-getta (Timer che chiama `doAction("settings")`) è fallito perché
+**qualunque `Timer` figlio della `Window`, anche a corpo vuoto, fa crashare l'app
+all'avvio su questo device** — artefatto del metodo di test, non del codice 1.4.
+Serve quindi una **verifica manuale sul telefono**: Menu › Impostazioni deve aprire
+una nuova scheda; un toggle in fondo non deve riportare in cima.
+
+Modifiche fatte:
+- new-tab generico: `openInternalInNewTab(kind,title)` + `loadInternalStart(view,kind)`;
+  la delegate risolve `model.start = "internal:<kind>"` in `Component.onCompleted`.
+  `openSettings` ora apre in scheda nuova.
+- niente scroll-to-top: `sToggle` ha `id="r_<k>"`, le radio hanno `id`+classe `rg_<gruppo>`;
+  l'interceptor `set` chiama `settingsLiveJs(k,v)` che aggiorna il DOM via `runJavaScript`
+  senza reload (toggle booleani + radio search/dldir). Restano a reload: tema (`uitheme`,
+  ricolora), `cleardata`/`sethome`. Limite noto: con JavaScript OFF il `runJavaScript`
+  potrebbe non aggiornare il pallino (setting comunque applicato) — da verificare.
+
+**Contestuale (task diversa):** fix fascia nera X10 III — `win.showFullScreen()`
+dentro il `Component.onCompleted` esistente della `Window`. VERIFICATO sul device:
+log con `configure QSize(1080,2520)` costante (zero 1660, zero `rtGeomCheck`) e
+screenshot a schermo pieno senza banda nera. Cfr. [[rootitanium-fascia-nera-x10iii]].
+
+---
+Piano originale (per riferimento):
 
 ## Il problema (due sintomi, una stessa causa architetturale)
 
