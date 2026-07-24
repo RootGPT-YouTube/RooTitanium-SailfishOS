@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.4
+Version:    1.4.5
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,16 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Fri Jul 24 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.5-1
+- Corretto lo schermo nero su Xperia 10 II (e possibili altri device): la 1.4
+  forzava il fullscreen reale per rimediare alla fascia nera dell'Xperia 10 III,
+  ma su altre GPU faceva sparire la pagina web (nera dopo un istante). Ripristinato
+  il comportamento di visualizzazione della 1.3 su tutti i dispositivi.
+- Restano attive le migliorie 1.4 alle Impostazioni (scheda dedicata, niente
+  scroll in cima al cambio di un'opzione). Nota: su alcuni Xperia 10 III puo'
+  ricomparire la fascia nera in fondo (cosmetica); e' il compromesso per avere il
+  browser di nuovo utilizzabile ovunque.
+
 * Wed Jul 22 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4-1
 - Impostazioni: ora si aprono in una scheda dedicata, senza sovrascrivere la
   pagina su cui ti trovavi (torni indietro e la ritrovi).
