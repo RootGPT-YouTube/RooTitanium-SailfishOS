@@ -146,13 +146,35 @@ non scatta su device sano è la garanzia per l'**X10 II**: lì la surface non vi
 mai riconfigurata, quindi la regressione dello schermo nero (1.4) non può tornare.
 Niente `showFullScreen()`: lipstick non lo acka mai, su nessun device.
 
+### 28 lug sera — il primo tentativo di cura non bastava: due difetti
+
+Dopo il collaudo tattile la fascia era tornata, **e nel log non c'era nessun
+warning**: la cura non era proprio scattata. Due cause, entrambe corrette:
+
+1. **I binding `width/height: Screen…` mascheravano il clamp.** Erano stati messi
+   il 21 lug come "geometria imposta, non subita": non hanno mai impedito al
+   compositor di rimpicciolire la surface. Peggio: quando il primo `configure`
+   arriva **già** ridotto (com'è successo lanciando dall'icona: primo configure
+   `1080x1860`), il binding riporta `height` a 2520 mentre la surface resta 1860 →
+   la Window disegna per 2520, se ne vede 1860, e `onHeightChanged` non scatta mai.
+   **Rimossi**: ora la geometria della Window è quella vera del compositor.
+2. **Un solo tentativo non basta**: lipstick ri-clampa anche durante l'uso. Nel
+   collaudo dell'utente sono arrivati **2 clamp** e sono servite **2
+   rinegoziazioni** (tetto attuale: 8).
+
+Con `width !== sw || height >= sh || height < sh/2` si ignora tutto ciò che non è
+il clamp vero — in particolare la geometria `500x500` che la Window ha prima di
+essere mappata, che senza binding adesso esiste.
+
+✅ **Collaudo tattile superato** (utente, 28 lug sera): tastiera in-app, rotazione,
+minimizza/riprendi, link da altra app — nessuna fascia nera, 2 clamp intercettati e
+rinegoziati. Commit `eec20c5`.
+
 ### Cosa manca prima del rilascio
 
-- collaudo **tattile** sul device con la cura attiva e la riserva presente:
-  tastiera in-app, rotazione dal menù ⋮, minimizza/riprendi dalla home,
-  apertura di un link da un'altra app (la finestra ora è `Windowed`, non
-  `Maximized`: va verificato che lipstick non la disegni diversamente);
-- poi bump versione + RPM (pipeline `/rilascia_rootitanium`).
+- ~~collaudo tattile~~ ✅ fatto il 28 lug sera, superato;
+- bump versione + RPM (pipeline `/rilascia_rootitanium`) e messaggio a Steve con
+  il workaround immediato (`systemctl --user restart lipstick`).
 
 ## Prossimo passo (superato dal blocco qui sopra)
 
