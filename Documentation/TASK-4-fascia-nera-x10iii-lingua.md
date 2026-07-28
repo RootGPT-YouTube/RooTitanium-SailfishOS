@@ -6,7 +6,7 @@ stato rimosso in 1.4.5 perché causava schermo nero su X10 II (Adreno 508).
 La 1.4.5 torna al rendering della 1.3 e aggiunge solo la pagina Impostazioni/About:
 la fascia nera resta.
 
-## Il dato nuovo (segnalazione Steve, Xperia 10 III "Loki", SFOS 5.1.0.11)
+## Il dato nuovo (segnalazione di Steve, Xperia 10 III "Loki", SFOS 5.1.0.11)
 
 Sequenza verificata da lui:
 
