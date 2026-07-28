@@ -1,6 +1,6 @@
 # TASK 4 — Fascia nera X10 III: l'indizio del cambio lingua (26 lug 2026)
 
-Stato: **aperta**, ma con il primo indizio riproducibile dall'utente.
+Stato: **aperta**, ma con **ricetta di riproduzione** (agg. 27 lug, vedi in fondo).
 Contesto precedente: `showFullScreen()` (1.4) non risolve sul device di Steve ed è
 stato rimosso in 1.4.5 perché causava schermo nero su X10 II (Adreno 508).
 La 1.4.5 torna al rendering della 1.3 e aggiunge solo la pagina Impostazioni/About:
@@ -65,3 +65,60 @@ al boot pulito successivo.
   workaround (riavviare maliit prima di aprire l'app).
 
 ⚠️ Vincolo permanente: qualunque fix qui deve essere neutro sull'X10 II.
+
+---
+
+# Aggiornamento 27 lug 2026 — riproduzione trovata e log A/B analizzati
+
+## La ricetta (Steve, verificata su 10 III, 10 IV e 10 V)
+
+> In una qualsiasi app con la tastiera SFOS, **long-press sulla barra spazio →
+> layout Emoji**. Da quel momento RooTitanium parte a 2/3 di schermo. Nessun
+> reboot necessario, e vale su **tutti** i device, non solo il 10 III.
+
+Non curano: tornare al layout EN, `systemctl --user restart maliit-server`.
+Cura confermata: cambio lingua di sistema + reboot (quello che sembrava "l'atto
+del cambio lingua" era in realtà solo il reboot che azzera lo stato in RAM).
+
+Cade quindi l'ipotesi **race di avvio** della sezione precedente: il trigger non
+è il boot, è l'uso del layout emoji a sessione avviata.
+
+## Log a confronto (in `scratch/log-steve-27lug/`, fuori da git)
+
+Stesso binario 1.4.5, A = stato buono, B = stato rotto:
+
+- **A**: tutti i `xdg_toplevel.configure` a `QSize(1080, 2520)`.
+- **B**: il **secondo** configure (riga 77) è già `QSize(1080, 1660)`, e ci resta
+  per tutta la sessione. Arriva **prima del primo frame di WebEngine** e senza che
+  nessun campo di testo abbia il focus → non è l'app ad aprire la tastiera.
+- In entrambi lo stato è `WindowMaximized`, **mai** `WindowFullScreen` (come già
+  noto: lipstick non acka il set_fullscreen da nessuna parte).
+- `A-maliit.txt` e `B-maliit.txt` identici: `maliit-server` active/running in
+  entrambi → non è maliit acceso/spento.
+- `dconf dump /sailfish/text_input/` **non discrimina**: entrambi hanno
+  `active_layout='en.qml'`, `previous_layout='emojis.qml'`, `enabled_layouts` con
+  `emojis.qml`. Unica differenza: `split_landscape=true` presente solo in A —
+  debole, e i due dump potrebbero venire da device diversi.
+
+## Conclusione
+
+Lo stato incastrato **non è su disco** (dconf identico): sta in RAM in
+lipstick/maliit, ed è per questo che solo il reboot lo azzera. Dopo il passaggio
+al layout emoji, l'area input-panel che maliit comunica a lipstick non torna più
+a zero; lipstick la sottrae in permanenza alle finestre `Maximized`. Le app Silica
+non ne risentono perché lipstick le tratta come fullscreen: RooTitanium è l'unica
+app Qt6/xdg-shell sul device di Steve, quindi l'unica che paga.
+
+## Prossimo passo (sabato)
+
+Il bug ora è riproducibile **anche sul device di sviluppo**: riattivare
+maliit-server, usare una volta il layout Emoji, rilanciare RooTitanium e
+verificare il 1660 nel log. Da lì si collaudano in locale le cure, che vanno
+comunque rese **reattive** e non incondizionate:
+
+- scatenare la rinegoziazione **solo** da `rtGeomCheck` (`smoke-test/test.qml:27`)
+  quando il configure arriva ridotto, **all'avvio e una sola volta**, prima che
+  WebEngine abbia creato la sua subsurface;
+- primo candidato `showNormal()` + geometria esplicita da `Screen` (finestra non
+  maximized: la size la decide il client), che non passa da `showFullScreen()`;
+- su device sani il ramo non scatta mai → l'X10 II resta intatto per costruzione.
