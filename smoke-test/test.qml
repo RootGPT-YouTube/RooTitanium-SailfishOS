@@ -24,12 +24,34 @@ Window {
     // diagnostica: se il compositor ci rimpicciolisce comunque, resta nel log
     onWidthChanged: rtGeomCheck()
     onHeightChanged: rtGeomCheck()
+    property bool rtGeomFixTried: false
     function rtGeomCheck() {
         var sw = Math.min(Screen.width, Screen.height)
         var sh = Math.max(Screen.width, Screen.height)
-        if (width !== sw || height !== sh)
-            console.warn("[rt] geometria finestra " + width + "x" + height
-                         + " diversa dallo schermo " + sw + "x" + sh)
+        if (width === sw && height === sh) return
+        console.warn("[rt] geometria finestra " + width + "x" + height
+                     + " diversa dallo schermo " + sw + "x" + sh)
+        // Il compositor ci ha clampati: lipstick, dopo che maliit-server ha
+        // (ri)creato la sua surface — restart del servizio, cambio di layout
+        // (es. Emoji da long-press sulla barra spazio) — tiene riservata l'area
+        // dell'input panel e la sottrae a OGNI finestra `Maximized` aperta dopo,
+        // per sempre (solo il riavvio di lipstick o del telefono la libera).
+        // Una finestra NON maximized decide invece da sé la propria size:
+        // showNormal() + geometria esplicita da Screen. Riprodotto e verificato
+        // sul device di sviluppo il 28 lug 2026 (X10 III, 5.1.0.11): 1080x1860
+        // → 1080x2520, fascia nera azzerata, stabile.
+        // ⚠️ Un solo tentativo e SOLO su configure degradato: su un device sano
+        // questo ramo non scatta mai (verificato) — è la garanzia che l'X10 II,
+        // dove la riconfigurazione della surface fa perdere il buffer a
+        // QtWebEngine (regressione 1.4), resti intoccato. Per lo stesso motivo
+        // qui NON si usa showFullScreen(): lipstick non acka mai il fullscreen.
+        if (rtGeomFixTried) return
+        rtGeomFixTried = true
+        win.showNormal()
+        win.width = sw
+        win.height = sh
+        console.warn("[rt] geometria rinegoziata: " + win.width + "x" + win.height
+                     + " visibility=" + win.visibility)
     }
 
     // u basato sul lato corto: resta costante quando il contenuto ruota in landscape

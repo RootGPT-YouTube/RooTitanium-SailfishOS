@@ -109,7 +109,52 @@ a zero; lipstick la sottrae in permanenza alle finestre `Maximized`. Le app Sili
 non ne risentono perché lipstick le tratta come fullscreen: RooTitanium è l'unica
 app Qt6/xdg-shell sul device di Steve, quindi l'unica che paga.
 
-## Prossimo passo (sabato)
+## 28 lug — RIPRODOTTO E CURATO SUL DEVICE DI SVILUPPO
+
+Riproduzione **senza toccare il telefono** (X10 III di sviluppo, 5.1.0.11):
+
+```
+systemctl --user restart maliit-server     # basta questo!
+# poi (ri)lanciare RooTitanium
+```
+
+Il trigger vero **non è il layout Emoji**: è maliit-server che **ri-crea la sua
+surface** (restart del servizio, oppure cambio di layout come il passaggio a
+Emoji). Da quel momento lipstick tiene riservata l'area dell'input panel e la
+sottrae a ogni finestra `Maximized` aperta **dopo**, per sempre. Misure sul dev
+device: configure `1080x1860` invece di `1080x2520` → fascia nera di 660 px
+(su Steve era 860: l'altezza dipende dal panel).
+
+**Cosa NON pulisce**: tornare al layout precedente, riavviare maliit-server.
+**Cosa pulisce**: `systemctl --user restart lipstick` (verificato: torna sano
+senza reboot) — è il workaround da dare agli utenti — oppure il riavvio del telefono.
+
+### La cura, verificata
+
+In `rtGeomCheck` (`smoke-test/test.qml`), **solo** su configure degradato e
+**una sola volta**: `showNormal()` + `width`/`height` espliciti da `Screen`.
+Una finestra non-maximized decide da sé la propria size, quindi il clamp di
+lipstick non la tocca. Esito misurato sugli screenshot:
+
+| stato | prima | dopo la cura |
+|---|---|---|
+| rotto (riserva attiva) | 1080x1860, fascia 660 px | **1080x2520, fascia 0** |
+| sano (dopo restart lipstick) | 1080x2520 | ramo **non scattato** (0 volte) |
+
+Stabile a 45 s dall'avvio, nessun configure di ritorno, UI corretta. Il ramo che
+non scatta su device sano è la garanzia per l'**X10 II**: lì la surface non viene
+mai riconfigurata, quindi la regressione dello schermo nero (1.4) non può tornare.
+Niente `showFullScreen()`: lipstick non lo acka mai, su nessun device.
+
+### Cosa manca prima del rilascio
+
+- collaudo **tattile** sul device con la cura attiva e la riserva presente:
+  tastiera in-app, rotazione dal menù ⋮, minimizza/riprendi dalla home,
+  apertura di un link da un'altra app (la finestra ora è `Windowed`, non
+  `Maximized`: va verificato che lipstick non la disegni diversamente);
+- poi bump versione + RPM (pipeline `/rilascia_rootitanium`).
+
+## Prossimo passo (superato dal blocco qui sopra)
 
 Il bug ora è riproducibile **anche sul device di sviluppo**: riattivare
 maliit-server, usare una volta il layout Emoji, rilanciare RooTitanium e
