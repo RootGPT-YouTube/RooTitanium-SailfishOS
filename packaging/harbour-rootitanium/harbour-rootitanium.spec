@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.4.5
+Version:    1.4.6
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,20 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Tue Jul 28 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.6-1
+- Risolta la fascia nera in fondo allo schermo (Xperia 10 III e altri): non era un
+  difetto di visualizzazione dell'app ma dell'ambiente. Quando la tastiera di
+  sistema viene ricaricata (cambio di layout, per esempio il passaggio a Emoji con
+  una pressione lunga sulla barra spazio, oppure un riavvio del servizio), il
+  compositore continua a tenere riservata l'area della tastiera e la toglie a ogni
+  finestra aperta da quel momento in poi, finche' il telefono non viene riavviato.
+- L'app ora se ne accorge e si riprende lo schermo intero, ripetendo la richiesta
+  anche se l'area viene tolta di nuovo mentre si naviga. Su un dispositivo che non
+  ha il problema non cambia assolutamente nulla: nessuna richiesta viene inviata al
+  compositore, quindi l'Xperia 10 II non e' toccato.
+- Rimedio immediato senza aggiornare, per chi ha la fascia nera adesso: dal
+  terminale «systemctl --user restart lipstick» (l'interfaccia si ricarica in pochi
+  secondi, non serve riavviare il telefono).
 * Fri Jul 24 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.5-1
 - Corretto lo schermo nero su Xperia 10 II (e possibili altri device): la 1.4
   forzava il fullscreen reale per rimediare alla fascia nera dell'Xperia 10 III,
