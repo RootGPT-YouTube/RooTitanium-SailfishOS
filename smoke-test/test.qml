@@ -24,6 +24,7 @@ Window {
     onHeightChanged: rtGeomCheck()
     property int rtGeomFixes: 0
     property real rtGeomFixAt: 0
+    property bool rtGeomSmallLogged: false
     function rtGeomCheck() {
         var sw = Math.min(Screen.width, Screen.height)
         var sh = Math.max(Screen.width, Screen.height)
@@ -33,6 +34,27 @@ Window {
         // restano fuori la geometria di default della Window prima della
         // mappatura (500x500) e qualunque stato transitorio.
         if (width !== sw || height >= sh || height < sh / 2) return
+        // ⚠️ E solo se il pezzo mancante è grande quanto una tastiera. Su alcuni
+        // porting il compositor riserva stabilmente una striscia piccola (cutout /
+        // punch-hole): POCO M4 Pro 4G (fleur), 9 ago 2026 → configure 1080x2274 su
+        // schermo 1080x2400, 126 px = 5%. Lì la rinegoziazione è dannosa: la
+        // finestra torna alta 2400 ma resta ancorata sotto la striscia riservata,
+        // quindi sfora in fondo allo schermo (tastiera in-app tagliata) e per di
+        // più lipstick ri-clampa subito → ping-pong fino al tetto. La riserva
+        // dell'input panel dell'X10 III era invece 660 px su 2520 = 26%: la soglia
+        // al 15% separa i due casi. Sotto soglia si tiene la geometria del
+        // compositor: si perde la striscia (nera), ma il contenuto resta integro.
+        if (sh - height < sh * 0.15) {
+            if (!rtGeomSmallLogged) {
+                rtGeomSmallLogged = true
+                console.warn("[rt] clamp piccolo del compositor: finestra " + width + "x"
+                             + height + " su schermo " + sw + "x" + sh + " ("
+                             + (sh - height) + " px, "
+                             + Math.round((sh - height) * 100 / sh) + "%) — accettato,"
+                             + " non è la riserva dell'input panel")
+            }
+            return
+        }
         console.warn("[rt] geometria finestra " + width + "x" + height
                      + " diversa dallo schermo " + sw + "x" + sh)
         // Il compositor ci ha clampati: lipstick, dopo che maliit-server ha

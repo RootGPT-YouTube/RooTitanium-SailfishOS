@@ -189,3 +189,53 @@ comunque rese **reattive** e non incondizionate:
 - primo candidato `showNormal()` + geometria esplicita da `Screen` (finestra non
   maximized: la size la decide il client), che non passa da `showFullScreen()`;
 - su device sani il ramo non scatta mai → l'X10 II resta intatto per costruzione.
+
+## 9 ago 2026 — regressione su porting con cutout (POCO M4 Pro 4G) e soglia del 15%
+
+Segnalazione dell'utente su **Xiaomi POCO M4 Pro 4G** (`fleur`), 1.4.6 installata:
+fascia nera in alto **e tastiera in-app tagliata in fondo**. Misura sullo
+screenshot (1080x2400): 93 px di nero in alto, e in basso manca esattamente
+altrettanto — cioè la finestra è alta quanto lo schermo ma **ancorata sotto** la
+striscia riservata, quindi sfora oltre il bordo inferiore.
+
+Diagnosi sul device (ssh, `QT_FORCE_STDERR_LOGGING=1`, bundle di sistema intatto:
+`test.qml` patchato in `/tmp/rtdiag` + copia di `run.sh` con `HERE` fisso e
+`argv[0]` forgiato su `/tmp/rtdiag`, così `main.cpp` carica il QML di prova):
+
+```
+[rt] geometria finestra 1080x2274 diversa dallo schermo 1080x2400
+[rt] geometria rinegoziata (1) … (8)        ← ping-pong fino al tetto
+```
+
+**Il clamp non è la riserva dell'input panel**: sono 126 px, il 5% dell'altezza —
+la striscia che il compositor del porting riserva stabilmente (cutout/punch-hole).
+La cura dell'X10 III scattava lo stesso, riportava la finestra a 2400 senza
+spostarne l'origine (il client xdg-shell non decide la propria posizione) e
+lipstick ri-clampava subito: fascia nera **più** contenuto tagliato **più**
+ping-pong.
+
+### La correzione
+
+In `rtGeomCheck` si rinegozia solo se il pezzo mancante è grande quanto una
+tastiera: **gap ≥ 15% dell'altezza dello schermo**. Sotto soglia si accetta la
+geometria del compositor (si perde la striscia, ma il contenuto resta integro) e
+si logga una riga sola.
+
+| device | configure | gap | % | rinegozia |
+|---|---|---|---|---|
+| X10 III, riserva input panel | 1080x1860 su 2520 | 660 px | 26,2% | **sì** |
+| POCO M4 Pro, cutout | 1080x2274 su 2400 | 126 px | 5,3% | **no** |
+
+### Verifica sui due device (9 ago 2026)
+
+- **POCO M4 Pro** (`fleur`, 1080x2400): una sola riga
+  `[rt] clamp piccolo del compositor: finestra 1080x2274 … (126 px, 5%) —
+  accettato`, nessuna rinegoziazione, nessun ping-pong.
+- **X10 III** (`xqbt52`, 1080x2520): bug riprodotto con
+  `systemctl --user restart maliit-server`, poi rilancio dell'app → clamp
+  `1080x1860` intercettato, **1 rinegoziazione**, geometria stabile `1080x2520`
+  a ~50 s. Comportamento identico a 1.4.6. Stato di lipstick ripulito dopo il
+  test con `systemctl --user restart lipstick`.
+
+La condizione è più stretta, non più larga: i casi in cui la cura non scattava
+(X10 II incluso) restano intatti per costruzione.
