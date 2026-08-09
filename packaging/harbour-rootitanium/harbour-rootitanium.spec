@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.4.6
+Version:    1.4.7
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,19 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sun Aug 09 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.7-1
+- Corretto un difetto introdotto dalla 1.4.6 su alcuni telefoni (per esempio i
+  porting con la fotocamera dentro lo schermo, come lo Xiaomi POCO M4 Pro 4G):
+  l'app vedeva una striscia in alto riservata dal sistema, la scambiava per la
+  tastiera e cercava di riprendersela, finendo per sporgere oltre il bordo
+  inferiore dello schermo. Il risultato era una fascia nera in alto e la tastiera
+  dell'app tagliata in basso.
+- Ora l'app distingue le due cose: si riprende lo schermo solo quando l'area
+  sottratta e' grande quanto una tastiera. Dove la striscia riservata e' piccola
+  la lascia al sistema e il contenuto resta tutto visibile.
+- Sui telefoni gia' a posto e su quelli con la fascia nera della 1.4.6 (Xperia
+  10 III e simili) non cambia nulla: verificato su entrambi.
+
 * Tue Jul 28 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.6-1
 - Risolta la fascia nera in fondo allo schermo (Xperia 10 III e altri): non era un
   difetto di visualizzazione dell'app ma dell'ambiente. Quando la tastiera di
