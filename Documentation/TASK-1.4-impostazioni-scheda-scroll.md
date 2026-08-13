@@ -1,6 +1,16 @@
 # TASK 1.4 — Impostazioni: scheda dedicata + niente scroll-to-top al toggle
 
-Stato: **CODICE SCRITTO E DEPLOYATO, DA COLLAUDARE A MANO** (22 lug 2026).
+Stato: ✅ **FATTA — task archiviata il 13 ago 2026.**
+Il collaudo manuale che mancava risulta eseguito dall'utente già il **22 lug
+2026** (codice `0553c0d`, rilascio `10f3758`, RPM 1.4-1): Menu › Impostazioni
+apre una scheda nuova e i toggle non riportano più in cima. Era questo documento
+a essere rimasto indietro, non il lavoro. Sotto resta la storia, per riferimento.
+
+Nota: il fix contestuale della fascia nera citato in fondo a questa sezione è
+stato poi risolto per altra via nella 1.4.7-1 — cfr.
+[[rootitanium-fascia-nera-x10iii]] e `TASK-4-fascia-nera-x10iii-lingua.md`.
+
+---
 
 ## Stato esecuzione (22 lug 2026)
 Implementato in `smoke-test/test.qml` (commit di checkpoint), deployato sul device
