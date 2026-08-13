@@ -47,6 +47,11 @@ it lean.
 - Source / corresponding source: https://www.qt.io/ (6.8.3) built via
   https://github.com/sailfishos-chum/qt6-qtwebengine
 - © The Qt Company Ltd. and contributors — https://www.qt.io/licensing/
+- The Sailfish OS packaging and patches used to build it (EGL/GL fixes, aarch64
+  fixes, system openh264, …) come from `sailfishos-chum/qt6-qtwebengine`,
+  authored mainly by **Rinigus**, with contributions from **Adam Pigg (piggz)**
+  and **Peter G. (nephros)**. RooTitanium only overlays small packaging changes
+  on top (see `packaging/qt6-qtwebengine-sfos/NOTE.md`).
 
 **Chromium** (included inside Qt WebEngine as `src/3rdparty`)
 - Role: the web rendering/JS engine (Chromium 122 base) inside QtWebEngine

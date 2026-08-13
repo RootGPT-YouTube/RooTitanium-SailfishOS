@@ -101,6 +101,10 @@ of GB, hours) and its source and build trees are **not** kept in this repository
    over the piggz Qt 6 stack, cross-compiled natively via `sb2` (see the guarded
    build helper under `packaging/qt6-qtwebengine-sfos/`). This produces the
    QtWebEngine libraries, `QtWebEngineProcess`, resources and locales.
+   The SFOS packaging and patches for the engine are the work of **Rinigus**
+   (with **Adam Pigg** and **Peter G. / nephros**) — RooTitanium only overlays
+   small packaging changes on top. Thanks to them: without that work there would
+   be no Qt 6 engine on Sailfish OS at all.
 3. **Assemble the bundle** into `/home/rootitanium/` layout (the Qt 6 runtime,
    `webengine-smoke` browser binary, `test.qml`, resources, trimmed locales).
 4. **Build the app RPM**:
@@ -239,6 +243,10 @@ upstream indicata in [NOTICE.md](NOTICE.md).
    sopra lo stack Qt 6 di piggz, cross-compilato in modo nativo via `sb2` (vedi lo
    script di build con guardia sotto `packaging/qt6-qtwebengine-sfos/`). Produce le
    librerie QtWebEngine, `QtWebEngineProcess`, risorse e locali.
+   Il packaging SFOS e le patch del motore sono opera di **Rinigus** (con **Adam
+   Pigg** e **Peter G. / nephros**) — RooTitanium ci sovrappone solo piccole
+   modifiche di packaging. Grazie a loro: senza quel lavoro su Sailfish OS non ci
+   sarebbe alcun motore Qt 6.
 3. **Assembla il bundle** nel layout `/home/rootitanium/` (runtime Qt 6, binario
    del browser `webengine-smoke`, `test.qml`, risorse, locali ridotte).
 4. **Compila l'RPM dell'app**:

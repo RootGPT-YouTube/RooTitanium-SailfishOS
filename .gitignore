@@ -14,3 +14,11 @@ RPMS/
 
 # moc generato compilando webengine-smoke (sb2)
 smoke-test/main.moc
+
+# Log del device tirato giu' per diagnosi: puo' contenere gli URL visitati
+# dall'utente — il repo e' PUBBLICO, non deve entrarci mai.
+/rootitanium.log
+
+# Specchio delle note di lavoro (skill /memory_rootitanium): contiene IP privati
+# dei device e dettagli di rete di casa. Copia locale, mai nel repo pubblico.
+/memory/
