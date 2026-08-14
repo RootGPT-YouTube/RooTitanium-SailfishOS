@@ -113,22 +113,35 @@ ninja build.ninja && grep -E 'sandbox|pointer_compression' gen/v8/v8_features.js
 
 ## 4. Build
 
+**Un comando solo**, che porta con sé guardia termica e ripresa dai blocchi noti:
+
+```bash
+packaging/qt6-qtwebengine-sfos/scripts/build-con-ripresa.sh
+```
+
+Riconosce il sintomo nel log, applica il rimedio da `apply-build-fixes.sh` e
+riprende (la build è incrementale). Si ferma e chiama una persona **solo** su un
+errore non riconosciuto. Sotto resta il modo manuale, se serve pilotare a mano:
+
 ```bash
 VER=6.8.4 packaging/qt6-qtwebengine-sfos/scripts/apply-build-fixes.sh ninja
 packaging/qt6-qtwebengine-sfos/scripts/build-j16-con-guardia.sh    # 12 core + guardia VRM
 ```
 
+⚠️ `toolchain.ninja` **non esiste finché la build non ha fatto il `gn gen`**: il
+passo `ninja` fallisce se lanciato subito dopo il configure. Il primo giro di
+build lo genera; da lì in poi il passo va rilanciato dopo **ogni** gn-regen — è
+proprio quello che fa il ciclo di ripresa.
+
 Punti in cui la build si può fermare, in ordine storico di comparsa:
 
-| Sintomo | Rimedio |
-|---|---|
-| `v8_context_snapshot_generator`, qemu signal 5 (~92%) | `apply-build-fixes.sh snapshot`, poi riprendi |
-| `ninja: error: WriteFile(...): File name too long` | è tornato un gn-regen: rilancia `apply-build-fixes.sh ninja` |
-| `final link failed: memory exhausted` | idem: il flag di link si perde se cmake rigenera `build.ninja` |
-| crash node sotto qemu in fasi devtools | dovrebbe essere coperto da 0303/0304; se è un file nuovo, stesso schema (in-process / sequenziale) |
-| qualcosa su `qmlcachegen` con permessi | incognita nota, vedi `patches/README.md` §C |
-
-Dopo **ogni** `gn gen` o reconfigure: rilanciare il passo `ninja`.
+| Sintomo | Rimedio | automatico |
+|---|---|---|
+| `cc1plus: fatal error: …/.rcc/qmlcache/…cpp: Permission denied` | `apply-build-fixes.sh qmlcache` (i .cpp di qmlcachegen nascono a 000, vedi `patches/README.md` §C) | ✔ |
+| `v8_context_snapshot_generator`, qemu signal 5 (~92%) | `apply-build-fixes.sh snapshot`, poi riprendi | ✔ |
+| `ninja: error: WriteFile(...): File name too long` | è tornato un gn-regen: rilancia `apply-build-fixes.sh ninja` | ✔ |
+| `final link failed: memory exhausted` | idem: il flag di link si perde se cmake rigenera `build.ninja` | ✔ |
+| crash node sotto qemu in fasi devtools | dovrebbe essere coperto da 0303/0304; se è un file nuovo, stesso schema (in-process / sequenziale) | ✗ |
 
 ## 5. Verifica e pacchetto
 

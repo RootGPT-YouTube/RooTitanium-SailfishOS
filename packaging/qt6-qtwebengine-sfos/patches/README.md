@@ -37,8 +37,32 @@ Il path di lavoro resta `/home/RootGPT/Developing/SailfishOS/RooTitanium/`
 per scelta esplicita dell'utente (20 lug 2026): il passo `ninja` è quindi
 **strutturale**, non un ripiego temporaneo.
 
-## C. Incognita nota
+## C. Permessi 000 di qmlcachegen — non è più un'incognita
 
-Nel riepilogo della build del 7-8 luglio compare un blocco **«permessi 000
-qmlcachegen»** di cui non è rimasta la descrizione. Se si ripresenta va
-ri-diagnosticato da zero e documentato qui.
+Nel riepilogo della build del 7-8 luglio compariva un blocco **«permessi 000
+qmlcachegen»** di cui non era rimasta la descrizione. **Si è ripresentato sulla
+6.8.4 il 14 ago 2026** ed è ora identificato.
+
+**Sintomo.** La build si ferma poco dopo l'avvio con, per ogni file QML del
+modulo `WebEngineQuickDelegatesQml`:
+
+```
+cc1plus: fatal error: .../src/webenginequick/ui/.rcc/qmlcache/
+         WebEngineQuickDelegatesQml_AlertDialog_qml.cpp: Permission denied
+```
+
+**Causa.** I `.cpp` che `qmlcachegen` genera sotto `.rcc/qmlcache/` nascono con
+modo `----------` (000), e l'edge ninja successivo non riesce ad aprirli. Non è
+l'umask del container: gli altri file prodotti dallo stesso passo (`.aotstats`,
+`.aotstatslist`) nascono regolari (`rw-rw-r--`) nella stessa directory. È il modo
+in cui quel tool scrive quel file sotto sb2/qemu.
+
+**Rimedio.** `apply-build-fixes.sh qmlcache` — porta a 644 tutto ciò che nel
+build tree è a 000. Sulla 6.8.4 erano 16 file, tutti di quel modulo.
+
+**Perché non è una patch.** I file sono generati; una patch sui sorgenti non li
+raggiunge, e vengono riscritti a ogni rigenerazione.
+
+**Ripresa automatica.** `scripts/build-con-ripresa.sh` riconosce il sintomo nel
+log della build, applica il rimedio e riprende (la build è incrementale), così il
+blocco non richiede più un intervento a mano a ogni fermata.
