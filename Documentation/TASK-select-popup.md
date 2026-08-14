@@ -1,9 +1,9 @@
 # TASK menù a tendina — il popup dei `<select>` HTML non è selezionabile
 
-Stato: **IMPLEMENTATA e COLLAUDATA SUL DEVICE il 14 ago 2026** (X10 III).
-Soluzione A realizzata in QML puro, nessun rebuild del motore.
-Resta da fare solo la prova col dito sulla riga del foglio: la UI QML non è
-tappabile da remoto (limite noto, [[sfos-lancio-app-via-ssh]] §6).
+Stato: ✅ **FATTA — 14 ago 2026.** Implementata in QML puro (nessun rebuild del
+motore), collaudata sul device via CDP e **confermata dall'utente col dito** su
+X10 III: i menù a tendina si aprono e la voce toccata viene selezionata.
+Resta da imbarcare nell'RPM al prossimo rilascio.
 Precedenza: **da fare PRIMA della [TASK Chromium 140](TASK-chromium-140.md)**
 (richiesta esplicita dell'utente). Consigliata anche prima della
 [TASK ad-block](TASK-adblock.md): qui si rompe l'uso normale di molti siti,
@@ -182,9 +182,9 @@ leggibile (`auto_brand` → "Auto brand"), scartando gli identificatori generati
 (`ctl00$…`, `select2-…`); se non resta nulla di sensato il titolo è "Scegli".
 Riverificato sul device.
 
-⚠️ Il tap con il **dito** sulla riga del foglio non è verificabile da remoto (la
-UI QML non risponde né a CDP né a lipstick): è l'unico passo che resta
-all'utente. Tutto ciò che sta a monte e a valle di quel tocco è verificato.
+Il tap con il **dito** sulla riga del foglio non è verificabile da remoto (la UI
+QML non risponde né a CDP né a lipstick): **provato dall'utente il 14 ago 2026 e
+funzionante.** Il difetto è chiuso.
 
 ## Fatto quando
 
