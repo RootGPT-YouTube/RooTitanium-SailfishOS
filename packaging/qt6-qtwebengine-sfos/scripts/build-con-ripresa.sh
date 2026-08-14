@@ -30,6 +30,12 @@ nota() { echo "$(date '+%F %T')  $*" | tee -a "$LOG"; }
 
 nota "=== build con ripresa, versione $VER, massimo $MAX_GIRI giri ==="
 
+# Rete di sicurezza contro i giri a vuoto: se lo stesso rimedio si ripete senza
+# che la build sia avanzata, il rimedio non c'entra col guasto — meglio fermarsi
+# e chiamare una persona che consumare tutti i giri (successo il 14 ago 2026).
+rimedio_prec=""
+avanz_prec=""
+
 for giro in $(seq 1 "$MAX_GIRI"); do
     nota "--- giro $giro: avvio build ---"
     "$SCRIPTS/build-j16-con-guardia.sh" >/dev/null 2>&1
@@ -39,37 +45,55 @@ for giro in $(seq 1 "$MAX_GIRI"); do
         exit 0
     fi
 
-    coda=$(tail -c 20000 "$BUILDLOG" 2>/dev/null)
+    # Si guardano SOLO le righe di errore, non tutto il log: la lista degli
+    # argomenti gn contiene stringhe come "use_v8_context_snapshot=true" che
+    # facevano scattare il rimedio sbagliato (visto il 14 ago 2026: un
+    # "-- GN FAILED" veniva letto come crash dello snapshot V8).
+    coda=$(grep -E "^FAILED:|^ninja: |fatal error:|CMake Error|GN FAILED|error:" "$BUILDLOG" 2>/dev/null | tail -30)
+    avanz=$(grep -oE '\[[0-9]+/[0-9]+\]' "$BUILDLOG" 2>/dev/null | tail -1)
+
     case "$coda" in
         # qmlcachegen scrive i .cpp a permessi 000 e cc1plus non li apre
         *"Permission denied"*)
-            nota "giro $giro: permessi 000 (qmlcachegen) → rimedio 'qmlcache'"
-            "$SCRIPTS/apply-build-fixes.sh" qmlcache 2>&1 | tee -a "$LOG"
-            ;;
+            rimedio=qmlcache ;;
         # gn-regen: i nomi .rsp tornano lunghi oltre NAME_MAX
         *"File name too long"*)
-            nota "giro $giro: nomi rsp oltre NAME_MAX → rimedio 'ninja'"
-            "$SCRIPTS/apply-build-fixes.sh" ninja 2>&1 | tee -a "$LOG"
-            ;;
+            rimedio=ninja ;;
         # stessa causa: il flag di link si perde se build.ninja viene rigenerato
         *"memory exhausted"*|*"final link failed"*)
-            nota "giro $giro: link senza --no-keep-memory → rimedio 'ninja'"
-            "$SCRIPTS/apply-build-fixes.sh" ninja 2>&1 | tee -a "$LOG"
-            ;;
-        # il generatore dello snapshot V8 trappa sotto il qemu del target
-        *v8_context_snapshot*)
-            nota "giro $giro: v8_context_snapshot_generator → rimedio 'snapshot'"
-            "$SCRIPTS/apply-build-fixes.sh" snapshot 2>&1 | tee -a "$LOG"
-            ;;
+            rimedio=ninja ;;
+        # il generatore dello snapshot V8 trappa sotto il qemu del target.
+        # NB: il nome del BINARIO (…_generator), non l'argomento gn omonimo
+        *v8_context_snapshot_generator*)
+            rimedio=snapshot ;;
         *)
-            nota "=== FERMO al giro $giro: errore NON riconosciuto (exit $rc). Serve una persona. ==="
-            nota "Ultime righe di $BUILDLOG:"
-            grep -iE "FAILED|error:|ninja: " "$BUILDLOG" 2>/dev/null | tail -5 | tee -a "$LOG"
-            command -v notify-send >/dev/null 2>&1 && \
-                notify-send -u critical "RooTitanium build $VER" "Fermo su errore non riconosciuto (giro $giro)"
-            exit "$rc"
-            ;;
+            rimedio="" ;;
     esac
+
+    if [ -z "$rimedio" ]; then
+        nota "=== FERMO al giro $giro: errore NON riconosciuto (exit $rc). Serve una persona. ==="
+        nota "Ultime righe di errore:"
+        echo "$coda" | tail -5 | tee -a "$LOG"
+        command -v notify-send >/dev/null 2>&1 && \
+            notify-send -u critical "RooTitanium build $VER" "Fermo su errore non riconosciuto (giro $giro)"
+        exit "$rc"
+    fi
+
+    if [ "$rimedio" = "$rimedio_prec" ] && [ "$avanz" = "$avanz_prec" ]; then
+        nota "=== FERMO al giro $giro: rimedio '$rimedio' gia' applicato e build ferma a ${avanz:-n/d}. Non e' questo il guasto. ==="
+        echo "$coda" | tail -5 | tee -a "$LOG"
+        command -v notify-send >/dev/null 2>&1 && \
+            notify-send -u critical "RooTitanium build $VER" "Rimedio '$rimedio' inefficace: build ferma"
+        exit "$rc"
+    fi
+
+    nota "giro $giro: rimedio '$rimedio' (avanzamento ${avanz:-n/d})"
+    if ! "$SCRIPTS/apply-build-fixes.sh" "$rimedio" 2>&1 | tee -a "$LOG"; then
+        nota "=== FERMO: il rimedio '$rimedio' e' fallito. ==="
+        exit 1
+    fi
+    rimedio_prec=$rimedio
+    avanz_prec=$avanz
 done
 
 nota "=== FERMO: esauriti i $MAX_GIRI giri senza completare. ==="

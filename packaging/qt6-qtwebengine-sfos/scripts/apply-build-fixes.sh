@@ -40,6 +40,14 @@ die() { echo "ERRORE: $*" >&2; exit 1; }
 fix_gn() {
   local f=$GNDIR/args.gn
   [ -f "$f" ] || die "args.gn non trovato: $f — hai gia' fatto il configure?"
+  # TRAPPOLA (scoperta sulla 6.8.4, 14 ago 2026): args.gn puo' NON finire con
+  # newline. Senza questa guardia il primo flag si incolla all'ultima riga
+  # ("build_webnn_with_xnnpack=falsev8_enable_sandbox=false") e gn muore con
+  # "ERROR at build arg file ...: Operator ..." → "-- GN FAILED".
+  if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then
+    echo >> "$f"
+    echo "  + newline finale mancante in args.gn (aggiunta)"
+  fi
   local added=0
   for flag in v8_enable_sandbox=false \
               v8_enable_pointer_compression=false \
