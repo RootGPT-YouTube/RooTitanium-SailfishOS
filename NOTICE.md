@@ -36,15 +36,15 @@ it lean.
 - License: GPL-3.0-or-later — see [LICENSE](LICENSE)
 - Source: https://github.com/RootGPT-YouTube/RooTitanium-SailfishOS
 
-**Qt 6 / Qt WebEngine** (`qt6-qtwebengine` 6.8.3)
+**Qt 6 / Qt WebEngine** (`qt6-qtwebengine` 6.8.4)
 - Role: the browser engine (QtWebEngine + Chromium) and its Qt 6 runtime
   (QtCore/Gui/Qml/Quick/WebEngineQuick/WebEngineCore, QtVirtualKeyboard, plugins)
-- Version: 6.8.3
+- Version: 6.8.4 (built from the `v6.8.4-lts-lgpl` tag)
 - License: LGPL-3.0-only (with parts under GPL-2.0-or-later / GPL-3.0-only)
 - Distribution: **bundled** in the RPM under `/home/rootitanium/lib/`,
   `/home/rootitanium/libexec/`, `/home/rootitanium/qml/`, `/home/rootitanium/plugins/`;
   loaded via the launcher's `LD_LIBRARY_PATH` / `QML2_IMPORT_PATH`
-- Source / corresponding source: https://www.qt.io/ (6.8.3) built via
+- Source / corresponding source: https://www.qt.io/ (6.8.4) built via
   https://github.com/sailfishos-chum/qt6-qtwebengine
 - © The Qt Company Ltd. and contributors — https://www.qt.io/licensing/
 - The Sailfish OS packaging and patches used to build it (EGL/GL fixes, aarch64
@@ -54,13 +54,16 @@ it lean.
   on top (see `packaging/qt6-qtwebengine-sfos/NOTE.md`).
 
 **Chromium** (included inside Qt WebEngine as `src/3rdparty`)
-- Role: the web rendering/JS engine (Chromium 122 base) inside QtWebEngine
+- Role: the web rendering/JS engine (Chromium 122 base) inside QtWebEngine,
+  carrying the security fixes backported up to Chromium 138.0.7204.96 — that
+  backporting work is done by the Chromium project and by The Qt Company, which
+  maintains it for the 6.8 branch
 - License: BSD-3-Clause, plus the licenses of its own `third_party` components
 - Distribution: compiled into `libQt6WebEngineCore.so` and `QtWebEngineProcess`,
   with `icudtl.dat`, the `.pak` resources and `v8_context_snapshot.bin`, all
   bundled in the RPM
 - Source: https://chromium.googlesource.com/chromium/src/ and the
-  QtWebEngine 6.8.3 snapshot
+  QtWebEngine 6.8.4 snapshot
 - © The Chromium Authors
 
 **Readability.js** (mozilla/readability 0.6.0)
