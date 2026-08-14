@@ -1,5 +1,10 @@
 # TASK 4 — Messaggio a Steve: dati da raccogliere nei due boot (26 lug 2026)
 
+Stato: ✅ **SUPERATA — archiviata il 14 ago 2026.** Questa era la raccolta dati
+per diagnosticare la fascia nera; la fascia nera è stata risolta per altra via
+nella 1.4.7-1 (soglia 15% in `rtGeomCheck`), quindi i dati chiesti a Steve non
+servono più. Resta come storia dello scambio.
+
 Riferimento: `TASK-4-fascia-nera-x10iii-lingua.md`.
 Scopo: distinguere **race di avvio maliit-server ↔ prima finestra xdg-shell** da
 **stato incastrato in dconf**. Le due domande decisive sono il diff di

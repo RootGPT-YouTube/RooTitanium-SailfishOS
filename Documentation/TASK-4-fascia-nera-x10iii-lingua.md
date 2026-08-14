@@ -1,6 +1,16 @@
 # TASK 4 — Fascia nera X10 III: l'indizio del cambio lingua (26 lug 2026)
 
-Stato: **aperta**, ma con **ricetta di riproduzione** (agg. 27 lug, vedi in fondo).
+Stato: ✅ **RISOLTA — task archiviata il 14 ago 2026.**
+La cura è in `rtGeomCheck` (`showNormal` + geometria da `Screen`, rinegoziata solo
+se il compositore sottrae ≥15% dell'altezza), rilasciata nella **1.4.7-1** il 9 ago
+2026 e verificata su X10 III e POCO M4 Pro — la verifica sui due device è in fondo
+a questo documento. Era l'intestazione a essere rimasta indietro, non il lavoro.
+Il documento resta come storia dell'indagine (l'indizio del cambio lingua, la
+race con maliit-server, le misure di clamp).
+⚠️ Prima di riaprire qualsiasi ipotesi sulla fascia nera: farsi mandare
+`/tmp/rootitanium.log`. Cfr. [[rootitanium-fascia-nera-x10iii]].
+
+Stato storico: **aperta**, ma con **ricetta di riproduzione** (agg. 27 lug, vedi in fondo).
 Contesto precedente: `showFullScreen()` (1.4) non risolve sul device di Steve ed è
 stato rimosso in 1.4.5 perché causava schermo nero su X10 II (Adreno 508).
 La 1.4.5 torna al rendering della 1.3 e aggiunge solo la pagina Impostazioni/About:
