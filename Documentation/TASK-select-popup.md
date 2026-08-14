@@ -1,8 +1,9 @@
 # TASK menù a tendina — il popup dei `<select>` HTML non è selezionabile
 
-Stato: **IMPLEMENTATA il 14 ago 2026 — in attesa di collaudo sul device**
-(telefono spento/irraggiungibile al momento della scrittura: `No route to host`).
+Stato: **IMPLEMENTATA e COLLAUDATA SUL DEVICE il 14 ago 2026** (X10 III).
 Soluzione A realizzata in QML puro, nessun rebuild del motore.
+Resta da fare solo la prova col dito sulla riga del foglio: la UI QML non è
+tappabile da remoto (limite noto, [[sfos-lancio-app-via-ssh]] §6).
 Precedenza: **da fare PRIMA della [TASK Chromium 140](TASK-chromium-140.md)**
 (richiesta esplicita dell'utente). Consigliata anche prima della
 [TASK ad-block](TASK-adblock.md): qui si rompe l'uso normale di molti siti,
@@ -154,9 +155,36 @@ indice e opzioni disabilitate corretti, `input`+`change` sparati sulla scelta) e
 casi limite (una sola apertura per mousedown+click; `multiple`, `size=4`,
 `disabled` non intercettati). Bilanciamento del QML verificato.
 
-**Resta da fare sul telefono**: la Fase 0 qui sopra vale ora come verifica del
-risultato, non più della causa — aprire cerchigomme.it, controllare che compaia
-il foglio nostro e non il popup di Chromium, e che la cascata dei filtri reagisca.
+## Collaudo sul device (X10 III, 14 ago 2026)
+
+`test.qml` copiato via scp su `/home/rootitanium/`, app lanciata da ssh con
+l'ambiente della sessione (`systemctl --user show-environment`) e DevTools su
+9222, pagina guidata via CDP con **tap touch veri**
+(`Input.dispatchTouchEvent`), UI verificata con screenshot lipstick.
+
+Su **cerchigomme.it**, tutto passato:
+
+| verifica | esito |
+|---|---|
+| user script iniettato (`window.__rtSel`) | ✔ |
+| `<select>` nella pagina | 20 trovati |
+| tap reale sul `<select>` marca auto (94 opzioni) | payload completo: titolo, indice corrente, 94 voci con stato `disabled` |
+| popup nativo di Chromium | **non si apre più** |
+| foglio QML a schermo | ✔ header, lista scrollabile, spunta sulla voce corrente, Annulla |
+| scrittura del valore (`__rtSelApply`) | `-1` → `audi`, testo "AUDI" |
+| eventi | `input` e `change` sparati |
+| **cascata del sito** | ✔ i modelli sono passati da **1 a 23 opzioni** |
+
+Un difetto trovato e corretto durante il collaudo: il foglio mostrava come
+titolo il nome tecnico del campo (`auto_brand`). Ora si prova `aria-label`,
+`<label for>`, label antenato, `title`, e solo in ultima istanza il `name` reso
+leggibile (`auto_brand` → "Auto brand"), scartando gli identificatori generati
+(`ctl00$…`, `select2-…`); se non resta nulla di sensato il titolo è "Scegli".
+Riverificato sul device.
+
+⚠️ Il tap con il **dito** sulla riga del foglio non è verificabile da remoto (la
+UI QML non risponde né a CDP né a lipstick): è l'unico passo che resta
+all'utente. Tutto ciò che sta a monte e a valle di quel tocco è verificato.
 
 ## Fatto quando
 
