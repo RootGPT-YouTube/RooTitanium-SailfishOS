@@ -10,6 +10,7 @@
 #   ./apply-build-fixes.sh gn        # DOPO il configure, PRIMA della build
 #   ./apply-build-fixes.sh ninja     # DOPO ogni gn-regen (rsp + link flags)
 #   ./apply-build-fixes.sh snapshot  # SOLO se fallisce v8_context_snapshot_generator
+#   ./apply-build-fixes.sh qmlcache  # SOLO se cc1plus dice "Permission denied" su .rcc/qmlcache
 #   ./apply-build-fixes.sh all       # gn + ninja
 #
 # Perche' non stanno nello spec: args.gn/toolchain.ninja/build.ninja sono
@@ -108,13 +109,36 @@ fix_snapshot() {
   ls -l "$GNDIR/v8_context_snapshot.bin"
 }
 
+# ── 5) qmlcachegen: i .cpp generati nascono con permessi 000 ────────────────
+# Riprodotto sulla 6.8.4 il 14 ago 2026 (era l'incognita senza descrizione del
+# riepilogo 7-8 lug, vedi ../patches/README.md §C): qmlcachegen scrive i suoi
+# .cpp sotto .rcc/qmlcache/ con modo 000, e subito dopo cc1plus non riesce ad
+# aprirli ("fatal error: ...: Permission denied"). Gli altri file dello stesso
+# passo (.aotstats) nascono regolari, quindi non e' l'umask: e' come il tool
+# crea QUEL file sotto sb2/qemu.
+# Rimedio: rendere leggibile tutto cio' che e' a 000 nel build tree. Non tocca
+# nient'altro. Si rilancia ogni volta che la build si ferma con quell'errore
+# (i file rigenerati ripresentano il problema).
+fix_qmlcache() {
+  local n
+  n=$(find "$BT" -type f -perm 000 | wc -l)
+  if [ "$n" -eq 0 ]; then
+    echo "  = nessun file a permessi 000"
+  else
+    find "$BT" -type f -perm 000 -exec chmod 644 {} +
+    echo "  + $n file riportati a 644 (qmlcachegen)"
+  fi
+}
+
 case "${1:-all}" in
   gn)       echo "== args.gn (V8)";        fix_gn ;;
   ninja)    echo "== toolchain.ninja";     fix_rsp; echo "== build.ninja (link)"; fix_link ;;
   snapshot) echo "== v8_context_snapshot"; fix_snapshot ;;
+  qmlcache) echo "== permessi qmlcachegen"; fix_qmlcache ;;
   all)      echo "== args.gn (V8)";        fix_gn
             echo "== toolchain.ninja";     fix_rsp
-            echo "== build.ninja (link)";  fix_link ;;
-  *) die "uso: $0 {gn|ninja|snapshot|all}" ;;
+            echo "== build.ninja (link)";  fix_link
+            echo "== permessi qmlcachegen"; fix_qmlcache ;;
+  *) die "uso: $0 {gn|ninja|snapshot|qmlcache|all}" ;;
 esac
 echo "fatto."
