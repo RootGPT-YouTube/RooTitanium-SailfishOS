@@ -66,4 +66,8 @@ export NINJA_PATH=/usr/bin/ninja
   -DFEATURE_qtwebengine_widgets_build:BOOL=OFF \
   -DFEATURE_qtpdf_widgets_build:BOOL=OFF \
   -DQT_BUILD_EXAMPLES:BOOL=OFF \
-  -DQT_INSTALL_EXAMPLES_SOURCES=OFF
+  -DQT_INSTALL_EXAMPLES_SOURCES=OFF \
+  "${SRCDIR:-.}"
+# Configure IN-PLACE: si lancia dalla dir dei sorgenti scompattati
+# (BUILD/qt6-qtwebengine-<ver>/upstream), come il tree 6.8.3 — CMAKE_HOME_DIRECTORY
+# e la build dir coincidono. Il path sorgente mancava: senza, cmake non parte.

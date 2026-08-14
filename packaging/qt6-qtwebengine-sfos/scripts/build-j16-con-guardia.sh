@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build completa qt6-qtwebengine 6.8.3 (Fase 2) con guardia termica VRM.
+# Build completa qt6-qtwebengine (versione dallo spec) con guardia termica VRM.
 #
 # Uso: ./build-j16-con-guardia.sh
 #
@@ -24,7 +24,12 @@ set -u
 
 # Root del repo, derivata dalla posizione dello script (scripts/ è 3 livelli sotto)
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-6.8.3/upstream
+# Versione del motore: si legge dallo spec, così build e pacchetto non divergono.
+# Si può forzare con VER=6.8.3 ./build-j16-con-guardia.sh (es. per ricompilare il
+# tree vecchio senza toccare lo spec).
+VER=${VER:-$(sed -n 's/^Version: *//p' "$REPO/packaging/qt6-qtwebengine-sfos/rpm/qt6-qtwebengine.spec" | head -1)}
+[ -n "$VER" ] || { echo "ERRORE: versione non determinata (spec illeggibile?)"; exit 1; }
+BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-$VER/upstream
 TARGET=SailfishOS-5.1.0.11-aarch64
 ENGINE=sailfish-sdk-build-engine_RootGPT
 CHIP=it8689-isa-0a40

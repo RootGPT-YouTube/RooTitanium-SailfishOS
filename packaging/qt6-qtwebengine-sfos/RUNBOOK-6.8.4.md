@@ -6,6 +6,47 @@ solo a luglio 2026, dopo i 12 mesi di embargo LTS). Il salto vero — Chromium 1
 con 6.8.8 — sarà possibile quando Qt ne pubblicherà il tag LGPL, atteso nel 2027:
 lo scopo di questo giro è **arrivarci con la procedura già rodata**.
 
+## Stato: esecuzione avviata il 14 ago 2026 (richiesta dell'utente)
+
+Il guadagno è più grande di quanto questo runbook prevedeva. `CHROMIUM_VERSION`
+del tag `v6.8.4-lts-lgpl` dice:
+
+| | Chromium base | patch di sicurezza fino a |
+|---|---|---|
+| 6.8.3 (in uso) | 122.0.6261.171 | **134.0.6998.89** |
+| 6.8.4 (questo giro) | 122.0.6261.171 | **138.0.7204.96** |
+
+Quindi non è solo una prova di procedura: sono **quattro major di backport CVE**
+in più, a Chromium invariato e rischio quasi nullo. `v6.8.4-lts-lgpl` è anche
+l'**ultimo** tag LGPL pubblicato del ramo (nessun 6.8.5+ su code.qt.io alla data),
+cioè il massimo livello di sicurezza raggiungibile senza cambiare Chromium.
+
+Passi già eseguiti — vedi gli script in `scratch/` e i rispettivi `.log`:
+
+1. **Clone** `qtwebengine-6.8.4/` — fatto **shallow** (`--depth 1` sul tag e sui
+   submodule): servono i file per il tarball, non la history. 4,8 GB e pochi
+   minuti invece di ore. `node_modules` di devtools-frontend: **presente**.
+2. **Tarball** `SOURCES/qt6-qtwebengine-6.8.4.tar` (3,77 GB, 267.870 file sotto
+   `chromium/`), struttura `qt6-qtwebengine-6.8.4/upstream/…` come attesa.
+3. **Spec** portato a `Version: 6.8.4` / `%global qt_version 6.8.4`.
+4. **`%prep`: PASSATO (exit 0).** Le 5 patch RooTitanium `0300`-`0304` applicano
+   **pulite, zero fuzz** — nessun file toccato da upstream, nemmeno quello che il
+   runbook si aspettava cambiato (0301). Le patch chum applicano con offset e
+   fuzz fino a 2, assorbito dal `--fuzz=2` che rpmbuild usa di default: il "gate
+   senza fuzz" **non** è rispettato dalle patch chum, ma non blocca. Se un domani
+   si volesse fuzz 0, va rigenerata soprattutto `1001` (fuzz 2 su
+   `qt_overrides.cc`).
+5. **Configure** in corso.
+
+Due correzioni agli script, entrambe necessarie per non ripetere lavoro a mano:
+
+- `scripts/build-j16-con-guardia.sh` aveva la dir di build **cablata su 6.8.3**;
+  ora la versione si legge dallo spec (`VER=` per forzarla).
+- `scripts/configure-only.sh` non passava a `cmake` **alcun path sorgente**: così
+  com'era non poteva partire. Il configure è **in-place** (come il tree 6.8.3:
+  `CMAKE_HOME_DIRECTORY` = la dir stessa), quindi ora finisce con `"${SRCDIR:-.}"`
+  e si lancia da `BUILD/qt6-qtwebengine-<ver>/upstream`.
+
 Path di lavoro: `/home/RootGPT/Developing/SailfishOS/RooTitanium/` (scelta
 dell'utente, non si accorcia).
 

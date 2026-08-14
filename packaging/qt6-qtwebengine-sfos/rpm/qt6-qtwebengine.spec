@@ -1,4 +1,4 @@
-%global qt_version 6.8.3
+%global qt_version 6.8.4
 
 # SFOS build requires newer linux kernel headers
 # available from https://build.sailfishos.org/package/show/nemo:devel:hw:native-common/kernel-headers
@@ -46,7 +46,7 @@
 
 Summary: Qt6 - QtWebEngine components
 Name:    qt6-qtwebengine
-Version: 6.8.3
+Version: 6.8.4
 Release: 1%{?dist}
 
 # See LICENSE.GPL LICENSE.LGPL LGPL_EXCEPTION.txt, for details
