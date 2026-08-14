@@ -1,6 +1,8 @@
 # TASK menù a tendina — il popup dei `<select>` HTML non è selezionabile
 
-Stato: **APERTA — segnalata dall'utente il 14 ago 2026.** Nessun codice scritto.
+Stato: **IMPLEMENTATA il 14 ago 2026 — in attesa di collaudo sul device**
+(telefono spento/irraggiungibile al momento della scrittura: `No route to host`).
+Soluzione A realizzata in QML puro, nessun rebuild del motore.
 Precedenza: **da fare PRIMA della [TASK Chromium 140](TASK-chromium-140.md)**
 (richiesta esplicita dell'utente). Consigliata anche prima della
 [TASK ad-block](TASK-adblock.md): qui si rompe l'uso normale di molti siti,
@@ -114,6 +116,47 @@ ore, cfr. guardia VRM), va **rifatta a ogni aggiornamento del motore** — quind
 di nuovo alla 6.11.1 — e tocca proprio l'area grafica che le patch
 `egl-validating` / `shared-gl-texture` rendono fragile su hybris. Da valutare
 solo se la Fase 0 dimostrasse che la via A non basta.
+
+## Com'è stata realizzata (14 ago 2026)
+
+Tutto in `smoke-test/test.qml`, **niente C++, niente rebuild**:
+
+- **`selectMenuJs`** (user script `rtSelectMenu`, DocumentCreation, MainWorld,
+  `runsOnSubFrames: true`): intercetta `mousedown` e `click` in **cattura**, fa
+  `preventDefault()` — così il popup nativo non si apre proprio — e serializza le
+  opzioni. Debounce di 600 ms perché da touch QtWebEngine sintetizza
+  mousedown+click e altrimenti il foglio si aprirebbe due volte.
+  Lasciati **nativi** i casi che popup non sono: `multiple`, `size > 1`,
+  `disabled`.
+- **Canale JS → QML: una riga di `console.log('__rtsel:open')`** raccolta da
+  `onJavaScriptConsoleMessage`, poi il QML tira i dati con
+  `runJavaScript("window.__rtSelData")`. Scelto al posto di `WebChannel`: zero
+  dipendenze nuove, zero C++, payload di qualsiasi dimensione (una tendina di
+  marche auto ha centinaia di voci, una URL sentinella non basterebbe).
+  ⚠️ Verificato sui sorgenti (`qquickwebengineview.cpp:774`): **connettendo quel
+  segnale il logging JS di serie si spegne** (`receivers() > 0` → `return`), per
+  questo l'handler ristampa warning ed errori, che è esattamente ciò che il
+  default faceva (la categoria `js` nasce a `QtWarningMsg`).
+- **Iframe**: `runJavaScript` da QML raggiunge **solo il main frame**, quindi nei
+  sub-frame il payload sale al top con `postMessage` e il top ricorda
+  `event.source` per rispedire giù la scelta.
+- **Foglio QML** `selMenu`: sheet dal basso, alto al massimo il 70% dello
+  schermo, `ListView` scrollabile che si apre già posizionata sulla voce corrente
+  (`positionViewAtIndex(..., ListView.Center)`), spunta sulla voce attiva,
+  opzioni disabilitate in grigio e non toccabili, `optgroup` come prefisso della
+  riga, tap fuori o Annulla = nessuna modifica.
+- **Riscrittura del valore**: `selectedIndex` + `input` e `change` con
+  `bubbles: true`.
+
+Collaudo fatto finora, **senza device**: sintassi dello user script (`node
+--check`) e due prove su DOM finto — apertura (popup prevenuto, payload con
+indice e opzioni disabilitate corretti, `input`+`change` sparati sulla scelta) e
+casi limite (una sola apertura per mousedown+click; `multiple`, `size=4`,
+`disabled` non intercettati). Bilanciamento del QML verificato.
+
+**Resta da fare sul telefono**: la Fase 0 qui sopra vale ora come verifica del
+risultato, non più della causa — aprire cerchigomme.it, controllare che compaia
+il foglio nostro e non il popup di Chromium, e che la cascata dei filtri reagisca.
 
 ## Fatto quando
 

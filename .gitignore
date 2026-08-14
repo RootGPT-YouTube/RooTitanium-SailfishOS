@@ -22,3 +22,6 @@ smoke-test/main.moc
 # Specchio delle note di lavoro (skill /memory_rootitanium): contiene IP privati
 # dei device e dettagli di rete di casa. Copia locale, mai nel repo pubblico.
 /memory/
+
+# Clone upstream Qt per l'aggiornamento del motore (shallow, ~decine di GB)
+/qtwebengine-6.8.4/

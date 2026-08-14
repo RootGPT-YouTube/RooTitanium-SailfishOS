@@ -557,8 +557,86 @@ Window {
   try{var mo=new MutationObserver(function(){css();rej();});mo.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){try{mo.disconnect();}catch(e){}},12000);}catch(e){}
 })();`
 
+    // Menù a tendina: il popup nativo dei <select> finisce in una QQuickWindow
+    // top-level separata (Qt::Tool, non accetta focus) che su lipstick si VEDE ma
+    // non riceve il touch — il dito attraversa la voce. Non esiste un segnale QML
+    // per dirottarlo (niente selectPopupRequested), quindi lo preveniamo qui e
+    // mostriamo un foglio QML nostro. Cfr. Documentation/TASK-select-popup.md.
+    readonly property string selectMenuJs: `(function(){
+  if (window.__rtSel) return; window.__rtSel = 1;
+  var TOP = (window.top === window);
+  var last = 0, srcFrame = null;
+  function target(el){
+    if (!el || el.tagName !== 'SELECT') return null;
+    // <select multiple> e size>1 sono liste INLINE, non popup: si usano già bene
+    if (el.disabled || el.multiple || (el.size|0) > 1) return null;
+    return el;
+  }
+  function ser(sel){
+    var a = [];
+    for (var i = 0; i < sel.options.length; i++){
+      var o = sel.options[i];
+      var g = (o.parentNode && o.parentNode.tagName === 'OPTGROUP') ? (o.parentNode.label || '') : '';
+      a.push({ i: i, l: (o.label || o.text || ''), d: !!o.disabled, g: g });
+    }
+    return a;
+  }
+  // runJavaScript da QML raggiunge solo il MAIN frame: se il <select> sta in un
+  // iframe il payload viaggia al top con postMessage, e il top ricorda il frame
+  // di origine per rispedirgli la scelta
+  function announce(sel){
+    var pl = { t: (sel.getAttribute('aria-label') || sel.name || ''), idx: sel.selectedIndex, o: ser(sel) };
+    window.__rtSelEl = sel;
+    if (TOP) { srcFrame = null; window.__rtSelData = JSON.stringify(pl); console.log('__rtsel:open'); }
+    else { try { window.top.postMessage({ __rtsel: 'open', pl: pl }, '*'); } catch(e){} }
+  }
+  function onDown(ev){
+    var el = (ev.target && ev.target.closest) ? target(ev.target.closest('select')) : null;
+    if (!el) return;
+    ev.preventDefault(); ev.stopPropagation();   // niente popup nativo di Chromium
+    var now = Date.now();
+    if (now - last < 600) return;                // mousedown + click: una sola apertura
+    last = now;
+    announce(el);
+  }
+  ['mousedown','click'].forEach(function(t){ document.addEventListener(t, onDown, true); });
+  function apply(sel, i){
+    if (sel && i >= 0 && i < sel.options.length && sel.selectedIndex !== i) {
+      sel.selectedIndex = i;
+      // molti siti filtrano a cascata sull'evento change (es. larghezza→serie→
+      // diametro): senza questi due la pagina resterebbe ferma
+      sel.dispatchEvent(new Event('input',  { bubbles: true }));
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    window.__rtSelEl = null;
+  }
+  window.addEventListener('message', function(ev){
+    var d = ev.data;
+    if (!d || !d.__rtsel) return;
+    if (TOP && d.__rtsel === 'open') {
+      srcFrame = ev.source;
+      window.__rtSelData = JSON.stringify(d.pl);
+      console.log('__rtsel:open');
+    } else if (d.__rtsel === 'apply') {
+      apply(window.__rtSelEl, d.i);
+    }
+  });
+  // chiamata dal QML sul main frame; -1 = annullato
+  window.__rtSelApply = function(i){
+    var f = srcFrame; srcFrame = null;
+    if (f) { try { f.postMessage({ __rtsel: 'apply', i: i }, '*'); } catch(e){} return; }
+    apply(window.__rtSelEl, i);
+  };
+})();`
+
     function buildScripts() {
         var s = [{
+            name: "rtSelectMenu",
+            sourceCode: selectMenuJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true
+        }, {
             name: "rtScreenSpoof",
             sourceCode: screenSpoofJs,
             injectionPoint: WebEngineScript.DocumentCreation,
@@ -832,6 +910,34 @@ Window {
         ctxMenu.px = req.selectionBounds.x
         ctxMenu.py = req.selectionBounds.y + req.selectionBounds.height + (toolbar.visible ? toolbar.height : 0) + 8 * u
         ctxMenu.open = true
+    }
+
+    // ===================== MENÙ A TENDINA (<select>) =====================
+    // Lo user script rtSelectMenu blocca il popup nativo e ci avvisa con una riga
+    // di console; qui tiriamo su i dati e mostriamo il foglio QML. Il valore si
+    // riscrive con __rtSelApply, che spara anche input/change.
+    property var selView: null
+    property var selModel: []
+    property string selTitle: ""
+    property int selCur: -1
+    function openSelectMenu(view) {
+        view.runJavaScript("window.__rtSelData || ''", function(res) {
+            var d
+            try { d = JSON.parse("" + res) } catch(e) { return }
+            if (!d || !d.o || !d.o.length) return
+            selView = view
+            selTitle = d.t || ""
+            selCur = (d.idx === undefined ? -1 : d.idx)
+            selModel = d.o
+            selMenu.open = true
+            selList.positionViewAtIndex(Math.max(0, selCur), ListView.Center)
+        })
+    }
+    function selectMenuDone(i) {
+        selMenu.open = false
+        if (selView) selView.runJavaScript("window.__rtSelApply && window.__rtSelApply(" + i + ")")
+        selView = null
+        selModel = []
     }
 
     // dialoghi JS (alert/confirm/prompt/beforeunload) con UI scalata
@@ -2412,6 +2518,16 @@ ${histCss}
                         win.openFilePicker(request)
                     }
                     onTooltipRequested: function(request) { request.accepted = true }  // niente tooltip nativi minuscoli
+                    // canale dello user script rtSelectMenu (niente WebChannel: una
+                    // riga di console basta e non richiede rebuild del C++).
+                    // ⚠️ connettendo questo segnale il logging JS di serie si spegne
+                    // (QQuickWebEngineViewPrivate ritorna subito): warning ed errori
+                    // li ristampiamo noi, com'era prima.
+                    onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
+                        if (message === "__rtsel:open") { win.openSelectMenu(this); return }
+                        if (level >= WebEngineView.WarningMessageLevel)
+                            console.warn("[js] " + sourceID + ":" + lineNumber + " " + message)
+                    }
                     onFindTextFinished: function(result) {
                         win.findCur = result.activeMatch
                         win.findTot = result.numberOfMatches
@@ -2762,6 +2878,90 @@ ${histCss}
         sortField: FolderListModel.Name
         folder: "file:///home/defaultuser/Downloads"
     }
+    // ===================== FOGLIO MENÙ A TENDINA =====================
+    // Sostituisce il popup nativo dei <select>. Foglio dal basso: va bene per tre
+    // voci come per le centinaia di una tendina di marche auto (lista scrollabile,
+    // si apre già posizionata sulla voce corrente).
+    Item {
+        id: selMenu
+        property bool open: false
+        anchors.fill: parent
+        visible: open; z: 93
+        Rectangle {
+            anchors.fill: parent; color: "black"; opacity: 0.45
+            MouseArea { anchors.fill: parent; onClicked: win.selectMenuDone(-1) }   // tap fuori = annulla
+        }
+        Rectangle {
+            id: selSheet
+            anchors.bottom: parent.bottom; width: parent.width
+            height: Math.min(parent.height * 0.7, selHeader.height + selList.contentHeight + 16*win.u)
+            color: win.pal.card; radius: 12*win.u
+            MouseArea { anchors.fill: parent }   // il foglio assorbe i tap, non chiude
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 14*win.u; color: parent.color }  // squadra il basso
+
+            Rectangle {
+                id: selHeader
+                anchors.top: parent.top; width: parent.width; height: 60*win.u
+                color: "transparent"
+                Text {
+                    anchors.left: parent.left; anchors.leftMargin: 24*win.u
+                    anchors.right: selCancel.left; anchors.rightMargin: 12*win.u
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: win.selTitle.length ? win.selTitle : win.t("Scegli", "Choose")
+                    color: win.pal.fg2; font.pixelSize: 19*win.u; elide: Text.ElideRight
+                }
+                Rectangle {
+                    id: selCancel
+                    anchors.right: parent.right; anchors.rightMargin: 12*win.u
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: selCancelTxt.paintedWidth + 28*win.u; height: 46*win.u; radius: 23*win.u
+                    color: selCancelMa.pressed ? win.pal.neutralPress : "transparent"
+                    Text { id: selCancelTxt; anchors.centerIn: parent; text: win.t("Annulla", "Cancel")
+                        color: win.pal.link; font.pixelSize: 19*win.u }
+                    MouseArea { id: selCancelMa; anchors.fill: parent; onClicked: win.selectMenuDone(-1) }
+                }
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.pal.border }
+            }
+
+            ListView {
+                id: selList
+                anchors.top: selHeader.bottom; anchors.bottom: parent.bottom
+                anchors.bottomMargin: 8*win.u
+                width: parent.width; clip: true
+                model: win.selModel
+                delegate: Rectangle {
+                    width: ListView.view.width; height: 60*win.u
+                    color: (modelData.d === true) ? "transparent" : (selRowMa.pressed ? win.pal.neutralPress : "transparent")
+                    Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1
+                        color: win.pal.line; opacity: 0.5 }
+                    Text {
+                        id: selRowTxt
+                        anchors.left: parent.left; anchors.leftMargin: 24*win.u
+                        anchors.right: selRowTick.left; anchors.rightMargin: 12*win.u
+                        anchors.verticalCenter: parent.verticalCenter
+                        // l'optgroup finisce come prefisso: una riga sola, niente intestazioni
+                        text: (modelData.g && modelData.g.length ? modelData.g + " · " : "") + modelData.l
+                        color: (modelData.d === true) ? win.pal.faint
+                             : (index === win.selCur ? win.pal.link : win.pal.fg)
+                        font.pixelSize: 21*win.u; elide: Text.ElideRight
+                    }
+                    Text {
+                        id: selRowTick
+                        anchors.right: parent.right; anchors.rightMargin: 20*win.u
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: index === win.selCur
+                        text: "✓"; color: win.pal.link; font.pixelSize: 24*win.u; font.bold: true
+                    }
+                    MouseArea {
+                        id: selRowMa; anchors.fill: parent
+                        enabled: modelData.d !== true
+                        onClicked: win.selectMenuDone(modelData.i)
+                    }
+                }
+            }
+        }
+    }
+
     Rectangle {
         id: filePicker
         property bool open: false
