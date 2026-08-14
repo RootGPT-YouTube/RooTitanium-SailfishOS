@@ -40,7 +40,7 @@ Passi già eseguiti — vedi gli script in `scratch/` e i rispettivi `.log`:
 
 Due correzioni agli script, entrambe necessarie per non ripetere lavoro a mano:
 
-- `scripts/build-j16-con-guardia.sh` aveva la dir di build **cablata su 6.8.3**;
+- `scripts/build-con-guardia.sh` (ex `build-j16-…`, rinominato: girava a -j12 da luglio) aveva la dir di build **cablata su 6.8.3**;
   ora la versione si legge dallo spec (`VER=` per forzarla).
 - `scripts/configure-only.sh` non passava a `cmake` **alcun path sorgente**: così
   com'era non poteva partire. Il configure è **in-place** (come il tree 6.8.3:
@@ -125,7 +125,7 @@ errore non riconosciuto. Sotto resta il modo manuale, se serve pilotare a mano:
 
 ```bash
 VER=6.8.4 packaging/qt6-qtwebengine-sfos/scripts/apply-build-fixes.sh ninja
-packaging/qt6-qtwebengine-sfos/scripts/build-j16-con-guardia.sh    # 12 core + guardia VRM
+packaging/qt6-qtwebengine-sfos/scripts/build-con-guardia.sh    # 12 core + guardia VRM
 ```
 
 ⚠️ `toolchain.ninja` **non esiste finché la build non ha fatto il `gn gen`**: il

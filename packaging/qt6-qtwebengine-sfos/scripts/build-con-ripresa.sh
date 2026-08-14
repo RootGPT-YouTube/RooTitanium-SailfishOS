@@ -3,7 +3,7 @@
 #
 # La build si ferma sempre negli stessi punti (vedi RUNBOOK-6.8.4.md §4) e ogni
 # volta il rimedio è uno dei passi di apply-build-fixes.sh. Questo script chiude
-# il ciclo: lancia build-j16-con-guardia.sh (che porta con sé la guardia termica
+# il ciclo: lancia build-con-guardia.sh (che porta con sé la guardia termica
 # VRM), e se fallisce riconosce il sintomo nel log, applica il rimedio e riprende
 # — la build è incrementale, quindi ogni giro riparte da dov'era.
 #
@@ -13,13 +13,13 @@
 # Uso:  ./build-con-ripresa.sh            (versione dallo spec)
 #       VER=6.8.3 ./build-con-ripresa.sh  (per forzare un altro tree)
 #
-# Log:  build-ripresa.log (questo script), build-j16.log (build), guardia-vrm.log
+# Log:  build-ripresa.log (questo script), build.log (build), guardia-vrm.log
 
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 SCRIPTS=$REPO/packaging/qt6-qtwebengine-sfos/scripts
 LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build
-BUILDLOG=$LOGDIR/build-j16.log
+BUILDLOG=$LOGDIR/build.log
 LOG=$LOGDIR/build-ripresa.log
 MAX_GIRI=${MAX_GIRI:-15}
 
@@ -38,7 +38,7 @@ avanz_prec=""
 
 for giro in $(seq 1 "$MAX_GIRI"); do
     nota "--- giro $giro: avvio build ---"
-    "$SCRIPTS/build-j16-con-guardia.sh" >/dev/null 2>&1
+    "$SCRIPTS/build-con-guardia.sh" >/dev/null 2>&1
     rc=$?
     if [ "$rc" -eq 0 ]; then
         nota "=== BUILD COMPLETATA al giro $giro ==="
@@ -62,9 +62,11 @@ for giro in $(seq 1 "$MAX_GIRI"); do
         # stessa causa: il flag di link si perde se build.ninja viene rigenerato
         *"memory exhausted"*|*"final link failed"*)
             rimedio=ninja ;;
-        # il generatore dello snapshot V8 trappa sotto il qemu del target.
-        # NB: il nome del BINARIO (…_generator), non l'argomento gn omonimo
-        *v8_context_snapshot_generator*)
+        # lo snapshot V8 trappa sotto il qemu del target. Ninja nomina il TARGET
+        # ("FAILED: v8_context_snapshot.bin"), non il binario che l'ha prodotto:
+        # cercare "…_generator" non bastava (build ferma per questo il 14 ago).
+        # Qui il pattern largo e' sicuro perche' si guardano solo righe di errore.
+        *v8_context_snapshot*)
             rimedio=snapshot ;;
         *)
             rimedio="" ;;

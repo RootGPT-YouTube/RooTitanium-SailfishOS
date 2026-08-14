@@ -20,7 +20,7 @@ INTERVALLO=20
 CORE_RIDOTTI=2
 CORE_PIENI=12          # regime stazionario (VRM ~73-74°C); mai --cpus 0 (bug)
 GUARDLOG=$REPO/packaging/qt6-qtwebengine-sfos/build/guardia-vrm.log
-BUILDLOG=$REPO/packaging/qt6-qtwebengine-sfos/build/build-j16.log
+BUILDLOG=$REPO/packaging/qt6-qtwebengine-sfos/build/build.log
 
 leggi_vrm() { sensors "$CHIP" 2>/dev/null | awk -F'[+.]' '/^VRM:/ {print $2}'; }
 nota() { echo "$(date '+%F %T')  $*" | tee -a "$GUARDLOG"; }

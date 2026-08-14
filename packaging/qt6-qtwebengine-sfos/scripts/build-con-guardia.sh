@@ -1,16 +1,17 @@
 #!/bin/bash
 # Build completa qt6-qtwebengine (versione dallo spec) con guardia termica VRM.
 #
-# Uso: ./build-j16-con-guardia.sh
+# Uso: ./build-con-guardia.sh                  (regime di serie: J=12, soglia 85°C)
+#      J=16 SOGLIA_STOP=90 ./build-con-guardia.sh   (giro piu' spinto, presidiato)
 #
-# - Lancia `cmake --build . -j16` nel target 5.1 aarch64 via sfdk (build dir
+# - Lancia `cmake --build . -j$J` nel target 5.1 aarch64 via sfdk (build dir
 #   già configurata, vedi configure-only.sh se serve ripartire da zero).
-# - Ogni 20 s legge la temperatura VRM (sensors it8689-isa-0a40).
-# - >= 85 °C: strozza l'engine docker a 2 core (docker update --cpus 2).
+# - Ogni INTERVALLO s legge la temperatura VRM (sensors it8689-isa-0a40).
+# - >= SOGLIA_STOP °C: strozza l'engine docker a 2 core (docker update --cpus 2).
 #   NON si usa SIGSTOP/docker pause: congelerebbe anche sshd dell'engine e
 #   la sessione sfdk cadrebbe, uccidendo la build. Con 2 core il calore
 #   crolla ma la connessione resta viva.
-# - <= 60 °C: ripristina tutti i core (docker update --cpus 0 = nessun limite).
+# - <= SOGLIA_RIPRESA °C: torna a CORE_PIENI core (mai --cpus 0, vedi nota sotto).
 # - Anti-stallo: ogni 15 min verifica che il log della build cresca e che
 #   l'avanzamento [n/m] si muova; se tutto è fermo logga un ALLARME con
 #   diagnostica (CPU processi engine, coda del log) e manda notify-send.
@@ -18,14 +19,14 @@
 #   lungo) costerebbe ore. Sta all'utente decidere guardando la diagnostica:
 #   processi a CPU alta = probabile lavoro lungo legittimo; tutti ~0% = stallo.
 #
-# Log: build-j16.log (output build), guardia-vrm.log (eventi termici+stallo).
+# Log: build.log (output build), guardia-vrm.log (eventi termici+stallo).
 
 set -u
 
 # Root del repo, derivata dalla posizione dello script (scripts/ è 3 livelli sotto)
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # Versione del motore: si legge dallo spec, così build e pacchetto non divergono.
-# Si può forzare con VER=6.8.3 ./build-j16-con-guardia.sh (es. per ricompilare il
+# Si può forzare con VER=6.8.3 ./build-con-guardia.sh (es. per ricompilare il
 # tree vecchio senza toccare lo spec).
 VER=${VER:-$(sed -n 's/^Version: *//p' "$REPO/packaging/qt6-qtwebengine-sfos/rpm/qt6-qtwebengine.spec" | head -1)}
 [ -n "$VER" ] || { echo "ERRORE: versione non determinata (spec illeggibile?)"; exit 1; }
@@ -34,15 +35,25 @@ TARGET=SailfishOS-5.1.0.11-aarch64
 ENGINE=sailfish-sdk-build-engine_RootGPT
 CHIP=it8689-isa-0a40
 
-SOGLIA_STOP=85      # °C: sopra questa, throttle a 2 core
-SOGLIA_RIPRESA=60   # °C: sotto questa, ripristino a CORE_PIENI
-INTERVALLO=20       # secondi tra le letture
-CORE_RIDOTTI=2
-CORE_PIENI=12       # regime stazionario (VRM ~73-74°C, sotto 85 senza throttle)
-STALL_FINESTRA=900  # secondi (15 min) tra i controlli anti-stallo
+# Tutti regolabili dall'ambiente, per provare regimi diversi senza toccare il
+# codice:  J=16 SOGLIA_STOP=90 ./build-con-guardia.sh
+SOGLIA_STOP=${SOGLIA_STOP:-85}      # °C: sopra questa, throttle a CORE_RIDOTTI
+SOGLIA_RIPRESA=${SOGLIA_RIPRESA:-60} # °C: sotto questa, ripristino a CORE_PIENI
+INTERVALLO=${INTERVALLO:-20}         # secondi tra le letture
+CORE_RIDOTTI=${CORE_RIDOTTI:-2}
+CORE_PIENI=${CORE_PIENI:-${J:-12}}   # regime stazionario (12 core: VRM ~73-77°C)
+J=${J:-12}                           # parallelismo di ninja
+STALL_FINESTRA=${STALL_FINESTRA:-900} # secondi (15 min) tra i controlli anti-stallo
+
+# ⚠️ Scheda: Gigabyte B550M DS3H con un 5950X — VRM piccolo per questa CPU, con
+# dissipazione modesta. Il thermistor "VRM" legge il PCB, non la giunzione dei
+# MOSFET, che sta parecchio piu' in alto. Storico misurato: a J=16 il picco reale
+# e' stato 85°C con appena 2 throttle in tutta la build di luglio, a J=12 si sta
+# piatti sui 73-77°C. Alzare la soglia oltre ~90 non serve a niente di utile:
+# a J=16 bastano 88-90 per non throttlare mai.
 
 LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build
-BUILDLOG=$LOGDIR/build-j16.log
+BUILDLOG=${BUILDLOG:-$LOGDIR/build.log}
 GUARDLOG=$LOGDIR/guardia-vrm.log
 
 leggi_vrm() { sensors "$CHIP" 2>/dev/null | awk -F'[+.]' '/^VRM:/ {print $2}'; }
@@ -65,16 +76,16 @@ command -v sfdk >/dev/null || PATH=$PATH:$HOME/SailfishOS/bin
 command -v sfdk >/dev/null || { echo "ERRORE: sfdk non trovato"; exit 1; }
 
 ripristina_cpu   # imposta subito il regime stazionario (${CORE_PIENI} core)
-nota "=== Avvio build -j12 via sb2 (cross-gcc NATIVO) con guardia VRM (regime ${CORE_PIENI} core, throttle >=${SOGLIA_STOP}°C -> ${CORE_RIDOTTI} core, ripresa <=${SOGLIA_RIPRESA}°C). VRM ora: ${t}°C ==="
+nota "=== Avvio build -j${J} via sb2 (cross-gcc NATIVO) con guardia VRM (regime ${CORE_PIENI} core, ninja -j${J}, throttle >=${SOGLIA_STOP}°C -> ${CORE_RIDOTTI} core, ripresa <=${SOGLIA_RIPRESA}°C). VRM ora: ${t}°C ==="
 
 # --- build in background ---------------------------------------------------
 # sb2 mappa /usr/bin/c++ sul cross-compiler host-nativo (opt/cross, gcc 13.4.0):
 # niente emulazione qemu -> ~5-10x piu' veloce E niente tetto ~4 GB/processo di
 # qemu (i mega-TU tipo browser_interface_binders compilano). cmake/ninja girano
 # emulati (leggeri); i compile vanno nativi. Eseguito come utente mersdk (owner
-# dei target sb2). -j12 = concorrenza allineata ai 12 core (RAM piu' sicura coi
+# dei target sb2). J = concorrenza allineata ai core concessi (RAM piu sicura coi
 # compile nativi che possono usare fino a ~4 GB ciascuno).
-docker exec -u mersdk "$ENGINE" bash -lc "cd $BUILDDIR && sb2 -t $TARGET cmake --build . -j12 --verbose" \
+docker exec -u mersdk "$ENGINE" bash -lc "cd $BUILDDIR && sb2 -t $TARGET cmake --build . -j$J --verbose" \
     >"$BUILDLOG" 2>&1 &
 BUILD_PID=$!
 
