@@ -108,13 +108,37 @@ fix_link() {
 
 # ── 4) v8_context_snapshot_generator con il qemu dell'host ───────────────────
 # Il qemu 5.1 del target lo fa trappare (signal 5); il qemu 10.x dell'host lo
-# esegue senza problemi. Da lanciare SOLO se la build si ferma li' (~92%): una
-# volta prodotto il .bin, ninja salta lo step e prosegue.
+# esegue senza problemi.
+#
+# 🔴 CORREZIONE 14 ago 2026: generare il .bin a mano NON basta, e il runbook che
+# diceva "una volta prodotto il .bin ninja salta lo step" era sbagliato. Ninja
+# rifa' comunque il target — il .bin era piu' recente del generatore e veniva
+# ricostruito lo stesso — e la build entrava in loop: rimedio applicato, build
+# ripartita, stesso fallimento, a ogni giro.
+# Rimedio vero: mettere al posto del generatore un WRAPPER che lo esegue col
+# qemu dell'host. Cosi' e' ninja stesso a produrre il .bin e a registrarne il
+# successo, e il passo non si ripresenta piu'. Idempotente.
 fix_snapshot() {
   [ -x "$QEMU10" ] || die "manca $QEMU10 (copia /usr/bin/qemu-aarch64-static dell'host; NB: /tmp non e' condiviso col container, /home si')"
-  docker exec -u mersdk "$ENGINE" bash -c \
-    "cd '$GNDIR' && '$QEMU10' -L /srv/mer/targets/$TARGET ./v8_context_snapshot_generator --output_file=v8_context_snapshot.bin"
-  ls -l "$GNDIR/v8_context_snapshot.bin"
+  local gen=$GNDIR/v8_context_snapshot_generator
+  [ -f "$gen" ] || die "generatore non trovato: $gen"
+  if [ -f "$gen.real" ]; then
+    echo "  = wrapper gia' installato"
+  else
+    mv "$gen" "$gen.real"
+    cat > "$gen" <<EOF
+#!/bin/sh
+# Wrapper RooTitanium: esegue il generatore aarch64 col qemu 10 dell'host,
+# perche' quello del target (5.1) trappa con signal 5.
+exec $QEMU10 -L /srv/mer/targets/$TARGET "\$(dirname "\$0")/v8_context_snapshot_generator.real" "\$@"
+EOF
+    chmod +x "$gen"
+    echo "  + wrapper qemu-10 installato (originale: $(basename "$gen").real)"
+  fi
+  # il .bin lo rifara' ninja passando dal wrapper: qui si toglie solo quello
+  # eventualmente prodotto a mano, che ninja non considera valido
+  rm -f "$GNDIR/v8_context_snapshot.bin"
+  return 0
 }
 
 # ── 5) qmlcachegen: i .cpp generati nascono con permessi 000 ────────────────
