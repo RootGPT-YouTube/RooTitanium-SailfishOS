@@ -581,11 +581,34 @@ Window {
     }
     return a;
   }
+  // Titolo del foglio. I siti raramente etichettano i <select> come si deve
+  // (cerchigomme.it: niente aria-label, niente <label>, niente title), quindi in
+  // ultima istanza si ripiega sul name reso leggibile — "auto_brand" -> "Auto
+  // brand" — scartando pero' i nomi che sono identificatori generati. Se non
+  // resta nulla di sensato il foglio scrive "Scegli".
+  function lbl(sel){
+    var t = sel.getAttribute('aria-label') || '';
+    if (!t && sel.id) {
+      try {
+        var l = document.querySelector('label[for="' + ((window.CSS && CSS.escape) ? CSS.escape(sel.id) : sel.id) + '"]');
+        if (l) t = l.textContent;
+      } catch(e){}
+    }
+    if (!t && sel.closest) { var p = sel.closest('label'); if (p) t = p.textContent; }
+    if (!t) t = sel.getAttribute('title') || '';
+    t = t.replace(/\\s+/g, ' ').trim();
+    if (!t) {
+      var n = (sel.name || '').replace(/[_\\-.\\[\\]]+/g, ' ').replace(/\\s+/g, ' ').trim();
+      if (n.length >= 2 && n.length <= 40 && !/^\\d+$/.test(n) && !/\\$|ctl\\d|^select2/i.test(n))
+        t = n.charAt(0).toUpperCase() + n.slice(1);
+    }
+    return t.length > 40 ? t.slice(0, 40) : t;
+  }
   // runJavaScript da QML raggiunge solo il MAIN frame: se il <select> sta in un
   // iframe il payload viaggia al top con postMessage, e il top ricorda il frame
   // di origine per rispedirgli la scelta
   function announce(sel){
-    var pl = { t: (sel.getAttribute('aria-label') || sel.name || ''), idx: sel.selectedIndex, o: ser(sel) };
+    var pl = { t: lbl(sel), idx: sel.selectedIndex, o: ser(sel) };
     window.__rtSelEl = sel;
     if (TOP) { srcFrame = null; window.__rtSelData = JSON.stringify(pl); console.log('__rtsel:open'); }
     else { try { window.top.postMessage({ __rtsel: 'open', pl: pl }, '*'); } catch(e){} }
