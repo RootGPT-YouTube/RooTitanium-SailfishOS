@@ -1,6 +1,8 @@
 # TASK Chromium 140 — aggiornare il motore a QtWebEngine 6.11.1
 
 Stato: **INVESTIGAZIONE FATTA — da decidere se procedere** (13 ago 2026).
+⚠️ In coda a [TASK-select-popup.md](TASK-select-popup.md): l'utente ha chiesto
+il 14 ago 2026 che il bug dei menù a tendina sia risolto prima di questo salto.
 Nessun codice scritto, nessuna build lanciata.
 Analisi rivista e confermata da un secondo revisore (Fable) prima della
 registrazione; le due correzioni che ha portato sono già incorporate qui sotto.
@@ -86,7 +88,9 @@ potrebbe essere ottimista, visto che nessuno ha mai compilato quel branch.
 Il salto **non risolve** le due segnalazioni note:
 - il popup dei `<select>` HTML non selezionabile: in v6.11.1
   `render_widget_host_view_qt_delegate_quickwindow.cpp` ha la **stessa
-  architettura** (QQuickWindow separata), quindi il difetto resta;
+  architettura** (QQuickWindow separata), quindi il difetto resta.
+  Dal 14 ago 2026 ha una task propria, [TASK-select-popup.md](TASK-select-popup.md),
+  **da eseguire prima di questa** per decisione dell'utente;
 - i captcha che non si vedono: causa nostra, il toggle `noreferrer` in
   `smoke-test/main.cpp:41,75`.
 
