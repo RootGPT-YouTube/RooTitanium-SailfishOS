@@ -33,7 +33,7 @@ passi da eseguire con un tool esterno: una patch non li raggiunge.
 | `ninja` | accorcia i nomi dei `.rsp` (path di lavoro lungo → oltre NAME_MAX) e aggiunge `-Wl,--no-keep-memory` al link di WebEngineCore (.so da 1,3 GB, linker a 32 bit) | dopo ogni gn-regen |
 | `snapshot` | esegue `v8_context_snapshot_generator` col qemu 10.x dell'host (col qemu 5.1 del target trappa) | solo se la build si ferma lì (~92%) |
 
-Il path di lavoro resta `/home/RootGPT/Developing/SailfishOS/RooTitanium/`
+Il path di lavoro resta `<repo>/`
 per scelta esplicita dell'utente (20 lug 2026): il passo `ninja` è quindi
 **strutturale**, non un ripiego temporaneo.
 

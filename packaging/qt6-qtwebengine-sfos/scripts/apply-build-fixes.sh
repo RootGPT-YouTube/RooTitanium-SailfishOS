@@ -17,13 +17,17 @@
 # rigenerati dal configure, quindi una patch non li puo' raggiungere.
 set -euo pipefail
 
-REPO=/home/RootGPT/Developing/SailfishOS/RooTitanium
+# Root del repo derivata dalla posizione dello script (scripts/ e' 3 livelli sotto),
+# come negli altri script: niente path assoluti cablati.
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 VER=${VER:-6.8.4}
 BT=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-$VER/upstream
 GNDIR=$BT/src/core/RelWithDebInfo/aarch64
 ENGINE=sailfish-sdk-build-engine_RootGPT
 TARGET=SailfishOS-5.1.0.11-aarch64.default
-QEMU10=/home/RootGPT/qemu-aarch64-10       # qemu-aarch64-static 10.x dell'HOST
+# qemu-aarch64-static 10.x dell'HOST, copiato nella home (dev'essere sotto /home:
+# /tmp NON e' condiviso col container). Si sposta con QEMU10=...
+QEMU10=${QEMU10:-$HOME/qemu-aarch64-10}
 
 die() { echo "ERRORE: $*" >&2; exit 1; }
 [ -d "$BT" ] || die "build tree non trovato: $BT (VER=$VER giusto?)"

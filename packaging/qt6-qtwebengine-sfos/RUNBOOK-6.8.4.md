@@ -47,13 +47,13 @@ Due correzioni agli script, entrambe necessarie per non ripetere lavoro a mano:
   `CMAKE_HOME_DIRECTORY` = la dir stessa), quindi ora finisce con `"${SRCDIR:-.}"`
   e si lancia da `BUILD/qt6-qtwebengine-<ver>/upstream`.
 
-Path di lavoro: `/home/RootGPT/Developing/SailfishOS/RooTitanium/` (scelta
+Path di lavoro: `<repo>/` (scelta
 dell'utente, non si accorcia).
 
 ## 0. Prerequisiti
 
 - Engine docker `sailfish-sdk-build-engine_RootGPT` Up, target `SailfishOS-5.1.0.11-aarch64`.
-- `/home/RootGPT/qemu-aarch64-10` presente (qemu-aarch64-static ≥10 dell'host).
+- `$HOME/qemu-aarch64-10` presente (qemu-aarch64-static ≥10 dell'host).
 - Guardia VRM: build a **12 core**, di giorno, presidiata ([[vrm-thermal-build-limit]]).
 - Spazio: il build tree 6.8.3 occupa decine di GB. Decidere se **tenerlo** (utile
   come riferimento e per `build-launcher.sh`, che ci prende gli header di
