@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.5
+Version:    1.6
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,23 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Sep 05 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.6-1
+- YouTube, controlli del video: il tocco sul video torna a farli comparire.
+  Un accorgimento aggiunto a luglio serviva a impedire che quel tocco mettesse
+  in pausa il video per sbaglio; da allora YouTube ha cambiato il proprio
+  lettore e quell'accorgimento era diventato lui il problema, mangiandosi il
+  tocco. Ora l'app non intercetta piu' nulla: si limita a correggere la pausa
+  indesiderata se e quando ricompare.
+- YouTube, barra di avanzamento: si puo' toccare un punto qualsiasi della barra
+  per saltare li'. Il lettore di YouTube si sposta solo se si trascina il dito;
+  toccando e basta non succedeva nulla.
+- Menu' a tendina delle pagine (le liste «a discesa» dei moduli): tornano a
+  rispondere al tocco.
+
+* Fri Aug 14 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.5-1
+- Motore aggiornato a QtWebEngine 6.8.4: comprende le correzioni di sicurezza
+  di Chromium fino alla 138.0.7204.96.
+- Crediti rifatti di conseguenza nella schermata «Informazioni» e nel NOTICE.
 * Sun Aug 09 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.4.7-1
 - Corretto un difetto introdotto dalla 1.4.6 su alcuni telefoni (per esempio i
   porting con la fotocamera dentro lo schermo, come lo Xiaomi POCO M4 Pro 4G):

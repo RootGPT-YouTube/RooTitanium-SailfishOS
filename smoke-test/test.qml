@@ -96,7 +96,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "1.5"
+    readonly property string appVersion: "1.6"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -2089,33 +2089,84 @@ ${histCss}
         };
     })();`
 
-    // --- fix tap YouTube mobile: il tap che RIVELA i controlli non deve cliccare ---
-    // QtWebEngine dopo il touchend sintetizza mousedown/mouseup/click (~20ms dopo);
-    // su m.youtube.com il tap-catcher invisibile (player-controls-background,
-    // opacity:0 + pointer-events:auto) mostra i controlli al touchstart e il click
-    // di coda atterra sul bottone play/pausa appena comparso → pausa spuria +
-    // controlli che appaiono/spariscono (verificato via CDP + tap kernel: ogni
-    // tap a controlli nascosti diventava un play/pausa). Su Android Chrome quel
-    // click viene assorbito da YT; qui lo inghiottiamo noi, SOLO quando il gesto
-    // è iniziato sul player mweb (#player-control-container) coi controlli
-    // nascosti (niente classe fadein sull'overlay) — i tap coi controlli visibili
-    // passano intatti (play/pausa/seek legittimi), gli embed ytp non sono toccati.
+    // --- fix tap YouTube mobile: il tap che RIVELA i controlli non deve mettere in pausa ---
+    // Storia (serve per capire la forma attuale): a luglio 2026 QtWebEngine
+    // sintetizzava dopo il touchend un mousedown/mouseup/click (~20ms) che su
+    // m.youtube.com atterrava sul tap-catcher invisibile (player-controls-background,
+    // opacity:0 + pointer-events:auto) → il tap che doveva solo RIVELARE i controlli
+    // faceva anche play/pausa. Rimedio di allora: inghiottire i mouse-event di coda.
+    // A settembre 2026 YouTube ha cambiato il player mweb: il click di coda se lo
+    // assorbe lui (come su Android Chrome) e il reveal avviene PROPRIO su quel click.
+    // Misurato via CDP + tap iniettati sul device: con lo script vecchio 0 tap su 4
+    // facevano comparire i controlli, senza script 4 su 4 e nessuna pausa spuria.
+    // Ingoiare i click, oggi, è il bug: i controlli non compaiono (e sembrava
+    // intermittente perché il gesto che parte fuori dal catcher, o il click che
+    // arriva oltre la finestra dei 400ms, sfuggiva alla soppressione).
+    // Forma attuale: NON si tocca più nessun evento — si ripara solo l'effetto
+    // collaterale, se e quando ricompare. Se il gesto inizia sul player mweb coi
+    // controlli NASCOSTI (catcher trasparente) mentre il video va, allora nessun
+    // tap dell'utente può essere un "pausa" voluto (il bottone è invisibile): se
+    // subito dopo il video risulta in pausa, è la pausa spuria e la annulliamo.
+    // Costo zero quando YouTube si comporta bene, e il fix torna da solo se YT
+    // ricambia idea. Gli embed ytp e gli altri siti non sono toccati.
     readonly property string ytTapFixJs: `(function(){
         if (window.__rtYtTapFix) return; window.__rtYtTapFix = true;
-        var swallow = false, timer = 0;
-        function fadein(){ var o = document.getElementById('player-control-overlay');
-            return !!o && o.className.indexOf('fadein') >= 0; }
+        function catcher(){ return document.querySelector('.player-controls-background'); }
+        function hidden(){ var b = catcher();
+            return !!b && parseFloat(getComputedStyle(b).opacity || '1') < 0.5; }
+        var armed = false, wasPlaying = false, t1 = 0, t2 = 0;
         window.addEventListener('touchstart', function(e){
-            var p = e.target && e.target.closest && e.target.closest('#player-control-container');
-            swallow = !!p && !fadein();
+            var t = e.target;
+            armed = !!(t && t.closest && t.closest('#player-control-container')) && hidden();
+            var v = document.querySelector('video');
+            wasPlaying = armed && !!v && !v.paused && !v.ended;
         }, {capture:true, passive:true});
+        window.addEventListener('touchcancel', function(){ armed = false; }, {capture:true, passive:true});
         window.addEventListener('touchend', function(){
-            if (!swallow) return;
-            clearTimeout(timer); timer = setTimeout(function(){ swallow = false; }, 400);
+            if (!armed) return; armed = false;
+            if (!wasPlaying) return;
+            var v = document.querySelector('video'); if (!v) return;
+            // due controlli (la pausa può arrivare col click di coda, in ritardo)
+            function undo(){ if (v.paused && !v.ended) { try { v.play(); } catch(err){} } }
+            clearTimeout(t1); clearTimeout(t2);
+            t1 = setTimeout(undo, 120); t2 = setTimeout(undo, 380);
         }, {capture:true, passive:true});
-        function kill(e){ if (swallow) { e.stopImmediatePropagation(); e.preventDefault(); } }
-        var evs = ['mousedown','mouseup','click'];
-        for (var i = 0; i < evs.length; i++) window.addEventListener(evs[i], kill, {capture:true});
+
+        // --- tap-to-seek sulla barra di avanzamento ---
+        // Il player mweb tratta la barra come un solo scrubber a trascinamento:
+        // misurato sul device, un tap fermo (e anche un micro-drag di 5px) non
+        // sposta di un fotogramma, mentre un drag di 30px salta. Su un telefono
+        // il gesto naturale è toccare il punto dove si vuole andare, quindi lo
+        // aggiungiamo noi: se il gesto è iniziato E finito sulla barra senza
+        // trascinamento, saltiamo alla frazione toccata. Col trascinamento non
+        // interveniamo: quello YouTube lo gestisce già bene da solo.
+        var BAR = 'yt-progress-bar, .ytPlayerProgressBarDragContainer, .ytp-progress-bar';
+        var g = null;
+        window.addEventListener('touchstart', function(e){
+            var t = e.target, b = t && t.closest && t.closest(BAR), p = e.touches && e.touches[0];
+            g = (b && p) ? {bar:b, x:p.clientX, y:p.clientY, at:Date.now(), moved:0} : null;
+        }, {capture:true, passive:true});
+        window.addEventListener('touchmove', function(e){
+            var p = e.touches && e.touches[0]; if (!g || !p) return;
+            g.moved = Math.max(g.moved, Math.abs(p.clientX - g.x), Math.abs(p.clientY - g.y));
+        }, {capture:true, passive:true});
+        window.addEventListener('touchcancel', function(){ g = null; }, {capture:true, passive:true});
+        window.addEventListener('touchend', function(e){
+            var s = g; g = null;
+            if (!s || s.moved > 12 || Date.now() - s.at > 700) return;   // drag o pressione lunga: a YouTube
+            var v = document.querySelector('video');
+            if (!v || !isFinite(v.duration) || v.duration <= 0) return;  // niente dirette
+            var host = s.bar.closest('yt-progress-bar') || s.bar;
+            var r = host.getBoundingClientRect(); if (r.width < 40) return;
+            var p = (e.changedTouches && e.changedTouches[0]) || null;
+            var f = (((p ? p.clientX : s.x) - r.left) / r.width);
+            f = f < 0 ? 0 : (f > 1 ? 1 : f);
+            var to = f * v.duration;
+            if (Math.abs(to - v.currentTime) < 1) return;
+            var mp = document.getElementById('movie_player');
+            if (mp && typeof mp.seekTo === 'function') { try { mp.seekTo(to, true); return; } catch(err){} }
+            try { v.currentTime = to; } catch(err){}
+        }, {capture:true, passive:true});
     })();`
 
     function pushOrientation() {
