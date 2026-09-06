@@ -14,6 +14,11 @@
 #include <QRegularExpression>
 #include <QDBusConnection>
 #include <QDBusMessage>
+#include <QDBusServer>
+#include <QDBusAbstractAdaptor>
+#include <QThread>
+#include <unistd.h>
+#include <QSemaphore>
 #include <QVariantMap>
 #include <QVariantList>
 #include <QProcess>
@@ -130,6 +135,101 @@ private:
 
 // Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
 // sa fare (DBus, filesystem). Niente dipendenze Silica.
+// ===================== tastiera di sistema: orientamento =====================
+// Il plugin input-context di Maliit NON manda piu' al server l'orientamento
+// dell'app: la connessione a contentOrientationChanged e' COMMENTATA nel
+// sorgente del pacchetto (righe 348/354 di minputcontext.cpp, dal commit di
+// Rinigus del 2020 "follow Flatpak container window orientation"). Al suo posto
+// il plugin interroga un "container" D-Bus, ma solo se trova il suo indirizzo in
+// FLATPAK_MALIIT_CONTAINER_DBUS — pensato per le app Flatpak, dove il container
+// e' il compositore annidato. Senza quella variabile l'angolo resta 0 per sempre
+// e la tastiera non ruota mai: e' il motivo per cui in orizzontale esce dritta.
+//
+// Qui facciamo noi da container per il NOSTRO plugin: un server D-Bus
+// peer-to-peer privato del processo (nessun bus di sessione, nessun servizio
+// pubblicato) che espone org.container con le due proprieta' che il plugin
+// legge — `orientation` (gradi) e `activeState` — e i due segnali che ascolta.
+// Vedi Documentation/TASK-tastiera-sistema.md.
+class RtMaliitContainer : public QDBusAbstractAdaptor
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.container")
+    Q_PROPERTY(int orientation READ orientation)
+    Q_PROPERTY(bool activeState READ activeState)
+public:
+    explicit RtMaliitContainer(QObject *parent) : QDBusAbstractAdaptor(parent) {}
+    int orientation() const { return m_angle; }
+    // sempre attivo: il plugin inoltra l'angolo solo se il container si dichiara
+    // tale (updateContainerOrientation: `if (containerActive && active)`)
+    bool activeState() const { return true; }
+public slots:
+    // invocato dal main thread via QueuedConnection: l'oggetto vive nel thread
+    // del container e il segnale deve partire da li'
+    void setOrientation(int angle)
+    {
+        if (angle == m_angle) return;
+        m_angle = angle;
+        emit orientationChanged(angle);
+    }
+    // Ripete l'angolo ANCHE se non e' cambiato. Serve all'apertura della
+    // tastiera: il plugin inoltra al server solo con un campo a fuoco
+    // (`containerActive && active`), quindi la prima volta l'angolo arriva
+    // insieme alla tastiera e lipstick puo' aver gia' calcolato l'area riservata
+    // su una tastiera verticale (finestra alta 194 px invece di 480: i due esiti
+    // alternati visti sul POCO). Ripetendolo, il calcolo viene rifatto.
+    void reassertOrientation() { emit orientationChanged(m_angle); }
+signals:
+    void orientationChanged(int angle);
+    void activeStateChanged(bool active);
+private:
+    int m_angle = 0;
+};
+
+// Il container DEVE vivere in un thread suo. Il plugin maliit si costruisce
+// dentro l'init di QGuiApplication, sul MAIN thread, e li' legge le nostre
+// proprieta' con una chiamata D-Bus SINCRONA: se a servirla fosse il main
+// thread — fermo ad aspettare quella stessa risposta — l'app si pianta prima di
+// mostrare la finestra. Successo verificato: senza thread il log si ferma su
+// "Successfully created platform theme", con il thread l'app parte.
+class RtMaliitContainerThread : public QThread
+{
+    Q_OBJECT
+public:
+    explicit RtMaliitContainerThread(const QString &address)
+        : m_address(address) {}
+
+    // indirizzo REALE del server (con guid), valido dopo waitReady()
+    QString serverAddress() const { return m_realAddress; }
+    RtMaliitContainer *adaptor() const { return m_adaptor; }
+    bool waitReady(int ms) { return m_ready.tryAcquire(1, ms); }
+
+protected:
+    void run() override
+    {
+        QDBusServer server(m_address);
+        QObject obj;
+        m_adaptor = new RtMaliitContainer(&obj);
+        if (server.isConnected()) {
+            m_realAddress = server.address();
+            QObject::connect(&server, &QDBusServer::newConnection, &obj,
+                             [&obj](const QDBusConnection &c) {
+                QDBusConnection conn(c);
+                conn.registerObject(QStringLiteral("/"), &obj,
+                                    QDBusConnection::ExportAdaptors);
+            });
+        }
+        m_ready.release();
+        if (!server.isConnected()) return;
+        exec();
+    }
+
+private:
+    QString m_address;
+    QString m_realAddress;
+    QSemaphore m_ready;
+    RtMaliitContainer *m_adaptor = nullptr;
+};
+
 class NativeHelper : public QObject
 {
     Q_OBJECT
@@ -142,6 +242,23 @@ public:
         // minuto. Nessun rischio di lasciare il telefono acceso all'infinito.
         m_blankTimer.setInterval(30 * 1000);
         connect(&m_blankTimer, &QTimer::timeout, this, [this] { pauseBlanking(); });
+    }
+
+    // --- orientamento della tastiera di sistema (vedi RtMaliitContainer) ---
+    void setMaliitContainer(RtMaliitContainer *c) { m_maliit = c; }
+    // Chiamata dal QML a ogni cambio di orientamento della UI. L'angolo e' quello
+    // di cui e' ruotato il CONTENUTO (0 o 90), non il telefono.
+    Q_INVOKABLE void setKeyboardOrientation(int angle)
+    {
+        if (!m_maliit) return;
+        QMetaObject::invokeMethod(m_maliit, "setOrientation", Qt::QueuedConnection,
+                                  Q_ARG(int, angle));
+    }
+    // da chiamare quando la tastiera compare (vedi reassertOrientation)
+    Q_INVOKABLE void reassertKeyboardOrientation()
+    {
+        if (!m_maliit) return;
+        QMetaObject::invokeMethod(m_maliit, "reassertOrientation", Qt::QueuedConnection);
     }
 
     // Condivisione DI SISTEMA SailfishOS: apre il dialogo sailfish-share via
@@ -309,6 +426,7 @@ private:
     }
 
     QTimer m_blankTimer;
+    RtMaliitContainer *m_maliit = nullptr;
     bool m_keepDisplayOn = false;
 };
 
@@ -336,6 +454,37 @@ int main(int argc, char **argv)
         else
             flags += QStringLiteral(" --enable-features=ThirdPartyStoragePartitioning");
         qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags.toLocal8Bit());
+    }
+
+    // Container Maliit (vedi RtMaliitContainer): il server dev'essere gia' in
+    // ascolto e l'indirizzo gia' nell'ambiente PRIMA che nasca QGuiApplication,
+    // perche' il plugin input-context si costruisce li' dentro e legge la
+    // variabile una volta sola. Socket privato in XDG_RUNTIME_DIR, un nome per
+    // processo: niente bus di sessione, nessun servizio visibile ad altri.
+    RtMaliitContainerThread *maliitContainer = nullptr;
+    {
+        const QByteArray xrd = qgetenv("XDG_RUNTIME_DIR");
+        if (!xrd.isEmpty()) {
+            const QString sock = QStringLiteral("%1/rt-maliit-%2")
+                                     .arg(QString::fromLocal8Bit(xrd))
+                                     .arg((int)getpid());
+            QFile::remove(sock);   // socket orfano di un'istanza morta male
+            maliitContainer = new RtMaliitContainerThread(
+                QStringLiteral("unix:path=%1").arg(sock));
+            maliitContainer->start();
+            // se il thread non e' pronto in fretta si prosegue SENZA container:
+            // si perde la rotazione della tastiera, non l'avvio dell'app
+            if (maliitContainer->waitReady(3000)
+                && !maliitContainer->serverAddress().isEmpty()) {
+                qputenv("FLATPAK_MALIIT_CONTAINER_DBUS",
+                        maliitContainer->serverAddress().toLatin1());
+                qInfo("[rt] container Maliit in ascolto su %s",
+                      qPrintable(maliitContainer->serverAddress()));
+            } else {
+                qWarning("[rt] container Maliit non avviato: la tastiera di sistema"
+                         " non ruotera' in orizzontale");
+            }
+        }
     }
 
     QtWebEngineQuick::initialize();
@@ -388,6 +537,13 @@ int main(int argc, char **argv)
     engine.rootContext()->setContextProperty(QStringLiteral("rtNative"), &native);
     engine.rootContext()->setContextProperty(QStringLiteral("rtOpen"), &openHandler);
     engine.rootContext()->setContextProperty(QStringLiteral("rtOpenUrl"), openUrl);
+    // Quale tastiera e' in uso: la sceglie il launcher (che sa se il plugin
+    // maliit e' nel bundle e se il device ha maliit-server) e la comunica via
+    // QT_IM_MODULE; il QML deve saperlo per NON istanziare anche l'InputPanel
+    // di QtVirtualKeyboard, che altrimenti si affianca a quella di sistema.
+    const bool useMaliit = (qgetenv("QT_IM_MODULE") == "maliit");
+    engine.rootContext()->setContextProperty(QStringLiteral("rtMaliit"), useMaliit);
+    native.setMaliitContainer(maliitContainer ? maliitContainer->adaptor() : nullptr);
     engine.load(QUrl::fromLocalFile(base + "/test.qml"));
     if (engine.rootObjects().isEmpty())
         return -1;

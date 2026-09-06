@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.6
+Version:    1.7
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,18 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Sep 06 2026 RootGPT <emagiampa@gmail.com> - 1.7-1
+- Tastiera di sistema (Maliit) al posto della QtVirtualKeyboard in-app:
+  il plugin input-context Qt6 e' imbarcato nel bundle (LGPLv2), la
+  QtVirtualKeyboard resta come ripiego dove maliit-server manca.
+- La tastiera ruota anche in orizzontale: la rotazione passa al
+  compositor (contentOrientation) e l'angolo arriva al server maliit
+  tramite un container D-Bus interno all'app.
+- Corretti due difetti latenti di dimensionamento: zoom della pagina e
+  unita' della UI ora si basano sullo schermo, non sulla finestra, che
+  si accorcia quando compare la tastiera.
+- Grazie a Cristoffer (Imperador) per la segnalazione e le prove.
+
 * Sat Sep 05 2026 RootGPT-YouTube <rootgpt@users.noreply.github.com> - 1.6-1
 - YouTube, controlli del video: il tocco sul video torna a farli comparire.
   Un accorgimento aggiunto a luglio serviva a impedire che quel tocco mettesse

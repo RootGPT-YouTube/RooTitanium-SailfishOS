@@ -37,14 +37,20 @@ export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 # via ssh va indicato a mano (path standard del bus utente SFOS)
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/dbus/user_bus_socket}"
 
-# --- tastiera: QtVirtualKeyboard (in-app, via InputPanel nel QML) ---
-export QT_IM_MODULE=qtvirtualkeyboard
-# stile tastiera custom (glifi armonizzati, look Sailfish/ItalianoX) + layout con "/"
-export QT_VIRTUALKEYBOARD_STYLE="${QT_VIRTUALKEYBOARD_STYLE:-rt}"
-export QT_VIRTUALKEYBOARD_LAYOUT_PATH="${QT_VIRTUALKEYBOARD_LAYOUT_PATH:-$HERE/kbd-layouts}"
-# [Maliit: NON usato, ma l'assunzione storica era sbagliata su entrambi i punti —
-#  qt6-sfos-maliit-platforminputcontext (Chum) esiste e parla via DBus, non via
-#  wayland text-input. Vedi Documentation/TASK-2-isolamento-bundle.md, in fondo.]
+# --- tastiera: di sistema (Maliit) se possibile, QtVirtualKeyboard come ripiego ---
+# Stessa logica del launcher C (rootitanium-launch.c), tenuta allineata a mano.
+# NB: la sessione SFOS esporta QT_IM_MODULE=Maliit (maiuscolo), che NON basta:
+# Qt cerca un plugin con quel nome e, non trovandolo, usa "compose" — nessuna
+# tastiera. Serve il plugin vero (chiave "maliit") nei nostri path.
+if [ -r "$HERE/plugins/platforminputcontexts/libmaliitplatforminputcontextplugin.so" ] \
+   && [ -x /usr/bin/maliit-server ]; then
+    export QT_IM_MODULE=maliit
+else
+    export QT_IM_MODULE=qtvirtualkeyboard
+    # stile tastiera custom (glifi armonizzati, look Sailfish/ItalianoX) + layout con "/"
+    export QT_VIRTUALKEYBOARD_STYLE="${QT_VIRTUALKEYBOARD_STYLE:-rt}"
+    export QT_VIRTUALKEYBOARD_LAYOUT_PATH="${QT_VIRTUALKEYBOARD_LAYOUT_PATH:-$HERE/kbd-layouts}"
+fi
 # lingua device (un'app SFOS vera la eredita dalla sessione; qui via SSH la forziamo).
 # Fallback neutro come nel launcher C: LANG pilota Qt.locale() e quindi
 # l'Accept-Language, un default italiano darebbe pagine italiane a stranieri.

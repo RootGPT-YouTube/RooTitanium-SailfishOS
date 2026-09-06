@@ -118,10 +118,34 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* tastiera QtVirtualKeyboard */
-    setenv("QT_IM_MODULE", "qtvirtualkeyboard", 1);
-    setenv("QT_VIRTUALKEYBOARD_STYLE", "rt", 0);
-    set_here("QT_VIRTUALKEYBOARD_LAYOUT_PATH", "/kbd-layouts", 0);
+    /* Tastiera: quella di SISTEMA (Maliit) quando si puo', la nostra
+     * QtVirtualKeyboard come ripiego.
+     *
+     * La sessione SFOS esporta QT_IM_MODULE=Maliit, ma con quel valore Qt cerca
+     * un plugin di nome "Maliit" e, se non lo trova, NON ripiega sul text-input
+     * di Wayland: usa l'input context "compose", che tastiere non ne apre
+     * (provato sul POCO M4 Pro il 6 set 2026: nessuna tastiera). Il plugin vero
+     * e' `libmaliitplatforminputcontextplugin.so` (chiave "maliit"), che parla
+     * con maliit-server via DBus: sta in chum:testing, cioe' NON su un device
+     * pulito, quindi ce lo portiamo nel bundle e lo carichiamo dai NOSTRI path
+     * (qt.conf resta com'e': i plugin di sistema restano fuori).
+     *
+     * Due condizioni, entrambe necessarie: il plugin nel bundle e maliit-server
+     * sul device. Se manca una delle due si torna alla tastiera in-app, che per
+     * questo resta imbarcata. */
+    {
+        char plug[PATH_MAX];
+        snprintf(plug, sizeof(plug),
+                 "%s/plugins/platforminputcontexts/libmaliitplatforminputcontextplugin.so",
+                 HERE);
+        if (access(plug, R_OK) == 0 && access("/usr/bin/maliit-server", X_OK) == 0) {
+            setenv("QT_IM_MODULE", "maliit", 1);
+        } else {
+            setenv("QT_IM_MODULE", "qtvirtualkeyboard", 1);
+            setenv("QT_VIRTUALKEYBOARD_STYLE", "rt", 0);
+            set_here("QT_VIRTUALKEYBOARD_LAYOUT_PATH", "/kbd-layouts", 0);
+        }
+    }
     /* solo se la sessione non lo passa: fallback neutro, non italiano. LANG
      * pilota Qt.locale() e quindi l'Accept-Language dei profili: un default
      * italiano servirebbe pagine in italiano a utenti stranieri. */

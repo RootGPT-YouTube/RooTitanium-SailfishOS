@@ -36,6 +36,22 @@ it lean.
 - License: GPL-3.0-or-later — see [LICENSE](LICENSE)
 - Source: https://github.com/RootGPT-YouTube/RooTitanium-SailfishOS
 
+**Maliit input-context plugin for Qt 6** (`qt6-sfos-maliit-platforminputcontext` 1.0.1)
+- Role: lets the app use the **system keyboard** of Sailfish OS instead of the
+  in-app QtVirtualKeyboard. It is a Qt platform input context that talks to
+  `maliit-server` over D-Bus; it needs no Maliit library of its own.
+- License: LGPL-2.1 (`LGPLv2` per the RPM metadata)
+- Distribution: **bundled** in the RPM as a single separable shared object,
+  `/home/rootitanium/plugins/platforminputcontexts/libmaliitplatforminputcontextplugin.so`,
+  so it can be replaced by the user (LGPL §4 relinking). It is bundled rather
+  than required as a dependency because the package lives in `chum:testing`,
+  which a stock device does not have enabled.
+- Source: https://github.com/sailfishos-open/maliit-framework — the exact binary
+  is taken from the published package, whose URL and SHA-256 are recorded in
+  `packaging/harbour-rootitanium/fetch-maliit-plugin.sh` (that script is how the
+  file enters the bundle; the binary itself is not kept in this repository)
+- © The Maliit team and the sailfishos-open contributors
+
 **Qt 6 / Qt WebEngine** (`qt6-qtwebengine` 6.8.4)
 - Role: the browser engine (QtWebEngine + Chromium) and its Qt 6 runtime
   (QtCore/Gui/Qml/Quick/WebEngineQuick/WebEngineCore, QtVirtualKeyboard, plugins)

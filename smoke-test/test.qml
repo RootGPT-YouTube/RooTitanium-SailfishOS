@@ -11,6 +11,19 @@ Window {
     visibility: Window.FullScreen
     color: win.pal.bg
 
+    contentOrientation: win.orient === 90 ? Qt.InvertedLandscapeOrientation
+                                          : Qt.PortraitOrientation
+    // `contentOrientation` dice al compositor come e' girato il nostro contenuto:
+    // lipstick RUOTA la superficie (configure 1080x2400 → 2274x1080) e sottrae
+    // l'area della tastiera dal lato giusto. Il verso e' INVERTED: Landscape
+    // gira dalla parte opposta a quella che ci serve (provato: pagina a testa in
+    // giu'). Perche' funzioni serve pero' che anche la tastiera di sistema
+    // ruoti, e quella non la vede il compositor: gliela ruotiamo noi dal
+    // container D-Bus in main.cpp. Senza quel pezzo, dichiarare l'orientamento
+    // qui PEGGIORA le cose (finestra coricata sotto una tastiera dritta = i 194
+    // px che avanzano, schermo nero). I due pezzi vanno insieme.
+    // Storia e misure: Documentation/TASK-tastiera-sistema.md
+
     // ⚠️ NIENTE binding di width/height su `Screen` qui (c'erano fino al 28 lug
     // 2026): non impedivano affatto al compositor di rimpicciolire la surface —
     // la rimpiccioliva lo stesso — e in più MASCHERAVANO il problema. Quando il
@@ -29,6 +42,16 @@ Window {
         var sw = Math.min(Screen.width, Screen.height)
         var sh = Math.max(Screen.width, Screen.height)
         if (width === sw && height === sh) return
+        // ⚠️ Con la tastiera di SISTEMA il clamp NON è il difetto: è il modo
+        // normale in cui lipstick fa posto a Maliit, e la UI deve semplicemente
+        // stare nello spazio che resta. Rinegoziare qui apre una guerra col
+        // compositor che degenera — POCO M4 Pro, 6 set 2026: configure 1080x1421
+        // (tastiera aperta) → showNormal+2400 → il compositor risponde
+        // QSize(194, 2274), larghezza 194 px → schermo nero. La riserva "alta
+        // quanto una tastiera" che questa funzione combatte, qui è letteralmente
+        // una tastiera.
+        if (win.useMaliit && (Qt.inputMethod.visible
+                              || Qt.inputMethod.keyboardRectangle.height > 0)) return
         // Reagisco SOLO al clamp del compositor: larghezza giusta, altezza
         // ridotta ma plausibile (la riserva è alta quanto una tastiera). Così
         // restano fuori la geometria di default della Window prima della
@@ -84,8 +107,13 @@ Window {
                      + win.width + "x" + win.height + " visibility=" + win.visibility)
     }
 
-    // u basato sul lato corto: resta costante quando il contenuto ruota in landscape
-    readonly property real u: Math.min(width, height) / 540
+    // Unita' di misura della UI, sul lato corto dello SCHERMO — non della
+    // finestra. La finestra si accorcia quando il compositor le sottrae l'area
+    // della tastiera di sistema: con il lato corto della finestra `u` passava da
+    // 2 a 0.9 e tutta la UI (toolbar, barra indirizzi, testi) si rimpiccioliva
+    // all'apertura della tastiera in orizzontale. Sullo schermo resta costante
+    // in ogni orientamento e con qualsiasi ingombro della tastiera.
+    readonly property real u: Math.min(Screen.width, Screen.height) / 540
 
     // --- lingua UI: italiano se il dispositivo è italiano, altrimenti inglese ---
     // Tutta la UI è bilingue via t(it, en). Rilevamento una-tantum dal locale di
@@ -96,7 +124,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "1.6"
+    readonly property string appVersion: "1.7"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -145,10 +173,23 @@ Window {
     }
 
     // --- rotazione landscape ---
-    // lipstick NON ruota le superfici wayland (le app SFOS si ruotano da sole):
-    // ruotiamo il contenitore root (appRoot). Sensori non disponibili in Qt6 sul
-    // device → landscape manuale dal menù + automatico per video a tutto schermo.
-    // rotation 90 = si gira il telefono in senso antiorario (tacca in alto a sinistra)
+    // La rotazione la esegue il COMPOSITOR (vedi contentOrientation in cima):
+    // qui `orient` resta lo stato "siamo in orizzontale", che serve a dichiarare
+    // l'orientamento, a dire il suo angolo alla tastiera di sistema e a
+    // sincronizzare lo spoof di screen.*/orientation per il player YouTube.
+    // Fino al 6 set 2026 ruotavamo invece `appRoot` dentro il QML: funzionava,
+    // ma la tastiera di sistema non poteva seguirci e il compositor sottraeva
+    // l'area della tastiera dal lato sbagliato.
+    // Sensori non disponibili in Qt6 sul device → landscape manuale dal menù +
+    // automatico per video a tutto schermo.
+    // --- quale tastiera ---
+    // La scelta la fa il launcher (rootitanium-launch.c / run.sh), che sa se il
+    // plugin maliit e' nel bundle e se il device ha maliit-server, e la comunica
+    // via QT_IM_MODULE; main.cpp ce la ripete in `rtMaliit`. Qui serve solo a
+    // NON istanziare l'InputPanel di QtVirtualKeyboard quando la tastiera la
+    // mette il sistema: altrimenti si aprono tutte e due (visto sul POCO).
+    readonly property bool useMaliit: (typeof rtMaliit !== "undefined") && rtMaliit
+
     property bool videoFS: false
     property bool manualLandscape: false
     // diagnosi 11 lug: fullscreen+rotazione OK con <video> normali (probe);
@@ -276,13 +317,22 @@ Window {
                 ch.arch = m ? "" : "x86"
                 ch.bitness = m ? "" : "64"
                 ch.wow64 = false
-                // NB brand "Google Chrome": NON impostabile in modo coerente. Il
-                // setter fullVersionList tocca solo la lista HIGH-entropy (via JS
-                // getHighEntropyValues), mentre l'header Sec-CH-UA low-entropy è
-                // gestito dallo stack di rete C++ e QtWebEngine non lo espone →
-                // aggiungere Google Chrome creava un mismatch high/low. Restiamo
-                // "Chromium 122" coerente ovunque (vendor "Google Inc." è normale
-                // anche per Chromium vero: tutti i browser Blink lo riportano)
+                // Brand list allineata all'header sec-ch-ua dell'interceptor C++
+                // (main.cpp): il low-entropy dice "Google Chrome";v="122", il JS
+                // diceva solo "Chromium" → mismatch fra i due canali, segnale di
+                // browser manipolato per gli anti-bot che li confrontano. Questo
+                // setter alimenta l'header Sec-CH-UA-Full-Version-List e il campo
+                // fullVersionList di getHighEntropyValues; SOSTITUISCE la lista
+                // (profile_adapter fa clear() prima di riempirla, non la estende
+                // come dice la doc Qt) → va passata intera, Not:A-Brand compreso.
+                // LIMITE residuo: navigator.userAgentData.brands (low-entropy, JS,
+                // senza getHighEntropyValues) resta "Chromium" — Qt espone solo
+                // brand_full_version_list, non brand_version_list
+                ch.fullVersionList = {
+                    "Google Chrome": "122.0.0.0",
+                    "Chromium": "122.0.0.0",
+                    "Not:A-Brand": "24.0.0.0"
+                }
             } catch(e) { console.warn("clientHints non disponibili: " + e) }
         }
     }
@@ -1536,6 +1586,8 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
 <div class="cr">${win.t("Le protezioni anti-fingerprint e il blocco dei banner cookie sono ispirati a Brave e Cromite. Grazie per il lavoro pionieristico sulla privacy nel browser!", "The anti-fingerprint protections and cookie-banner blocking are inspired by Brave and Cromite. Thanks for the pioneering work on browser privacy!")}</div>
 <a class="crlnk" href="https://github.com/brave/brave-browser" style="margin-bottom:2px">${win.t("Apri Brave su GitHub", "Open Brave on GitHub")}</a>
 <a class="crlnk" href="https://github.com/uazo/cromite">${win.t("Apri Cromite su GitHub", "Open Cromite on GitHub")}</a>
+<div class="cr">${win.t("La tastiera di sistema arriva dal plugin input-context di Maliit per Qt6, mantenuto dal progetto sailfishos-open sotto LGPLv2. La segnalazione che si potesse usare, e le prove sul campo per farla funzionare, sono di Cristoffer (Imperador). Grazie!", "The system keyboard comes from the Maliit input-context plugin for Qt6, maintained by the sailfishos-open project under the LGPLv2. The report that it could be used, and the field testing to make it work, are by Cristoffer (Imperador). Thanks!")}</div>
+<a class="crlnk" href="https://github.com/sailfishos-open/maliit-framework">${win.t("Apri Maliit su GitHub", "Open Maliit on GitHub")}</a>
 <div class="cr">${win.t("Gira su Sailfish OS di Jolla. Grazie alla community per averlo mantenuto vivo!", "Runs on Sailfish OS by Jolla. Thanks to the community for keeping it alive!")}</div>
 <a class="crlnk" href="https://sailfishos.org/">${win.t("Apri Sailfish OS", "Open Sailfish OS")}</a>
 <div class="foot">© 2026 RootGPT · GPLv3</div>
@@ -1948,8 +2000,9 @@ ${body}
     // (logo, titoli, link, margini) e le righe della griglia preferiti;
     // stime in px CSS: riga cronologia ~60, riga griglia 82 + gap 18
     function homeHistCount(gridRows) {
-        var zoom = desktopMode ? 1.0 : Math.max(1.0, Math.min(width, height) / 412)
-        var viewH = (orient !== 0 ? Math.min(width, height) : Math.max(width, height)) - toolbar.height
+        // stesso criterio dello zoomFactor: lato corto dello SCHERMO
+        var zoom = desktopMode ? 1.0 : Math.max(1.0, Math.min(Screen.width, Screen.height) / 412)
+        var viewH = height - toolbar.height
         var vh = viewH / zoom
         var fixed = 26 + 60 + 58 + 58 + 40 + 50   // padding, logo, 2×h2, hmore, fondo+margine
         var grid = gridRows > 0 ? gridRows * 82 + (gridRows - 1) * 18 : 20
@@ -2176,7 +2229,33 @@ ${histCss}
             if (v) v.runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(" + land + ")")
         }
     }
-    onOrientChanged: pushOrientation()
+    onOrientChanged: {
+        pushOrientation()
+        // La tastiera di SISTEMA vive in una superficie sua e non ruota con noi:
+        // l'angolo glielo dobbiamo dire, e il canale e' il "container" D-Bus che
+        // main.cpp espone al plugin maliit (vedi RtMaliitContainer in main.cpp).
+        if (useMaliit && typeof rtNative !== "undefined" && rtNative.setKeyboardOrientation)
+            rtNative.setKeyboardOrientation(orient)
+    }
+
+    // Alla comparsa della tastiera di sistema, riafferma l'angolo: il plugin
+    // inoltra al server solo con un campo a fuoco, quindi la prima notifica
+    // arriva insieme alla tastiera e lipstick puo' aver gia' riservato l'area di
+    // una tastiera verticale. Il ritardo lascia al server il tempo di creare la
+    // sua superficie prima che il calcolo venga rifatto.
+    Connections {
+        target: Qt.inputMethod
+        function onVisibleChanged() {
+            if (Qt.inputMethod.visible && win.useMaliit && win.orient !== 0)
+                kbdReassert.restart()
+        }
+    }
+    Timer {
+        id: kbdReassert
+        interval: 250
+        onTriggered: if (typeof rtNative !== "undefined" && rtNative.reassertKeyboardOrientation)
+                         rtNative.reassertKeyboardOrientation()
+    }
 
     ListModel { id: tabsModel }
 
@@ -2222,14 +2301,11 @@ ${histCss}
         Qt.callLater(refreshCurrent)
     }
 
-    // contenitore ruotabile: TUTTA la UI vive qui dentro; in landscape si
-    // scambiano larghezza/altezza e si ruota attorno al centro della finestra
+    // Contenitore della UI: NON ruota: la finestra ce la consegna gia' orientata
+    // il compositor, e ruotare anche qui vorrebbe dire girare due volte.
     Item {
         id: appRoot
-        anchors.centerIn: parent
-        rotation: win.orient
-        width: win.orient % 180 === 0 ? win.width : win.height
-        height: win.orient % 180 === 0 ? win.height : win.width
+        anchors.fill: parent
 
     Column {
         anchors.fill: parent
@@ -2409,12 +2485,17 @@ ${histCss}
                     // quindi lo stato va tracciato a parte. "" = pagina web vera.
                     property string localPage: ""
                     profile: priv ? incognitoProfile : normalProfile
-                    // zoom sul lato corto della FINESTRA (costante in landscape):
-                    // viewport CSS ~412px in portrait, ~960px in landscape.
+                    // Zoom sul lato corto dello SCHERMO, non della finestra: la
+                    // finestra si rimpicciolisce quando il compositor le sottrae
+                    // l'area della tastiera di sistema, e con il lato corto della
+                    // finestra il fattore crollava da 2.6 a 1.2 — pagina di colpo
+                    // minuscola appena si apriva la tastiera in orizzontale.
+                    // Viewport CSS ~412px in portrait, ~960px in landscape.
                     // NB: --force-device-scale-factor NON cambia il DSF della view
                     // (QtWebEngine usa il dpr della QQuickWindow = 1) ma corregge
                     // screen.* (in DIP) e le soglie gesture del display
-                    zoomFactor: win.desktopMode ? 1.0 : Math.max(1.0, Math.min(win.width, win.height) / 412)
+                    zoomFactor: win.desktopMode ? 1.0
+                                : Math.max(1.0, Math.min(Screen.width, Screen.height) / 412)
                     settings.fullScreenSupportEnabled: true
                     settings.javascriptEnabled: win.cfgJs
                     Component.onCompleted: {
@@ -3333,15 +3414,24 @@ ${histCss}
         Timer { id: toastTimer; interval: 1900; onTriggered: toast.opacity = 0 }
     }
 
-    // tastiera QtVirtualKeyboard in-app; in landscape resta larga come il lato
-    // corto (a tutta larghezza scalerebbe fino a coprire l'intero schermo)
-    InputPanel {
+    // Tastiera QtVirtualKeyboard in-app: RIPIEGO, si istanzia solo dove la
+    // tastiera di sistema non e' disponibile (niente plugin maliit nel bundle o
+    // niente maliit-server sul device). Con Maliit attivo va lasciata proprio
+    // non creata: l'InputPanel si mostra sul focus per conto suo e affiancava
+    // una seconda tastiera a quella di sistema.
+    // In landscape resta larga come il lato corto (a tutta larghezza scalerebbe
+    // fino a coprire l'intero schermo).
+    Loader {
         id: inputPanel
+        active: !win.useMaliit
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         width: Math.min(parent.width, win.width)
-        visible: active
         z: 99
+        sourceComponent: InputPanel {
+            width: inputPanel.width
+            visible: active
+        }
     }
 
     }   // fine appRoot
