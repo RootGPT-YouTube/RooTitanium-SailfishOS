@@ -2652,7 +2652,7 @@ ${histCss}
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
                     onUrlChanged: { 
-                        localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() 
+                        localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() ;
                         // Swipe Commands for Back and Forward
                         var canBack = win.currentView.canGoBack
                         var canFwd = win.currentView.canGoForward
