@@ -2651,7 +2651,77 @@ ${histCss}
                     // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
-                    onUrlChanged: { localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
+                    onUrlChanged: { 
+                        localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() 
+                        // Swipe Commands for Back and Forward
+                        var canBack = win.currentView.canGoBack
+                        var canFwd = win.currentView.canGoForward
+                        runJavaScript("window.__rtCanBack=" + canBack + "; window.__rtCanFwd=" + canFwd + ";")
+
+                        runJavaScript(`
+                            (function(){
+                                var sx=0, sy=0, overlay=null, arrow=null;
+
+                                function getOverlay(dir) {
+                                    if (!overlay) {
+                                        overlay = document.createElement('div');
+                                        overlay.style.cssText = 'position:fixed;top:0;bottom:0;width:0;pointer-events:none;z-index:99999;transition:opacity 0.2s;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);background:rgba(255,255,255,0.18);';
+                                        arrow = document.createElement('div');
+                                        arrow.style.cssText = 'position:absolute;top:50%;transform:translateY(-50%);font-size:28px;color:rgba(255,255,255,0.9);text-shadow:0 0 12px rgba(0,0,0,0.4);transition:opacity 0.15s;opacity:0;';
+                                        overlay.appendChild(arrow);
+                                        document.body.appendChild(overlay);
+                                    }
+                                    if (dir > 0) {
+                                        overlay.style.left='0'; overlay.style.right='';
+                                        overlay.style.borderRadius='0 20px 20px 0';
+                                        arrow.style.left='50%'; arrow.style.right='';
+                                        arrow.style.transform='translateY(-50%) translateX(-50%)';
+                                        arrow.textContent='←';
+                                    } else {
+                                        overlay.style.right='0'; overlay.style.left='';
+                                        overlay.style.borderRadius='20px 0 0 20px';
+                                        arrow.style.right='50%'; arrow.style.left='';
+                                        arrow.style.transform='translateY(-50%) translateX(50%)';
+                                        arrow.textContent='→';
+                                    }
+                                    return overlay;
+                                }
+
+                                document.addEventListener('touchstart',function(e){
+                                    sx=e.touches[0].clientX; sy=e.touches[0].clientY;
+                                },{passive:true});
+
+                                document.addEventListener('touchmove',function(e){
+                                    var dx=e.touches[0].clientX-sx;
+                                    var dy=e.touches[0].clientY-sy;
+                                    if(Math.abs(dx)>Math.abs(dy)*1.5 && Math.abs(dx)>10){
+                                        // Only show up if there is a page to go to
+                                        if((dx>0 && !window.__rtCanBack) || (dx<0 && !window.__rtCanFwd)) return;
+                                        var progress=Math.min(Math.abs(dx)/120,1);
+                                        var o=getOverlay(dx);
+                                        o.style.width=Math.min(Math.abs(dx)*0.5,72)+'px';
+                                        o.style.opacity=progress;
+                                        arrow.style.opacity=progress>0.3?((progress-0.3)/0.7):0;
+                                    }
+                                },{passive:true});
+
+                                document.addEventListener('touchend',function(e){
+                                    var dx=e.changedTouches[0].clientX-sx;
+                                    var dy=e.changedTouches[0].clientY-sy;
+                                    if(overlay){
+                                        overlay.style.transition='opacity 0.2s, width 0.2s';
+                                        overlay.style.opacity='0';
+                                        overlay.style.width='0';
+                                        arrow.style.opacity='0';
+                                    }
+                                    if(Math.abs(dx)>Math.abs(dy)*1.5 && Math.abs(dx)>80){
+                                        if(dx>0 && window.__rtCanBack) history.back(); //if(dx>0) history.back();
+                                        else if(dx<0 && window.__rtCanFwd) history.forward(); //else history.forward();
+                                    }
+                                },{passive:true});
+                            })();
+                        `)
+                    }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
