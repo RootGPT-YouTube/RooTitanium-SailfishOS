@@ -41,10 +41,13 @@
 // Stato dei toggle privacy (task 1.3 §E), condiviso fra QML, interceptor e
 // cookie filter. atomic perché l'interceptor e il filtro cookie possono essere
 // invocati da thread diversi da quello del QML.
+// I valori iniziali rispecchiano i default del QML (loadCfg li sovrascrive con
+// la kv prima che parta qualunque richiesta): tenerli allineati, altrimenti
+// "default" vuol dire due cose diverse nei due file.
 struct PrivacyFlags {
-    std::atomic<bool> dnt{false};          // DNT: 1 + Sec-GPC: 1
+    std::atomic<bool> dnt{true};           // DNT: 1 + Sec-GPC: 1
     std::atomic<bool> noReferrer{false};   // niente Referer verso terze parti
-    std::atomic<bool> block3pCookies{false};
+    std::atomic<bool> block3pCookies{true};
 };
 static PrivacyFlags g_privacy;
 

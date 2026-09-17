@@ -114,6 +114,26 @@ Window {
     // all'apertura della tastiera in orizzontale. Sullo schermo resta costante
     // in ogni orientamento e con qualsiasi ingombro della tastiera.
     readonly property real u: Math.min(Screen.width, Screen.height) / 540
+    // Quanto scendono i pallini di selezione sotto il bordo inferiore della
+    // selezione, in px della view: 24 (immagine) + 2 (offset verticale), valori
+    // fissi di Chromium (touch_handle_drawable_qt.cpp) verificati sul device.
+    readonly property int touchHandleClearance: 26
+    // Chromium ci notifica il «mostra menù» (touchSelectionMenuRequested) ma MAI
+    // il «nascondi»: hideTouchSelectionMenu() nasconde solo il menù interno di
+    // Qt, al QML non arriva nulla. Conseguenza: toccando fuori dalla selezione
+    // il touchUp arriva PRIMA che il renderer abbia confermato che la selezione
+    // è sciolta, Chromium chiede comunque il menù con i vecchi limiti e questo
+    // rispuntava da solo un istante dopo essersi chiuso. Ma quel tocco lo
+    // vediamo passare noi: se cade fuori dalla selezione sappiamo già che la
+    // selezione sta per sparire, e la richiesta che arriva subito dopo si butta.
+    property rect touchSelRect: Qt.rect(0, 0, 0, 0)
+    property double touchSelKillAt: 0
+    property double touchSelVerifyAt: 0
+    function inTouchSelRect(x, y) {
+        return touchSelRect.width > 0
+            && x >= touchSelRect.x && x <= touchSelRect.x + touchSelRect.width
+            && y >= touchSelRect.y && y <= touchSelRect.y + touchSelRect.height
+    }
 
     // --- lingua UI: italiano se il dispositivo è italiano, altrimenti inglese ---
     // Tutta la UI è bilingue via t(it, en). Rilevamento una-tantum dal locale di
@@ -341,16 +361,18 @@ Window {
     property bool cfgJs: true               // Attiva JavaScript
     property bool cfgCookies: true          // conserva i cookies alla chiusura (#5)
     property bool cfgPopups: true           // consenti ai siti di aprire nuove schede (#6)
-    property bool cfgDnt: false             // Non tenere traccia
+    property bool cfgDnt: true              // Non tenere traccia (default dal 17 set)
     property bool cfgDark: false            // resa scura forzata (auto-dark Chromium)
     property bool cfgStartPrivate: false    // avvia in navigazione privata
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
-    // --- task 1.3: hardening privacy. TUTTI E TRE SPENTI DI DEFAULT (decisione
-    // del 20 lug): sono le misure che possono rompere siti, quindi l'utente le
-    // accende una per una. Indipendenti fra loro, nessun toggle master.
-    property bool cfg3pCookies: false       // blocca i cookie di terze parti
+    // --- task 1.3: hardening privacy. Erano tutti e tre spenti di default (20
+    // lug): sono le misure che possono rompere siti. Il 17 set i cookie di terze
+    // parti passano ACCESI di default (scelta dell'utente, collaudata sul POCO);
+    // referrer e storage 3P restano spenti (noreferrer rompe i captcha).
+    // Indipendenti fra loro, nessun toggle master.
+    property bool cfg3pCookies: true        // blocca i cookie di terze parti
     property bool cfgNoReferrer: false      // niente Referer verso siti esterni
     property bool cfg3pStorage: false       // isola lo storage 3P (flag: al PROSSIMO avvio)
     // Permessi App: gate master di capacità, sopra i permessi per-sito. Se OFF,
@@ -402,7 +424,7 @@ Window {
         cfgJs           = kvGet("set_js", "1") === "1"
         cfgCookies      = kvGet("set_cookies", "1") === "1"
         cfgPopups       = kvGet("set_popups", "1") === "1"
-        cfgDnt          = kvGet("set_dnt", "0") === "1"
+        cfgDnt          = kvGet("set_dnt", "1") === "1"
         cfgDark         = kvGet("set_dark", "0") === "1"
         cfgStartPrivate = kvGet("set_startprivate", "0") === "1"
         cfgCloseTabs    = kvGet("set_closetabs", "1") === "1"
@@ -421,7 +443,7 @@ Window {
         cfgDlDir        = kvGet("set_dldir", "downloads")
         if (!dlDirs[cfgDlDir]) cfgDlDir = "downloads"
         cfgReaderPx     = parseInt(kvGet("set_readerpx", "19")) || 19
-        cfg3pCookies    = kvGet("set_3pcookies", "0") === "1"
+        cfg3pCookies    = kvGet("set_3pcookies", "1") === "1"
         cfgNoReferrer   = kvGet("set_noreferrer", "0") === "1"
         cfg3pStorage    = kvGet("set_3pstorage", "0") === "1"
         syncPrivacy()
@@ -964,25 +986,86 @@ Window {
         // req.position è relativo alla WebEngineView (che sta sotto la toolbar)
         ctxMenu.px = req.position.x
         ctxMenu.py = req.position.y + (toolbar.visible ? toolbar.height : 0)
+        ctxMenu.touchSel = false
         ctxMenu.open = true
     }
 
+    // Domanda al renderer: c'è ancora qualcosa che giustifichi il menù? Una
+    // selezione non vuota, oppure il fuoco su un campo editabile (lì il menù è
+    // quello del cursore, con «Incolla», e il testo selezionato è vuoto per
+    // definizione).
+    readonly property string jsHasSelection:
+        "(function(){var s=window.getSelection();if(s&&String(s).length)return true;" +
+        "var a=document.activeElement;" +
+        "return !!(a&&(a.isContentEditable||/^(input|textarea)$/i.test(a.tagName)));})()"
+
     // menù di selezione touch (sostituisce il quick-menu "Copy | …" di Chromium)
     function showTouchSelection(view, req) {
-        menu.open = false
-        ctxView = view
-        ctxLink = ""; ctxImg = ""
+        // richiesta che segue un tocco fuori dalla selezione: è il menù che
+        // Chromium chiede prima di accorgersi che la selezione non c'è più
+        if (Date.now() - win.touchSelKillAt < 1000) { win.touchSelKillAt = 0; return }
+
         var f = req.touchSelectionCommandFlags
         var items = []
         if (f & TouchSelectionMenuRequest.Copy)  items.push({ l: win.t("Copia", "Copy"),   a: "copy" })
         if (f & TouchSelectionMenuRequest.Cut)   items.push({ l: win.t("Taglia", "Cut"),  a: "cut" })
         if (f & TouchSelectionMenuRequest.Paste) items.push({ l: win.t("Incolla", "Paste"), a: "paste" })
         items.push({ l: win.t("Seleziona tutto", "Select all"), a: "selall" })
-        ctxModel = items
-        // selectionBounds è relativo alla WebEngineView; il menù sotto la selezione
-        ctxMenu.px = req.selectionBounds.x
-        ctxMenu.py = req.selectionBounds.y + req.selectionBounds.height + (toolbar.visible ? toolbar.height : 0) + 8 * u
-        ctxMenu.open = true
+
+        // selectionBounds è relativo alla WebEngineView e NON comprende i pallini:
+        // quelli scendono altri 26 px sotto il bordo inferiore della selezione
+        // (immagine 24x24 di Chromium + kSelectionHandleVerticalVisualOffset=2,
+        // misurato sul POCO: w=24 h=24 in px della view). Il menù stava a +8*u
+        // = 16 px, quindi ne copriva gli ultimi 10 px — e siccome sta a z:60
+        // sopra la pagina, si prendeva lui il tocco: i pallini diventavano
+        // inafferrabili dal basso. Ora il franco è pieno; se sotto non entra,
+        // il menù va SOPRA la selezione (i pallini stanno sempre sotto la riga,
+        // quindi lassù non c'è nulla da coprire).
+        var topOff = (toolbar.visible ? toolbar.height : 0)
+        var menuH = items.length * 58 * u + 16 * u
+        var below = req.selectionBounds.y + req.selectionBounds.height + topOff + win.touchHandleClearance + 8 * u
+        var mx = req.selectionBounds.x
+        var my = (below + menuH <= appRoot.height - 8 * u)
+                 ? below
+                 : Math.max(8 * u, req.selectionBounds.y + topOff - menuH - 8 * u)
+        // area «della selezione» per lo strato di chiusura: i limiti allargati di
+        // 34 px, abbastanza da contenere i due pallini ovunque si trovino (24 di
+        // immagine + 2 di offset, e su selezione multiriga non stanno sugli
+        // angoli del rettangolo)
+        var pad = win.touchHandleClearance + 8
+        var zone = Qt.rect(req.selectionBounds.x - pad,
+                           req.selectionBounds.y + topOff - pad,
+                           req.selectionBounds.width + 2 * pad,
+                           req.selectionBounds.height + 2 * pad)
+        // tutto letto da req PRIMA di qualunque callback: l'oggetto della
+        // richiesta non sopravvive al giro di runJavaScript
+        function apply() {
+            menu.open = false
+            ctxView = view
+            ctxLink = ""; ctxImg = ""
+            ctxModel = items
+            ctxMenu.px = mx; ctxMenu.py = my
+            win.touchSelRect = zone
+            ctxMenu.touchSel = true
+            ctxMenu.open = true
+        }
+
+        // Tocco DENTRO la selezione: rete di sicurezza per il caso in cui la
+        // selezione sia effettivamente sparita — si chiede al renderer, che
+        // quando risponde ha già elaborato il tap.
+        // ⚠️ MISURATO sul POCO il 17 set: NON copre il tap sul testo selezionato.
+        // Primo, su questo motore quel tap non scioglie affatto la selezione
+        // (getSelection() risponde len=380 type=Range subito dopo). Secondo, la
+        // richiesta di menù che segue arriva ~1,6 s dopo il tocco, cioè fuori da
+        // questa finestra. Per distinguere «preso il pallino» da «battuto sul
+        // testo» servono le coordinate vere dei pallini, che si ottengono solo
+        // con un touchHandleDelegate nostro: vedi Documentation/TASK-selezione.md.
+        if (win.cfgJs && Date.now() - win.touchSelVerifyAt < 1000) {
+            win.touchSelVerifyAt = 0
+            view.runJavaScript(win.jsHasSelection, function(ok) { if (ok) apply() })
+            return
+        }
+        apply()
     }
 
     // ===================== MENÙ A TENDINA (<select>) =====================
@@ -1176,6 +1259,7 @@ ${a.c}
         ]
         ctxMenu.px = 60 * u
         ctxMenu.py = toolbar.height + 4 * u
+        ctxMenu.touchSel = false
         ctxMenu.open = true
     }
 
@@ -2813,13 +2897,52 @@ ${histCss}
     }
 
     // ===================== CONTEXT MENU (visuale) =====================
-    MouseArea { anchors.fill: parent; z: 59; enabled: ctxMenu.open; onClicked: ctxMenu.open = false; onPressAndHold: ctxMenu.open = false }
+    // Strato che chiude il menù contestuale toccando fuori. Copre tutto lo
+    // schermo, sta sopra la pagina e finché è attivo la pagina non riceve nulla.
+    //
+    // ⚠️ Col menù della SELEZIONE TOUCH quel comportamento è sbagliato due volte:
+    // il tocco sul pallino moriva qui (il menù si chiudeva e Chromium non vedeva
+    // mai il press → il pallino non si agganciava al dito), e il tocco fuori
+    // scioglieva solo il menù, lasciando in piedi la selezione: servivano tre
+    // tocchi per tornare puliti. Quando il menù è quello della selezione il
+    // tocco quindi NON è nostro: lo rifiutiamo sempre e ci limitiamo a chiudere
+    // il menù. Sul pallino Chromium lo usa per trascinare, fuori per sciogliere
+    // la selezione. Il menù non va riaperto a mano: se la selezione sopravvive
+    // è Chromium a richiederlo (updateMenu() → showMenu() su
+    // SELECTION_HANDLE_DRAG_STOPPED, touch_selection_controller_client_qt.cpp);
+    // se si scioglie, SELECTION_HANDLES_CLEARED lo lascia chiuso.
+    //
+    // Per il menù di longpress (link, immagini, barra indirizzi) resta invece
+    // com'era: il tocco viene consumato, così chiudere il menù non fa partire
+    // per sbaglio il link che c'è sotto.
+    MouseArea {
+        anchors.fill: parent; z: 59; enabled: ctxMenu.open
+        onPressed: function(mouse) {
+            if (ctxMenu.touchSel) {
+                // fuori dalla selezione: questo tocco la scioglierà, quindi la
+                // richiesta di menù che arriva subito dopo va ignorata
+                if (win.inTouchSelRect(mouse.x, mouse.y)) win.touchSelVerifyAt = Date.now()
+                else win.touchSelKillAt = Date.now()
+                // callLater: chiudere qui e ora spegnerebbe questa MouseArea
+                // (enabled: ctxMenu.open) nel mezzo della consegna dell'evento.
+                mouse.accepted = false
+                Qt.callLater(function() { ctxMenu.open = false })
+                return
+            }
+            ctxMenu.open = false
+        }
+        onClicked: ctxMenu.open = false
+        onPressAndHold: ctxMenu.open = false
+    }
 
     Rectangle {
         id: ctxMenu
         property bool open: false
         property real px: 0
         property real py: 0
+        // true = è il menù della selezione touch (non quello di longpress):
+        // lo strato di chiusura si comporta in modo diverso, vedi sotto
+        property bool touchSel: false
         width: 320 * win.u
         height: ctxCol.height + 16 * win.u
         x: Math.max(8*win.u, Math.min(px, appRoot.width  - width  - 8*win.u))
