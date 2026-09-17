@@ -52,16 +52,56 @@ Una sola implementazione, tutti i device: è il motivo della scelta.
 
 ## Piano
 
-### Fase 0 — il cancello: quanto costa davvero un 1080p (ore)
-Prima di spendere settimane, misurare con `rt-gpu-sampler.sh` + `top -H` la CPU
-su un 1080p VP9 e su un H.264. Se il consumo non giustifica il lavoro, la task si
-chiude qui. ⚠️ `ged_kpi` su questo device dà solo zeri: niente split per-frame.
+### Fase 0 — il cancello: ✅ SUPERATO il 17/09
+Misurato sul POCO, trailer 1080p reale (1920x1080), 30 s di campionamento su
+TUTTI i processi dell'app:
 
-### Fase 1 — dove si aggancia in Chromium 122 (giorni, INDAGINE APERTA)
-Punto meno chiaro e primo vero rischio tecnico: individuare il punto di
-registrazione di un `media::VideoDecoder` custom nella pipeline di QtWebEngine
-(media gira in-process, quindi la via `GpuMojoMediaClient` potrebbe non essere
-quella giusta). Da leggere nel nostro tree prima di scrivere una riga.
+```
+browser     26%
+renderer    93%   ← di cui ~63% in 4 thread ThreadPoolForeg
+            ----
+TOTALE     120%   (100% = un core; il device ne ha 8)
+```
+
+I quattro `ThreadPoolForeg` sono `OffloadingVpxVideoDecoder`: **è la decodifica
+VP9 in software**, ed è la metà abbondante del costo totale dell'app.
+
+Codec verificato agganciando `MediaSource.prototype.addSourceBuffer` via CDP:
+`video/webm; codecs="vp09.00.51.08.01.01.01.01.00"` = **VP9 profilo 0, 8 bit**
+(audio Opus). ⭐ VP9 **è** nella lista hardware del POCO
+(`OMX.MTK.VIDEO.DECODER.VP9`): il caso reale è coperto, non è AV1.
+
+Riproduzione già fluida (4 frame persi su 3120, 0,13%), quindi il guadagno atteso
+non è fluidità ma **batteria e calore** — che è il fastidio reale riferito
+dall'utente, ed è la ragione per cui la task è stata approvata.
+
+⚠️ `ged_kpi` su questo device dà solo zeri: niente split per-frame.
+⚠️ **CLK_TCK = 100**: la percentuale CPU da `/proc/.../stat` è `tick / secondi`.
+La prima versione del campionatore moltiplicava per 10 e gonfiava tutto di dieci
+volte. Numeri assurdi (>800% su 8 core) = quasi certamente questo errore.
+
+### Fase 1 — dove si aggancia: ✅ TROVATO il 17/09
+`media/renderers/default_decoder_factory.cc`, funzione
+`DefaultDecoderFactory::CreateVideoDecoders()`: costruisce la **lista ordinata**
+che `DecoderSelector` prova in sequenza.
+
+```cpp
+if (external_decoder_factory_ && gpu_factories && ...)      // hw, oggi vuoto
+#if BUILDFLAG(ENABLE_LIBVPX)         OffloadingVpxVideoDecoder      // VP9
+#if BUILDFLAG(ENABLE_DAV1D_DECODER)  OffloadingDav1dVideoDecoder    // AV1
+#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS) FFmpegVideoDecoder      // H.264
+```
+
+Il nostro decoder va inserito **prima** di questi tre. Due proprietà che
+regaliamo gratis così:
+- **ripiego automatico**: se `Initialize()` fallisce (droidmedia assente, codec
+  non supportato dal device, errore del vendor) `DecoderSelector` passa al
+  successivo da solo — nessuna logica di fallback da scrivere;
+- **un RPM solo per tutti i device**, coerente con la scelta droidmedia.
+
+⚠️ La decodifica sta nel processo **renderer**, non nel browser: chi misura deve
+campionare tutti i processi dell'app, altrimenti non vede niente (errore fatto e
+corretto il 17/09).
 
 ### Fase 2 — il decoder (settimane)
 `media::VideoDecoder` che parla droidmedia, sul modello gmp-droid: Initialize/
