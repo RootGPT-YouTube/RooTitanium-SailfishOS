@@ -103,7 +103,51 @@ regaliamo gratis così:
 campionare tutti i processi dell'app, altrimenti non vede niente (errore fatto e
 corretto il 17/09).
 
+### Fase 1-bis — ambiente di build: ✅ PRONTO, non c'era niente da aggiungere (17/09)
+`adaptation-common` **era già configurato** nel target
+`SailfishOS-5.1.0.11-aarch64.default` (come `plugin:ssu?repo=adaptation-common`) e
+**`droidmedia-devel-0.20260522.0-1.12.1.jolla` era già installato**, stessa
+versione della libreria sul POCO. Contenuto:
+
+```
+/usr/include/droidmedia/{droidmedia,droidmediacodec,droidmediaconvert,...}.h
+/usr/lib64/libdroidmedia.a
+/usr/lib64/pkgconfig/droidmedia.pc   → -I/usr/include/droidmedia -ldroidmedia -ldl
+/usr/share/droidmedia/hybris.c
+```
+
+⭐ **`hybris.c` decide la questione «link diretto o dlopen»**, e la risposta è:
+nessuna delle due come le immaginavamo. `libdroidmedia.so` è una libreria
+**Android** e non si può caricare col loader glibc; il modo ufficiale è il shim
+`hybris.c` di Jolla, che fa `dlopen("libhybris-common.so.1")`, ne prende
+`android_dlopen`/`android_dlsym` e risolve i simboli droidmedia in puntatori a
+funzione. `libdroidmedia.a` è quel shim già compilato.
+
+Conseguenze, tutte a nostro favore:
+- si linka **statico** (`.a`): nessuna dipendenza `.so` nell'RPM, il bundle resta
+  self-contained e **un RPM solo per tutti i device**, come voluto;
+- il caricamento è comunque a runtime, quindi dove droidmedia manca si degrada;
+- ⚠️ non serve inventarsi un `dlopen` a mano: usare il shim upstream.
+
 ### Fase 2 — il decoder (settimane)
+
+**Mappatura sul contratto `media::VideoDecoder`** (API verificata in
+`droidmediacodec.h` del target):
+
+| Chromium | droidmedia |
+|---|---|
+| `Initialize()` | `droid_media_codec_is_supported(meta, false)` → `droid_media_codec_create_decoder` → `set_data_callbacks` → `start`. ⭐ `is_supported` dà il rifiuto pulito che fa scattare il ripiego software di `DecoderSelector`. |
+| `Decode()` | `droid_media_codec_queue` |
+| `Reset()` | `droid_media_codec_flush` |
+| fine flusso | `droid_media_codec_drain` |
+| output | callback dati → `VideoFrame`; conversione in `droidmediaconvert.h` |
+| `Destroy` | `droid_media_codec_stop` + `droid_media_codec_destroy` |
+
+Resta da progettare: pompa di `droid_media_codec_loop` su quale thread, gestione
+del cambio risoluzione (`droid_media_codec_get_output_info` + `DroidMediaRect`
+di crop), e il ciclo di vita dei buffer.
+
+### Fase 2 (dettaglio originale)
 `media::VideoDecoder` che parla droidmedia, sul modello gmp-droid: Initialize/
 Decode/Reset/flush, gestione EOS e cambio risoluzione, mapping dei formati,
 consegna di `VideoFrame` I420.
