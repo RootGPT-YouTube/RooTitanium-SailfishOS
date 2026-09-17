@@ -1,4 +1,4 @@
-# Selezione del testo touch — stato al 17/09/2026
+# Selezione del testo touch — risolta il 17/09/2026
 
 Segnalazione: dopo il long-press compaiono i due pallini di selezione, ma non si
 agganciano al dito. «Seleziona tutto» funziona, quindi selezionare più di una
@@ -36,26 +36,34 @@ I pallini non sono nostri: li disegna e li trascina Chromium.
    comunque il menù e questo rispuntava. Ora quel tocco lo riconosciamo al volo
    (cade fuori da `touchSelRect`) e la richiesta che segue si butta.
 
-## Aperto: il tap SUL testo selezionato riapre il menù
+## 4. Il tap SUL testo selezionato riapriva il menù — risolto
 
-Misurato il 17 set con tracce sul device:
+Misurato il 17 set con tracce sul device, e le due ipotesi di partenza erano
+entrambe sbagliate:
 
-- il tap sulla selezione **non scioglie la selezione** su questo motore:
-  subito dopo, `getSelection()` risponde `len=380 type=Range`;
-- la richiesta di menù che segue arriva **~1,6 s** dopo il tocco.
+- il tap sulla selezione **non scioglie la selezione** su questo motore: subito
+  dopo, `getSelection()` risponde `len=380 type=Range`. Quindi chiedere al
+  renderer «c'è ancora una selezione?» non discrimina niente: risponde sì;
+- la richiesta di menù che segue arriva **~1,6 s** dopo il tocco, fuori da
+  qualunque finestra stretta.
 
-Quindi la verifica JS attuale (finestra di 1 s, «c'è ancora una selezione?») non
-può coprire il caso: la risposta è sinceramente «sì». Resta come rete di
-sicurezza per quando la selezione è davvero sparita.
+La firma vera della richiesta spuria è un'altra: porta i **limiti di selezione
+vecchi, identici**, mentre dopo un trascinamento vero cambiano sempre. È questa
+che usiamo, con una finestra di 4 s.
 
-**Strada giusta**: servono le coordinate vere dei due pallini, per distinguere
-«ho preso il pallino» (lasciar passare, il menù torna) da «ho battuto sul testo»
-(chiudere e basta). Si ottengono con un `touchHandleDelegate` nostro
+Per sapere se il tocco era sul pallino o sul testo servono le coordinate vere dei
+pallini, e si ottengono con un `touchHandleDelegate` nostro
 (`QQuickWebEngineView::touchHandleDelegate`, REVISION 6.4, presente in 6.8): il
 delegate riceve da Chromium `x/y/w/h` esatti di ciascun pallino via `setBounds`.
-Verificato funzionante il 17 set con un delegate di prova che disegnava il
-rettangolo. Come effetto collaterale il delegate permette anche di disegnare
-pallini nostri, a tema, al posto dell'asset grigio di Chromium desktop.
+Ogni pallino si registra in `win.touchHandles` alla nascita e si cancella alla
+distruzione; `win.onTouchHandle(x, y)` risponde con 18 px di slop (il rettangolo
+è 24x24 px fisici, ~1,6 mm). Se il registro è vuoto risponde «sì», così il
+comportamento degrada a quello di prima e mai a peggio.
+
+Effetto collaterale: al posto dell'asset grigio di Chromium desktop disegniamo un
+pallino a tema, che riempie **esattamente** il rettangolo afferrabile.
+
+Collaudato sul POCO il 17 set: funziona.
 
 ## Leva rimasta, da misurare
 
