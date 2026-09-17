@@ -21,12 +21,31 @@ Prima bozza. I nomi delle API sono stati verificati **a mano** contro l'albero
 Ma la verifica a mano non è un compilatore: aspettarsi altri errori al primo
 build vero.
 
-## Cosa manca prima di poterlo provare
-1. cablaggio GN: compilare il file e aggiungere `pkg-config droidmedia`
-   (`-I/usr/include/droidmedia -ldroidmedia -ldl`, link **statico** del shim);
-2. la riga in `DefaultDecoderFactory::CreateVideoDecoders()` che lo inserisce
-   **prima** dei tre decoder software;
-3. una build completa (~5 h, con guardia VRM).
+## Cablaggio: ✅ fatto (17/09) — `../scripts/apply-droidmedia.sh`
+
+Idempotente, come `apply-build-fixes.sh`, e **va rilanciato dopo ogni
+rigenerazione del build tree**. Fa tre cose: copia i sorgenti in
+`media/filters/`, aggiunge a `media/filters/BUILD.gn` un `pkg_config`
+(`droidmedia`) e i due file, e inserisce in
+`DefaultDecoderFactory::CreateVideoDecoders()` il nostro decoder **prima** dei
+tre software. `--check` dice solo se è innestato.
+
+Perché uno script e non `patches/0305`: i sorgenti canonici sono ~500 righe e
+tenerli anche dentro una patch scritta a mano vorrebbe dire due copie che si
+disallineano al primo tocco. Quando il decoder sarà collaudato si potrà
+congelare tutto in una patch vera.
+
+Verificato che il cablaggio regge nel cross-build:
+- `sb2 -t <target> pkg-config --cflags --libs droidmedia` →
+  `-I/usr/include/droidmedia -ldroidmedia -ldl`;
+- `args.gn` ha già `pkg_config="/usr/bin/pkg-config"` e la build gira **dentro**
+  sb2, quindi quel pkg-config è quello del target, non dell'host;
+- `-ldroidmedia` prende `libdroidmedia.a`, il shim **statico**: nessuna
+  dipendenza `.so` nell'RPM.
+
+## Cosa manca
+Una **build completa** (~5 h, con guardia VRM, presidiata e di giorno). È il
+primo momento in cui un compilatore guarderà questo codice.
 
 ## Punti deboli noti, già segnati nel codice
 - **una copia di troppo**: `convert_to_i420` scrive un I420 contiguo e noi lo
