@@ -22,9 +22,13 @@
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
 
+// Solo i tipi OPACHI di droidmedia sono forward-dichiarabili: il suo header
+// li definisce come `typedef struct _DroidMediaCodec DroidMediaCodec;`.
+// DroidMediaCodecData e DroidMediaData NO: sono `typedef struct { ... } X;`,
+// cioe' struct ANONIME, che non hanno un nome da dichiarare in anticipo. Per
+// quelle il tipo resta confinato nel .cc (errore preso al primo build, 17/09).
 struct _DroidMediaCodec;
 struct _DroidMediaConvert;
-struct _DroidMediaCodecData;
 
 namespace media {
 
@@ -66,7 +70,12 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
   void Teardown();
 
   // Chiamate DAL thread del loop: rimbalzano sulla sequence del chiamante.
-  static void OnDataAvailable(void* data, _DroidMediaCodecData* encoded);
+  // `encoded` e' un DroidMediaCodecData*, ma quel tipo non si puo' nominare
+  // qui (vedi sopra) e non vogliamo l'header droidmedia dentro un header di
+  // media/: in build jumbo finirebbe fuso con mezzo media/renderers. Il
+  // callback C vero e' una lambda senza cattura dentro Initialize(), che si
+  // converte nel puntatore a funzione con la firma esatta e ci passa questo.
+  static void OnDataAvailable(void* data, void* encoded);
   static void OnSignalEos(void* data);
   static void OnError(void* data, int err);
   static int OnSizeChanged(void* data, int32_t width, int32_t height);

@@ -9,7 +9,64 @@ rigenera e si porterebbe via tutto (è la lezione delle ~10 fix della Fase 2 del
 Entreranno in `media/filters/` tramite una patch numerata in `../patches/`,
 insieme al cablaggio GN e alla riga in `DefaultDecoderFactory`.
 
-## 🔴 Stato: MAI COMPILATO
+## ✅ Stato: COMPILA E SI LINKA (18/09, build di 4h14m, exit 0)
+
+Verificato su `libQt6WebEngineCore.so.6.8.3` (1,34 GB) appena prodotta:
+- `media::DroidVideoDecoder::*` presenti (Initialize, OnDataAvailable,
+  PlatformSupported, LoopThreadMain, ...);
+- `droid_media_codec_create_decoder` / `is_supported` / `queue` sono `T`, cioe'
+  **statici dentro la libreria**: il shim `libdroidmedia.a` e' entrato;
+- **zero `NEEDED`** contenenti "droid" e **zero simboli droidmedia undefined** →
+  il requisito «un RPM solo per tutti i device» regge alla prova dei fatti.
+
+⚠️ Questo dice che il codice compila e si linka, NON che funzioni: nessun
+fotogramma e' ancora stato decodificato. I punti deboli qui sotto sono intatti.
+
+### Gli errori veri, e cosa hanno insegnato
+
+1. **`droidmedia-devel` non era nel target dove si compila.** Era installato
+   negli snapshot `…-aarch64.default`, mentre `build-con-guardia.sh` usa il
+   target **base**: `pkg-config` li' diceva "No package 'droidmedia' found". La
+   verifica del 17/09 era stata fatta sullo snapshot sbagliato. Installato nel
+   base (`sb2 -t <base> -m sdk-install -R zypper in droidmedia-devel`).
+2. **`pkg_config()` non e' una funzione GN nativa**: senza
+   `import("//build/config/linux/pkg_config.gni")` il gen muore con "Unknown
+   function". Gli altri `BUILD.gn` di `media/` lo importano tutti.
+3. **`DroidMediaCodecData` NON e' forward-dichiarabile**: e' una struct
+   ANONIMA (`typedef struct { ... } X;`). La forward declaration creava un tipo
+   fantasma → "invalid conversion" sul puntatore a funzione + "incomplete type".
+   Solo `DroidMediaCodec` e `DroidMediaConvert` hanno un nome
+   (`typedef struct _DroidMediaCodec ...`). Cura: il tipo resta confinato nel
+   `.cc` e il callback C e' una **lambda senza cattura** dentro `Initialize()`,
+   che si converte nella firma esatta e, stando in un metodo membro, puo'
+   chiamare lo statico privato. Niente header droidmedia dentro `media/` (in
+   jumbo verrebbe fuso con mezzo `media/renderers`), niente cast di puntatori
+   a funzione.
+
+### ⚠️ Il gn-regen spazza via le fix persistenti
+Toccare `BUILD.gn` fa scattare il `gn gen`, che **riscrive `toolchain.ninja`**:
+tornano i nomi `.rsp` oltre NAME_MAX (262 char > 255) e la build muore a meta'
+con "File name too long". Rimedio gia' in casa:
+`./apply-build-fixes.sh ninja`, ora ricordato anche in coda ad
+`apply-droidmedia.sh`.
+
+Stessa famiglia: il link del generatore V8 **sovrascrive il wrapper qemu-10**
+col binario ELF. `fix_snapshot` testava `[ -f "$gen.real" ]` — cioe' "esiste il
+backup?" invece di "il generatore e' il mio wrapper?" — e rispondeva "gia'
+installato" mentre il wrapper non c'era piu', lasciando ricadere la build nel
+`signal 5`. Corretto il 18/09: ora guarda se il file inizia per `#!`, e il
+`.real` si aggiorna con `mv -f` (il binario appena linkato e' quello buono).
+
+## Come iterare senza rifare 4 ore di build
+Per gli errori del solo decoder basta ricompilare il suo oggetto jumbo:
+```
+sb2 -t SailfishOS-5.1.0.11-aarch64 ninja -j4 obj/media/filters/filters/filters_jumbo_6.o
+```
+~90 secondi a giro invece di ore. (Il nostro `.cc` finisce in
+`gen/media/filters/filters_jumbo_6.cc`; se il numero cambia, cercarlo con
+`grep -l droid_video_decoder gen/media/filters/*.cc`.)
+
+## Stato precedente: MAI COMPILATO
 
 Prima bozza. I nomi delle API sono stati verificati **a mano** contro l'albero
 6.8.4 — e tre erano sbagliati, poi corretti:

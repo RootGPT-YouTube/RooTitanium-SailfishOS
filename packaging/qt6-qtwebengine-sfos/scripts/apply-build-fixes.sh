@@ -126,10 +126,15 @@ fix_snapshot() {
   [ -x "$QEMU10" ] || die "manca $QEMU10 (copia /usr/bin/qemu-aarch64-static dell'host; NB: /tmp non e' condiviso col container, /home si')"
   local gen=$GNDIR/v8_context_snapshot_generator
   [ -f "$gen" ] || die "generatore non trovato: $gen"
-  if [ -f "$gen.real" ]; then
+  # ⚠️ Il test NON puo' essere "esiste $gen.real" (com'era fino al 18/09): ogni
+  # build che rilinka il generatore SOVRASCRIVE il wrapper col binario ELF e
+  # lascia al suo posto il .real vecchio. Lo script diceva "gia' installato" e
+  # la build ricadeva nel signal 5. Si guarda quindi COSA e' il file adesso, e
+  # il .real si aggiorna con -f: il binario appena linkato e' quello buono.
+  if head -c2 "$gen" 2>/dev/null | grep -q '#!'; then
     echo "  = wrapper gia' installato"
   else
-    mv "$gen" "$gen.real"
+    mv -f "$gen" "$gen.real"
     cat > "$gen" <<EOF
 #!/bin/sh
 # Wrapper RooTitanium: esegue il generatore aarch64 col qemu 10 dell'host,

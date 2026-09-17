@@ -50,6 +50,15 @@ import sys
 p = sys.argv[1]
 s = open(p, encoding='utf-8').read()
 
+# pkg_config() NON e' una funzione GN nativa: senza questo import il gen muore
+# con "Unknown function" (errore preso al primo build vero, 17/09). Gli altri
+# BUILD.gn di media/ lo importano allo stesso modo.
+imp = 'import("//build/config/linux/pkg_config.gni")'
+if imp not in s:
+    anchor_imp = 'import("//media/media_options.gni")'
+    assert anchor_imp in s, "import di riferimento non trovato"
+    s = s.replace(anchor_imp, anchor_imp + '\n' + imp, 1)
+
 # il pkg_config va dichiarato prima del target
 anchor = 'jumbo_source_set("filters") {'
 block = '''# RooTitanium: decodifica video hardware via droidmedia (SailfishOS).
@@ -127,3 +136,10 @@ fi
 
 echo
 echo "Innesto completato. Verifica con: $0 --check"
+echo
+# Toccare BUILD.gn fa scattare il gn-regen al primo ninja, e quel regen
+# RISCRIVE toolchain.ninja riportando i nomi .rsp lunghi (>255 char per via del
+# path del build tree): "File name too long" a meta' build. Trappola presa il
+# 17/09 dopo il fix dell'import pkg_config.
+echo "⚠️  Ora lancia:  ./apply-build-fixes.sh ninja"
+echo "    (il gn-regen innescato da BUILD.gn riporta i nomi .rsp oltre NAME_MAX)"

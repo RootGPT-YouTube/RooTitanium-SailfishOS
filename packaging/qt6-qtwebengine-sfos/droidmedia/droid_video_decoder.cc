@@ -198,7 +198,12 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
   DroidMediaCodecDataCallbacks data_cb;
   memset(&data_cb, 0, sizeof(data_cb));
-  data_cb.data_available = &DroidVideoDecoder::OnDataAvailable;
+  // Lambda senza cattura: si converte nel puntatore a funzione con la firma
+  // esatta che droidmedia pretende, e siccome e' scritta dentro un metodo
+  // membro puo' chiamare il nostro statico privato.
+  data_cb.data_available = [](void* user, DroidMediaCodecData* encoded) {
+    DroidVideoDecoder::OnDataAvailable(user, encoded);
+  };
   droid_media_codec_set_data_callbacks(codec_, &data_cb, this);
 
   if (!droid_media_codec_start(codec_)) {
@@ -292,9 +297,9 @@ void DroidVideoDecoder::Reset(base::OnceClosure closure) {
 
 // static — ATTENZIONE: gira sul thread del loop di droidmedia, non su una
 // sequence di Chromium. Tutto quello che tocca Chromium va rimbalzato.
-void DroidVideoDecoder::OnDataAvailable(void* data,
-                                        _DroidMediaCodecData* encoded) {
+void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
   auto* self = static_cast<DroidVideoDecoder*>(data);
+  auto* encoded = static_cast<DroidMediaCodecData*>(encoded_raw);
   if (!self || !self->convert_ || !encoded) {
     return;
   }
