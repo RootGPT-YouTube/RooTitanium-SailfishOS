@@ -129,6 +129,43 @@ Conseguenze, tutte a nostro favore:
 - il caricamento è comunque a runtime, quindi dove droidmedia manca si degrada;
 - ⚠️ non serve inventarsi un `dlopen` a mano: usare il shim upstream.
 
+### ⚠️ VINCOLO DI PORTABILITÀ (requisito esplicito dell'utente, 17/09)
+
+«L'importante è che funzioni sugli hardware che supportano SFOS, non solo sul
+mio.» Non è un desiderata: è il criterio con cui questa task va progettata e
+collaudata.
+
+Cosa ce la dà, già oggi:
+- **droidmedia è parte dell'adattamento hardware** di ogni porting hybris: non è
+  roba del POCO, c'è ovunque ci sia un droid-hal;
+- **`droid_media_codec_is_supported()` interroga il device a runtime**: nessun
+  codec cablato da noi. Ogni telefono ottiene quello che il suo hardware sa fare
+  (H.264 praticamente ovunque, VP9/HEVC dove c'è), e per il resto va in software;
+- **link statico del shim** (`libdroidmedia.a`): nessuna dipendenza `.so`
+  nell'RPM → un pacchetto solo, installabile su tutti;
+- **ripiego gratis**: se `Initialize()` rifiuta, `DecoderSelector` passa al
+  decoder software successivo.
+
+🔴 **Il pericolo, verificato leggendo `hybris.c`**: il shim **non degrada, fa
+`abort()`**. `__resolve_sym` fa `assert(ptr != NULL)` e poi `abort()`, e
+`__load_library` aborta se manca libhybris o se `libdroidmedia.so` non si carica.
+Su un porting **nativo** (senza HAL Android) o con un droidmedia più vecchio che
+non ha un simbolo che usiamo, la prima chiamata **ammazzerebbe il browser**
+invece di ripiegare.
+
+**Requisito di progetto che ne discende**: mai chiamare una funzione droidmedia
+alla cieca. Prima una **sonda nostra**, fatta con `dlopen` normale:
+1. `dlopen("libhybris-common.so.1")` e presenza di `android_dlopen`/`android_dlsym`;
+2. `android_dlopen("libdroidmedia.so")` riuscito;
+3. solo allora la prima chiamata vera.
+Se uno dei tre passi fallisce, `Initialize()` ritorna errore e non si tocca più
+droidmedia per il resto della sessione. Esiste anche `__try_resolve_sym`, che
+ritorna NULL invece di abortire: da preferire ovunque possibile.
+
+**Collaudo minimo prima di dire che è fatta**: POCO M4 Pro (Mali/MediaTek) **e**
+Xperia 10 III (Adreno/Qualcomm), più una verifica che su un device senza
+droidmedia l'app parta e riproduca in software.
+
 ### Fase 2 — il decoder (settimane)
 
 **Mappatura sul contratto `media::VideoDecoder`** (API verificata in
