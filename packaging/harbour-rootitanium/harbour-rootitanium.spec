@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.7
+Version:    1.8
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,22 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Sep 17 2026 RootGPT <emagiampa@gmail.com> - 1.8-1
+- Selezione del testo: i due pallini ora si afferrano davvero. Non era
+  colpa del motore: lo strato che chiude il menu' contestuale copre
+  tutto lo schermo e si mangiava il tocco prima che Chromium lo
+  vedesse. Il menu' inoltre stava 16 px sotto la selezione mentre i
+  pallini ne sporgono 26, e ne copriva il 40%%.
+- I pallini sono ora disegnati dall'app, a tema e con bordo chiaro per
+  restare visibili su qualunque pagina. Serviva soprattutto per sapere
+  dove sono: senza le loro coordinate, un tocco sul testo selezionato
+  e' indistinguibile dalla presa di un pallino.
+- Tocco fuori dalla selezione: un tocco solo per chiudere menu' e
+  selezione, non piu' tre.
+- Privacy, nuovi valori predefiniti: "Non tenere traccia" e "Blocca i
+  cookie di terze parti" ora sono ACCESI di serie. Gli altri toggle
+  della sezione Privacy non cambiano.
+
 * Sat Sep 06 2026 RootGPT <emagiampa@gmail.com> - 1.7-1
 - Tastiera di sistema (Maliit) al posto della QtVirtualKeyboard in-app:
   il plugin input-context Qt6 e' imbarcato nel bundle (LGPLv2), la
