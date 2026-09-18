@@ -12,6 +12,7 @@
 #ifndef MEDIA_FILTERS_DROID_VIDEO_DECODER_H_
 #define MEDIA_FILTERS_DROID_VIDEO_DECODER_H_
 
+#include <atomic>
 #include <memory>
 
 #include "base/memory/weak_ptr.h"
@@ -28,7 +29,6 @@
 // cioe' struct ANONIME, che non hanno un nome da dichiarare in anticipo. Per
 // quelle il tipo resta confinato nel .cc (errore preso al primo build, 17/09).
 struct _DroidMediaCodec;
-struct _DroidMediaConvert;
 
 namespace media {
 
@@ -88,7 +88,13 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   _DroidMediaCodec* codec_ = nullptr;
-  _DroidMediaConvert* convert_ = nullptr;
+
+  // Si alza quando il vendor segnala un errore o quando il codec ci consegna un
+  // formato di pixel che non sappiamo convertire. Da quel momento ogni Decode()
+  // fallisce, cosi' la pipeline puo' ripiegare sul software invece di restare
+  // ferma su un video che non parte (incidente del 18/09). Lo scrive il thread
+  // del loop di droidmedia e lo legge la sequence di Chromium: atomico.
+  std::atomic<bool> broken_{false};
   std::unique_ptr<base::Thread> loop_thread_;
 
   VideoDecoderConfig config_;

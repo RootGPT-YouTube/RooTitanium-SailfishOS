@@ -88,6 +88,12 @@ ours = '''  # RooTitanium: su SailfishOS la decodifica hardware passa da droidme
       "droid_video_decoder.h",
     ]
     configs += [ ":droidmedia_config" ]
+
+    # libyuv converte l'output del codec in I420. Ce l'ha gia' Chromium, e usarla
+    # ci toglie di mezzo droid_media_convert_*, che a runtime carica una libreria
+    # del VENDOR (libI420colorconvert.so) assente su molti device: dove manca, il
+    # shim hybris non degrada, aborta, e si porta via il renderer (18/09).
+    deps += [ "//third_party/libyuv" ]
   }
 
 '''

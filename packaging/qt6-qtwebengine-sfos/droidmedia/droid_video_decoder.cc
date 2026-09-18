@@ -5,6 +5,9 @@
 
 #include <dlfcn.h>
 
+#include <algorithm>
+#include <iterator>
+
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/task/bind_post_task.h"
@@ -13,11 +16,12 @@
 #include "media/base/limits.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
+#include "third_party/libyuv/include/libyuv.h"
 
 extern "C" {
 #include "droidmedia.h"
-#include "droidmediaconvert.h"
 #include "droidmediacodec.h"
+#include "droidmediaconstants.h"
 }
 
 namespace media {
@@ -28,6 +32,80 @@ namespace {
 // linker di libhybris. Sta nel namespace hybris di ogni porting con droid-hal.
 constexpr char kHybrisCommon[] = "libhybris-common.so.1";
 constexpr char kDroidMedia[] = "libdroidmedia.so";
+
+// L'unico valore OMX che siamo costretti a cablare: droidmedia non lo espone
+// tra le sue costanti, ma e' standard AOSP e diversi vendor lo usano.
+constexpr int kOmxYuv420PackedSemiPlanar = 0x27;
+
+// ⭐ I numeri dei color format NON si cablano: cambiano tra vendor e versioni
+// della HAL. Droidmedia li fa dire al device, ed e' l'unica fonte che non
+// mente. Si interroga una volta per processo, e solo DOPO che
+// PlatformSupported() ha dato l'ok (prima nessuna chiamata droidmedia e' lecita).
+const DroidMediaColourFormatConstants& ColourConstants() {
+  static const DroidMediaColourFormatConstants c = [] {
+    DroidMediaColourFormatConstants tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    droid_media_colour_format_constants_init(&tmp);
+    return tmp;
+  }();
+  return c;
+}
+
+// Il campo che leggiamo si chiama hal_format e, a seconda del vendor, porta un
+// OMX_COLOR_* oppure un HAL_PIXEL_FORMAT_*. Interroghiamo quindi anche questa
+// seconda tabella: due dei suoi formati hanno i piani in ordine INVERTITO
+// (NV21 = VU invece di UV, YV12 = V prima di U) e scambiarli darebbe un video
+// con i colori ribaltati, non un errore visibile nei log.
+const DroidMediaPixelFormatConstants& PixelConstants() {
+  static const DroidMediaPixelFormatConstants c = [] {
+    DroidMediaPixelFormatConstants tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    droid_media_pixel_format_constants_init(&tmp);
+    return tmp;
+  }();
+  return c;
+}
+
+// Come sono disposti in memoria i piani che il codec ci consegna.
+enum class PlaneLayout {
+  kUnsupported,  // formati tiled/proprietari: libyuv non li sa leggere
+  kSemiPlanar,   // NV12: Y poi UV interlacciati
+  kSemiPlanarVU, // NV21: come sopra ma V e U scambiati
+  kPlanar,       // I420: Y poi U poi V
+  kPlanarVU,     // YV12: Y poi V poi U
+};
+
+PlaneLayout LayoutFor(int color_format) {
+  const DroidMediaColourFormatConstants& c = ColourConstants();
+  // Il confronto con 0 va escluso: un campo che droidmedia non ha risolto resta
+  // a zero, e senza questa guardia un color_format 0 combacerebbe con tutti.
+  auto is = [color_format](int known) {
+    return known != 0 && color_format == known;
+  };
+  if (is(c.OMX_COLOR_FormatYUV420SemiPlanar) ||
+      is(c.QOMX_COLOR_FormatYUV420PackedSemiPlanar32m) ||
+      color_format == kOmxYuv420PackedSemiPlanar) {
+    return PlaneLayout::kSemiPlanar;
+  }
+  if (is(c.OMX_COLOR_FormatYUV420Planar) ||
+      is(c.OMX_COLOR_FormatYUV420PackedPlanar)) {
+    return PlaneLayout::kPlanar;
+  }
+  const DroidMediaPixelFormatConstants& p = PixelConstants();
+  auto is_hal = [color_format](int known) {
+    return known != 0 && color_format == known;
+  };
+  if (is_hal(p.HAL_PIXEL_FORMAT_YCrCb_420_SP)) {
+    return PlaneLayout::kSemiPlanarVU;
+  }
+  if (is_hal(p.HAL_PIXEL_FORMAT_YV12)) {
+    return PlaneLayout::kPlanarVU;
+  }
+  // Qui finiscono i tile proprietari (il 64x32Tile2m8ka di Qualcomm, i formati
+  // MediaTek): libyuv non li tratta e un de-tiling scritto a mano sarebbe
+  // codice non verificabile su hardware che non abbiamo. Meglio dire di no.
+  return PlaneLayout::kUnsupported;
+}
 
 }  // namespace
 
@@ -68,8 +146,9 @@ bool DroidVideoDecoder::PlatformSupported() {
         "droid_media_codec_destroy", "droid_media_codec_queue",
         "droid_media_codec_flush", "droid_media_codec_drain",
         "droid_media_codec_loop", "droid_media_codec_get_output_info",
-        "droid_media_convert_create", "droid_media_convert_destroy",
-        "droid_media_convert_to_i420",
+        "droid_media_colour_format_constants_init",
+        "droid_media_pixel_format_constants_init",
+        "droid_media_codec_get_supported_color_formats",
     };
     for (const char* sym : kNeeded) {
       if (!android_dlsym(handle, sym)) {
@@ -183,6 +262,28 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
+  // ⭐ Rifiuto ANTICIPATO: chiediamo al device quali formati di uscita sa
+  // produrre questo decoder e, se non ce n'e' nemmeno uno che sappiamo
+  // convertire, ci togliamo di mezzo subito. Cosi' DecoderSelector scende sul
+  // software prima ancora che il codec esista, invece di scoprirlo al primo
+  // frame con un video gia' fermo (e' la lezione del 18/09). Se la lista
+  // arrivasse vuota non concludiamo niente: decidera' il primo frame.
+  uint32_t formats[32];
+  const unsigned int n = droid_media_codec_get_supported_color_formats(
+      &meta.parent, /*encoder=*/0, formats, std::size(formats));
+  if (n > 0) {
+    bool uno_buono = false;
+    for (unsigned int i = 0; i < n && !uno_buono; ++i) {
+      uno_buono = LayoutFor(static_cast<int>(formats[i])) != PlaneLayout::kUnsupported;
+    }
+    if (!uno_buono) {
+      LOG(WARNING) << "droidmedia: nessuno dei " << n
+                   << " formati di uscita e' convertibile, resto in software";
+      fail(DecoderStatus::Codes::kUnsupportedConfig);
+      return;
+    }
+  }
+
   codec_ = droid_media_codec_create_decoder(&meta);
   if (!codec_) {
     fail(DecoderStatus::Codes::kFailedToCreateDecoder);
@@ -212,7 +313,7 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
-  convert_ = droid_media_convert_create();
+  broken_.store(false, std::memory_order_relaxed);
   config_ = config;
   output_cb_ = output_cb;
   needs_bitstream_conversion_ =
@@ -249,16 +350,20 @@ void DroidVideoDecoder::Teardown() {
     droid_media_codec_destroy(codec_);
     codec_ = nullptr;
   }
-  if (convert_) {
-    droid_media_convert_destroy(convert_);
-    convert_ = nullptr;
-  }
 }
 
 void DroidVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                                DecodeCB decode_cb) {
   if (!codec_) {
     std::move(decode_cb).Run(DecoderStatus::Codes::kFailed);
+    return;
+  }
+  // Il vendor ha segnalato un errore, o ci ha consegnato un formato che non
+  // sappiamo convertire. Dichiararlo QUI e' cio' che permette alla pipeline di
+  // scendere sul decoder software: se tacessimo, il video resterebbe fermo per
+  // sempre su un decoder che non produce un fotogramma (incidente del 18/09).
+  if (broken_.load(std::memory_order_relaxed)) {
+    std::move(decode_cb).Run(DecoderStatus::Codes::kPlatformDecodeFailure);
     return;
   }
 
@@ -300,7 +405,7 @@ void DroidVideoDecoder::Reset(base::OnceClosure closure) {
 void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
   auto* self = static_cast<DroidVideoDecoder*>(data);
   auto* encoded = static_cast<DroidMediaCodecData*>(encoded_raw);
-  if (!self || !self->convert_ || !encoded) {
+  if (!self || !encoded || !encoded->data.data || encoded->data.size <= 0) {
     return;
   }
 
@@ -309,23 +414,46 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
   memset(&info, 0, sizeof(info));
   memset(&crop, 0, sizeof(crop));
   droid_media_codec_get_output_info(self->codec_, &info, &crop);
-  droid_media_convert_set_crop_rect(self->convert_, crop, info.width, info.height);
 
+  // info.width/height sono le dimensioni del BUFFER (gia' allineate dal
+  // vendor): valgono quindi da stride e da altezza di slice. crop e' la parte
+  // davvero visibile, che e' cio' che consegniamo a Chromium.
+  const int stride = static_cast<int>(info.width);
+  const int slice_height = static_cast<int>(info.height);
   const gfx::Size visible(crop.right - crop.left, crop.bottom - crop.top);
-  if (visible.IsEmpty()) {
+  if (stride <= 0 || slice_height <= 0 || visible.IsEmpty()) {
     return;
   }
 
-  // ⚠️ UNA COPIA DI TROPPO, e lo sappiamo: convert_to_i420 scrive un I420
-  // contiguo, mentre i piani di VideoFrame possono avere allineamenti loro.
-  // Per il primo giro passiamo da un buffer temporaneo; se il profilo dira'
-  // che pesa, si alloca la VideoFrame con stride compatibili e si converte
-  // direttamente dentro. Nemmeno gmp-droid di Gecko e' zero-copy, quindi
-  // partiamo alla pari e semmai miglioriamo dopo.
-  const size_t y = static_cast<size_t>(visible.width()) * visible.height();
-  const size_t uv = ((visible.width() + 1) / 2) * ((visible.height() + 1) / 2);
-  std::vector<uint8_t> i420(y + 2 * uv);
-  if (!droid_media_convert_to_i420(self->convert_, &encoded->data, i420.data())) {
+  // Una riga sola, al primo frame: e' l'unico modo di sapere che cosa emette
+  // davvero il decoder di QUESTO vendor. Senza il numero, diagnosticare da
+  // remoto un device che non abbiamo in mano e' impossibile.
+  static std::atomic<bool> gia_detto{false};
+  if (!gia_detto.exchange(true)) {
+    LOG(INFO) << "droidmedia: primo frame — hal_format=" << info.hal_format
+              << " buffer=" << info.width << "x" << info.height
+              << " crop=(" << crop.left << "," << crop.top << ")-(" << crop.right
+              << "," << crop.bottom << ")";
+  }
+
+  const PlaneLayout layout = LayoutFor(info.hal_format);
+  if (layout == PlaneLayout::kUnsupported) {
+    // Una volta sola, ma col NUMERO: senza quello, su un device che non
+    // abbiamo in mano non si puo' capire quale formato ci abbia mandato.
+    LOG(ERROR) << "droidmedia: color format " << info.hal_format
+               << " non convertibile con libyuv, ripiego sul software";
+    self->broken_.store(true, std::memory_order_relaxed);
+    return;
+  }
+
+  // Il vendor deve averci dato almeno un 4:2:0 intero: senza questo controllo
+  // un buffer corto ci farebbe leggere fuori dalla sua memoria.
+  const size_t attesa =
+      static_cast<size_t>(stride) * slice_height * 3 / 2;
+  if (static_cast<size_t>(encoded->data.size) < attesa) {
+    LOG(ERROR) << "droidmedia: buffer di " << encoded->data.size
+               << " byte, ne servono " << attesa << ": lo scarto";
+    self->broken_.store(true, std::memory_order_relaxed);
     return;
   }
 
@@ -335,23 +463,62 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
   if (!frame) {
     return;
   }
-  const uint8_t* src_y = i420.data();
-  const uint8_t* src_u = src_y + y;
-  const uint8_t* src_v = src_u + uv;
-  const int half_w = (visible.width() + 1) / 2;
-  const int half_h = (visible.height() + 1) / 2;
-  for (int r = 0; r < visible.height(); ++r) {
-    memcpy(frame->writable_data(VideoFrame::kYPlane) +
-               r * frame->stride(VideoFrame::kYPlane),
-           src_y + r * visible.width(), visible.width());
+
+  // ⭐ Niente buffer intermedio: libyuv scrive direttamente nei piani della
+  // VideoFrame, con i loro stride. La "copia di troppo" che ci portavamo
+  // dietro con droid_media_convert_to_i420 sparisce insieme alla dipendenza
+  // dal vendor (libI420colorconvert.so), che su molti device non esiste.
+  const auto* base_ptr = static_cast<const uint8_t*>(encoded->data.data);
+  const uint8_t* src_y = base_ptr + crop.top * stride + crop.left;
+  const uint8_t* chroma = base_ptr + static_cast<size_t>(stride) * slice_height;
+  int rc = -1;
+
+  if (layout == PlaneLayout::kSemiPlanar ||
+      layout == PlaneLayout::kSemiPlanarVU) {
+    // NV12: il piano UV e' interlacciato e ha meta' altezza. L'offset
+    // orizzontale va portato a pari, altrimenti si scambiano U e V.
+    const uint8_t* src_uv =
+        chroma + (crop.top / 2) * stride + (crop.left & ~1);
+    // NV21 differisce da NV12 solo per l'ordine dei due campioni di crominanza:
+    // libyuv ha la funzione gemella, e usare quella giusta evita un video coi
+    // colori invertiti che nessun log segnalerebbe.
+    auto converti = (layout == PlaneLayout::kSemiPlanar) ? &libyuv::NV12ToI420
+                                                         : &libyuv::NV21ToI420;
+    rc = converti(
+        src_y, stride, src_uv, stride,
+        frame->writable_data(VideoFrame::kYPlane),
+        frame->stride(VideoFrame::kYPlane),
+        frame->writable_data(VideoFrame::kUPlane),
+        frame->stride(VideoFrame::kUPlane),
+        frame->writable_data(VideoFrame::kVPlane),
+        frame->stride(VideoFrame::kVPlane),
+        visible.width(), visible.height());
+  } else {
+    // I420 planare: U e V pieni, ciascuno con stride e altezza dimezzati.
+    const int c_stride = stride / 2;
+    const size_t piano_c = static_cast<size_t>(c_stride) * (slice_height / 2);
+    const uint8_t* src_u =
+        chroma + (crop.top / 2) * c_stride + crop.left / 2;
+    const uint8_t* src_v = src_u + piano_c;
+    // YV12 e' I420 con i due piani scambiati: si tratta passandoli al contrario.
+    if (layout == PlaneLayout::kPlanarVU) {
+      std::swap(src_u, src_v);
+    }
+    rc = libyuv::I420Copy(
+        src_y, stride, src_u, c_stride, src_v, c_stride,
+        frame->writable_data(VideoFrame::kYPlane),
+        frame->stride(VideoFrame::kYPlane),
+        frame->writable_data(VideoFrame::kUPlane),
+        frame->stride(VideoFrame::kUPlane),
+        frame->writable_data(VideoFrame::kVPlane),
+        frame->stride(VideoFrame::kVPlane),
+        visible.width(), visible.height());
   }
-  for (int r = 0; r < half_h; ++r) {
-    memcpy(frame->writable_data(VideoFrame::kUPlane) +
-               r * frame->stride(VideoFrame::kUPlane),
-           src_u + r * half_w, half_w);
-    memcpy(frame->writable_data(VideoFrame::kVPlane) +
-               r * frame->stride(VideoFrame::kVPlane),
-           src_v + r * half_w, half_w);
+
+  if (rc != 0) {
+    LOG(ERROR) << "droidmedia: conversione libyuv fallita (" << rc << ")";
+    self->broken_.store(true, std::memory_order_relaxed);
+    return;
   }
 
   self->task_runner_->PostTask(
@@ -375,8 +542,12 @@ void DroidVideoDecoder::OnSignalEos(void* data) {
 // static
 void DroidVideoDecoder::OnError(void* data, int err) {
   LOG(ERROR) << "droidmedia: errore del decoder vendor: " << err;
-  // ⚠️ DA COMPLETARE: qui va segnalato l'errore alla pipeline e, meglio
-  // ancora, chiesto un ripiego sul software per il resto della sessione.
+  // Gira sul thread del loop di droidmedia: si alza solo il flag, senza toccare
+  // niente di Chromium. Il prossimo Decode() lo legge e fallisce, e la pipeline
+  // ripiega sul software.
+  if (auto* self = static_cast<DroidVideoDecoder*>(data)) {
+    self->broken_.store(true, std::memory_order_relaxed);
+  }
 }
 
 // static

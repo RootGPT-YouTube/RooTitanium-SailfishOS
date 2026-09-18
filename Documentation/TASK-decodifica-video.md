@@ -195,6 +195,95 @@ consegna di `VideoFrame` I420.
 a build-time, l'RPM resta uno solo per tutti i device, e dove droidmedia manca si
 degrada da soli alla decodifica software invece di non partire.
 
+
+## 🔴 INCIDENTE DEL 18/09 — il vero volto del rischio «il shim aborta»
+
+Prima prova sul campo (POCO M4 Pro, RPM 1.9-1). Esito: **il video non parte e il
+processo renderer muore**. Nel log dell'app, una riga sola:
+
+```
+library "libI420colorconvert.so" not found
+```
+
+### ⚠️ Correzione alla prima diagnosi (stessa giornata)
+La prima lettura — «il shim aborta e si porta via il renderer» — **non e'
+provata**. Il sorgente upstream di droidmedia (`droidmediaconvert.cpp`) mostra
+che `droid_media_convert_create()` fa un `dlopen` NORMALE e ritorna **NULL**
+quando la libreria manca: non aborta. Il `abort()` di `hybris.c` scatta solo in
+tre casi (libhybris assente, `libdroidmedia.so` non caricabile, simbolo
+droidmedia mancante), e la nostra sonda a 4 passi li copre gia' tutti.
+
+**Il difetto certo, e piu' insidioso, era nostro**: con `convert_` a NULL,
+`OnDataAvailable` scartava **ogni frame in silenzio**, mentre `Initialize()`
+aveva gia' risposto `kOk`. Chromium credeva quindi di avere un decoder che
+funziona e **non ripiegava mai** sul software: video fermo per sempre, senza un
+errore da nessuna parte. Che il renderer sia poi morto e' stato osservato (il
+processo `--type=renderer` era sparito) ma la causa resta non dimostrata.
+
+⭐ La lezione vera, piu' generale di quella scritta sotto: **un decoder che
+accetta l'inizializzazione e poi non produce fotogrammi e' peggio di uno che
+rifiuta**. Il ripiego di `DecoderSelector` e' gratis solo se gli diciamo che
+abbiamo fallito.
+
+Catena dei fatti, verificata sul device:
+1. `PlatformSupported()` ha detto **sì**, e aveva ragione: `libdroidmedia.so`
+   c'e' (`/usr/libexec/droid-hybris/system/lib64/`), libhybris pure, e tutti i
+   simboli della lista `kNeeded` si risolvono;
+2. il codec viene creato e avviato senza errori;
+3. al primo frame chiamiamo `droid_media_convert_to_i420()`, e **quella**
+   funzione carica a runtime una libreria **del vendor**, `libI420colorconvert.so`;
+4. su questo device quella libreria **non esiste** → il shim `hybris.c` fa
+   `abort()` invece di degradare → **renderer morto**, niente ripiego software.
+
+⭐ **La lezione, che vale oltre questo caso**: la sonda verificava le librerie e i
+simboli che chiamiamo **noi**, non quelli che le funzioni droidmedia caricano
+**per conto loro**. Un `dlsym` riuscito su `droid_media_convert_to_i420` dice
+solo che la funzione esiste in droidmedia: non dice niente sulle dipendenze
+Android che quella funzione andra' a cercare quando la chiami.
+
+### La cura, applicata il 18/09 (non ancora collaudata)
+Tre pezzi, tutti nel decoder:
+1. **`droid_media_convert_*` eliminato**, sostituito da libyuv (vedi sotto);
+2. **`Initialize()` rifiuta prima di creare il codec** se
+   `droid_media_codec_get_supported_color_formats()` non riporta nemmeno un
+   formato che sappiamo convertire (lista vuota = non si conclude niente,
+   decide il primo frame);
+3. **un flag `broken_`** che si alza su errore del vendor o su formato
+   inconvertibile e fa fallire i `Decode()` successivi con
+   `kPlatformDecodeFailure`: e' quello che mancava, ed e' cio' che permette alla
+   pipeline di scendere sul software invece di restare ferma.
+Piu' un `LOG(INFO)` al primo frame con `hal_format`, dimensioni del buffer e
+crop: su un device che non abbiamo in mano e' l'unico modo di sapere cosa
+emette davvero il vendor.
+
+I formati coperti: NV12, **NV21**, I420 planare e **YV12** (gli ultimi due hanno
+i piani in ordine invertito: scambiarli darebbe un video coi colori ribaltati e
+nessun errore nei log). I tile proprietari (Qualcomm 64x32Tile2m8ka, MediaTek)
+sono dichiarati non gestibili: libyuv non li legge e un de-tiler scritto alla
+cieca sarebbe codice non verificabile.
+
+### La cura scelta: convertire noi, con libyuv
+`droid_media_convert_*` va **eliminato**, non reso condizionale. Chromium ha gia'
+`//third_party/libyuv` al suo interno: la conversione dal formato di output di
+MediaCodec a I420 la facciamo noi, e cosi':
+- **sparisce una dipendenza dal vendor** che su molti device manca → piu'
+  portabile, che e' il vincolo esplicito di questa task;
+- **sparisce anche la «copia di troppo»** gia' segnata tra i punti deboli:
+  libyuv puo' scrivere direttamente nei piani della `VideoFrame`, con i loro
+  stride, invece di passare per un buffer I420 contiguo intermedio;
+- il color format lo da' `droid_media_codec_get_output_info()` e si mappa sulla
+  funzione libyuv giusta (NV12/NV21/planare/formati proprietari). Un formato che
+  non sappiamo trattare deve far **fallire il decoder in modo pulito**, non
+  morire: e qui serve anche sistemare `OnError`, che oggi non segnala niente
+  alla pipeline (altro punto debole gia' noto, ora diventato urgente).
+
+### Cosa NON e' bastato, e cosa fare perche' basti
+Rafforzare la sonda resta comunque necessario: il criterio giusto non e' «i
+simboli che uso ci sono», ma «tutte le librerie Android che la catena di
+chiamate caricherà si aprono davvero». Dove non e' possibile saperlo in anticipo,
+la regola di progetto diventa: **non chiamare mai una funzione droidmedia di cui
+non conosciamo le dipendenze runtime**.
+
 ## Rischi
 - Nessun progetto SailfishOS/Halium risulta aver già integrato un decoder hardware
   in un Chromium desktop-style: siamo i primi, quindi stime larghe.
