@@ -4,6 +4,7 @@
 #include "media/filters/droid_video_decoder.h"
 
 #include <dlfcn.h>
+#include <stdlib.h>
 
 #include <algorithm>
 #include <iterator>
@@ -11,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/task/bind_post_task.h"
+#include "base/time/time.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/decoder_status.h"
 #include "media/base/limits.h"
@@ -114,6 +116,16 @@ bool DroidVideoDecoder::PlatformSupported() {
   // Calcolata una volta per processo: se qui rispondiamo "no", nessuno tocchera'
   // mai una funzione droidmedia, e quindi il shim non potra' mai abortire.
   static const bool supported = [] {
+    // Interruttore per il collaudo: RT_DROIDMEDIA=0 spegne la decodifica
+    // hardware LASCIANDO IDENTICO il resto del motore. Serve per l'unico
+    // confronto onesto possibile — stesso binario, decoder acceso o spento —
+    // quando si deve capire se un sintomo viene da noi o da altro (18/09).
+    if (const char* env = getenv("RT_DROIDMEDIA")) {
+      if (env[0] == '0') {
+        LOG(INFO) << "droidmedia: spento da RT_DROIDMEDIA=0, resto in software";
+        return false;
+      }
+    }
     // Passo 1: libhybris c'e'? Su un porting nativo (senza HAL Android) no.
     void* hybris = dlopen(kHybrisCommon, RTLD_LAZY);
     if (!hybris) {
@@ -145,7 +157,7 @@ bool DroidVideoDecoder::PlatformSupported() {
         "droid_media_codec_start", "droid_media_codec_stop",
         "droid_media_codec_destroy", "droid_media_codec_queue",
         "droid_media_codec_flush", "droid_media_codec_drain",
-        "droid_media_codec_loop", "droid_media_codec_get_output_info",
+        "droid_media_codec_get_output_info",
         "droid_media_colour_format_constants_init",
         "droid_media_pixel_format_constants_init",
         "droid_media_codec_get_supported_color_formats",
@@ -210,6 +222,85 @@ int DroidVideoDecoder::GetMaxDecodeRequests() const {
   return 4;
 }
 
+bool DroidVideoDecoder::AvviaCodec(const VideoDecoderConfig& config) {
+  DroidMediaCodecDecoderMetaData meta;
+  memset(&meta, 0, sizeof(meta));
+  meta.parent.type = AndroidMimeForCodec(config.codec());
+  meta.parent.width = config.coded_size().width();
+  meta.parent.height = config.coded_size().height();
+  meta.parent.fps = 30;  // indicativo: il vendor lo usa solo per dimensionare
+  meta.parent.flags = static_cast<DroidMediaCodecFlags>(
+      DROID_MEDIA_CODEC_HW_ONLY | DROID_MEDIA_CODEC_NO_MEDIA_BUFFER);
+
+  // extra_data = SPS/PPS per H.264, codec-private per VP9.
+  if (!config.extra_data().empty()) {
+    meta.codec_data.size = config.extra_data().size();
+    meta.codec_data.data = const_cast<uint8_t*>(config.extra_data().data());
+  }
+
+  // ⭐ Il rifiuto che rende la cosa portabile: e' il DEVICE a dire se sa fare
+  // questo codec. Niente elenchi cablati da noi.
+  if (!droid_media_codec_is_supported(&meta.parent, /*encoder=*/false)) {
+    LOG(INFO) << "droidmedia: il device non supporta questo codec, resto in software";
+    return false;
+  }
+
+  // ⭐ Rifiuto ANTICIPATO: chiediamo al device quali formati di uscita sa
+  // produrre questo decoder e, se non ce n'e' nemmeno uno che sappiamo
+  // convertire, ci togliamo di mezzo subito. Cosi' DecoderSelector scende sul
+  // software prima ancora che il codec esista, invece di scoprirlo al primo
+  // frame con un video gia' fermo (e' la lezione del 18/09). Se la lista
+  // arrivasse vuota non concludiamo niente: decidera' il primo frame.
+  uint32_t formats[32];
+  const unsigned int n = droid_media_codec_get_supported_color_formats(
+      &meta.parent, /*encoder=*/0, formats, std::size(formats));
+  if (n > 0) {
+    bool uno_buono = false;
+    for (unsigned int i = 0; i < n && !uno_buono; ++i) {
+      uno_buono = LayoutFor(static_cast<int>(formats[i])) != PlaneLayout::kUnsupported;
+    }
+    if (!uno_buono) {
+      LOG(WARNING) << "droidmedia: nessuno dei " << n
+                   << " formati di uscita e' convertibile, resto in software";
+      return false;
+    }
+  }
+
+  codec_ = droid_media_codec_create_decoder(&meta);
+  if (!codec_) {
+    LOG(ERROR) << "droidmedia: create_decoder ha rifiutato (vendor occupato?)";
+    return false;
+  }
+
+  DroidMediaCodecCallbacks cb;
+  memset(&cb, 0, sizeof(cb));
+  cb.signal_eos = &DroidVideoDecoder::OnSignalEos;
+  cb.error = &DroidVideoDecoder::OnError;
+  cb.size_changed = &DroidVideoDecoder::OnSizeChanged;
+  // Il `data` dei callback e' il Ponte, non `this`: e' lui a sapere se siamo
+  // ancora vivi quando il vendor chiama.
+  ponte_ = base::MakeRefCounted<Ponte>(this);
+  droid_media_codec_set_callbacks(codec_, &cb, ponte_.get());
+
+  DroidMediaCodecDataCallbacks data_cb;
+  memset(&data_cb, 0, sizeof(data_cb));
+  // Lambda senza cattura: si converte nel puntatore a funzione con la firma
+  // esatta che droidmedia pretende, e siccome e' scritta dentro un metodo
+  // membro puo' chiamare il nostro statico privato.
+  data_cb.data_available = [](void* user, DroidMediaCodecData* encoded) {
+    DroidVideoDecoder::OnDataAvailable(user, encoded);
+  };
+  droid_media_codec_set_data_callbacks(codec_, &data_cb, ponte_.get());
+
+  if (!droid_media_codec_start(codec_)) {
+    LOG(ERROR) << "droidmedia: start fallito";
+    Teardown();
+    return false;
+  }
+
+  return true;
+}
+
 void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                    bool low_delay,
                                    CdmContext* cdm_context,
@@ -217,6 +308,7 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                    const OutputCB& output_cb,
                                    const WaitingCB& waiting_cb) {
   task_runner_ = base::SequencedTaskRunner::GetCurrentDefault();
+  weak_self_ = weak_factory_.GetWeakPtr();
 
   auto fail = [&init_cb](DecoderStatus status) {
     // Rifiuto pulito: DecoderSelector passera' al decoder successivo, cioe' al
@@ -238,82 +330,22 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
 
+  // Traccia del ciclo di vita: su YouTube il flusso e' adattivo e Chromium
+  // reinizializza il decoder a ogni cambio di qualita'. E' li' che il video si
+  // bloccava (18/09), quindi questi passaggi vanno visti.
+  LOG(INFO) << "droidmedia: Initialize " << GetCodecName(config.codec()) << " "
+            << config.coded_size().ToString()
+            << (codec_ ? " (RICONFIGURA: c'era gia' un codec)" : " (primo avvio)");
+
   Teardown();  // reinizializzazione a caldo: MediaCodec non si riconfigura.
 
-  DroidMediaCodecDecoderMetaData meta;
-  memset(&meta, 0, sizeof(meta));
-  meta.parent.type = mime;
-  meta.parent.width = config.coded_size().width();
-  meta.parent.height = config.coded_size().height();
-  meta.parent.fps = 30;  // indicativo: il vendor lo usa solo per dimensionare
-  meta.parent.flags = static_cast<DroidMediaCodecFlags>(
-      DROID_MEDIA_CODEC_HW_ONLY | DROID_MEDIA_CODEC_NO_MEDIA_BUFFER);
-
-  // extra_data = SPS/PPS per H.264, codec-private per VP9.
-  if (!config.extra_data().empty()) {
-    meta.codec_data.size = config.extra_data().size();
-    meta.codec_data.data = const_cast<uint8_t*>(config.extra_data().data());
-  }
-
-  // ⭐ Il rifiuto che rende la cosa portabile: e' il DEVICE a dire se sa fare
-  // questo codec. Niente elenchi cablati da noi.
-  if (!droid_media_codec_is_supported(&meta.parent, /*encoder=*/false)) {
-    fail(DecoderStatus::Codes::kUnsupportedConfig);
-    return;
-  }
-
-  // ⭐ Rifiuto ANTICIPATO: chiediamo al device quali formati di uscita sa
-  // produrre questo decoder e, se non ce n'e' nemmeno uno che sappiamo
-  // convertire, ci togliamo di mezzo subito. Cosi' DecoderSelector scende sul
-  // software prima ancora che il codec esista, invece di scoprirlo al primo
-  // frame con un video gia' fermo (e' la lezione del 18/09). Se la lista
-  // arrivasse vuota non concludiamo niente: decidera' il primo frame.
-  uint32_t formats[32];
-  const unsigned int n = droid_media_codec_get_supported_color_formats(
-      &meta.parent, /*encoder=*/0, formats, std::size(formats));
-  if (n > 0) {
-    bool uno_buono = false;
-    for (unsigned int i = 0; i < n && !uno_buono; ++i) {
-      uno_buono = LayoutFor(static_cast<int>(formats[i])) != PlaneLayout::kUnsupported;
-    }
-    if (!uno_buono) {
-      LOG(WARNING) << "droidmedia: nessuno dei " << n
-                   << " formati di uscita e' convertibile, resto in software";
-      fail(DecoderStatus::Codes::kUnsupportedConfig);
-      return;
-    }
-  }
-
-  codec_ = droid_media_codec_create_decoder(&meta);
-  if (!codec_) {
-    fail(DecoderStatus::Codes::kFailedToCreateDecoder);
-    return;
-  }
-
-  DroidMediaCodecCallbacks cb;
-  memset(&cb, 0, sizeof(cb));
-  cb.signal_eos = &DroidVideoDecoder::OnSignalEos;
-  cb.error = &DroidVideoDecoder::OnError;
-  cb.size_changed = &DroidVideoDecoder::OnSizeChanged;
-  droid_media_codec_set_callbacks(codec_, &cb, this);
-
-  DroidMediaCodecDataCallbacks data_cb;
-  memset(&data_cb, 0, sizeof(data_cb));
-  // Lambda senza cattura: si converte nel puntatore a funzione con la firma
-  // esatta che droidmedia pretende, e siccome e' scritta dentro un metodo
-  // membro puo' chiamare il nostro statico privato.
-  data_cb.data_available = [](void* user, DroidMediaCodecData* encoded) {
-    DroidVideoDecoder::OnDataAvailable(user, encoded);
-  };
-  droid_media_codec_set_data_callbacks(codec_, &data_cb, this);
-
-  if (!droid_media_codec_start(codec_)) {
-    Teardown();
+  if (!AvviaCodec(config)) {
     fail(DecoderStatus::Codes::kFailedToCreateDecoder);
     return;
   }
 
   broken_.store(false, std::memory_order_relaxed);
+  drained_.store(false, std::memory_order_relaxed);
   config_ = config;
   output_cb_ = output_cb;
   needs_bitstream_conversion_ =
@@ -323,32 +355,36 @@ void DroidVideoDecoder::Initialize(const VideoDecoderConfig& config,
     coded_size_ = config.coded_size();
   }
 
-  loop_thread_ = std::make_unique<base::Thread>("DroidMediaCodecLoop");
-  loop_thread_->Start();
-  loop_thread_->task_runner()->PostTask(
-      FROM_HERE, base::BindOnce(&DroidVideoDecoder::LoopThreadMain,
-                                base::Unretained(this)));
 
   std::move(init_cb).Run(DecoderStatus::Codes::kOk);
 }
 
-void DroidVideoDecoder::LoopThreadMain() {
-  // droid_media_codec_loop() blocca finche' non ha lavoro: percio' sta su un
-  // thread dedicato e non su una sequence di Chromium.
-  while (codec_ &&
-         droid_media_codec_loop(codec_) == DROID_MEDIA_CODEC_LOOP_OK) {
-  }
-}
-
 void DroidVideoDecoder::Teardown() {
-  if (loop_thread_) {
-    loop_thread_->Stop();
-    loop_thread_.reset();
+  const base::TimeTicks t0 = base::TimeTicks::Now();
+  const bool c_era = codec_ != nullptr;
+  if (ponte_) {
+    // Prima si scollega (aspettando l'eventuale callback in corso), poi si
+    // chiude il codec: in quest'ordine nessun fotogramma in volo puo' trovare
+    // un decoder a meta' distruzione. L'ordine inverso sarebbe la corsa che
+    // faceva fallire il fullscreen.
+    ponte_->Scollega();
+    ponte_.reset();
   }
+  const base::TimeTicks t1 = base::TimeTicks::Now();
   if (codec_) {
     droid_media_codec_stop(codec_);
     droid_media_codec_destroy(codec_);
     codec_ = nullptr;
+  }
+  if (c_era) {
+    // Quanto costa chiudere: la transizione di fullscreen su YouTube ha una
+    // tolleranza di poche centinaia di ms, e questo e' l'unico nostro lavoro
+    // che ci finisce dentro.
+    LOG(INFO) << "droidmedia: Teardown in "
+              << (base::TimeTicks::Now() - t0).InMilliseconds() << " ms (scollega "
+              << (t1 - t0).InMilliseconds() << " ms, chiusura codec "
+              << (base::TimeTicks::Now() - t1).InMilliseconds()
+              << " ms), frame consegnati " << consegnati_;
   }
 }
 
@@ -370,7 +406,11 @@ void DroidVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   if (buffer->end_of_stream()) {
     // drain() fa uscire dal decoder i frame ancora dentro: arriveranno per la
     // solita strada (data_available), e signal_eos chiudera' il giro.
+    // 🔴 Dopo un drain il codec NON torna operativo con un flush: resta muto
+    // per sempre (misurato il 18/09: drain+flush => 0 frame, drain+ricreazione
+    // => 40 frame su 40). Ce lo segniamo, e al prossimo Reset lo ricreiamo.
     droid_media_codec_drain(codec_);
+    drained_.store(true, std::memory_order_relaxed);
     std::move(decode_cb).Run(DecoderStatus::Codes::kOk);
     return;
   }
@@ -379,22 +419,44 @@ void DroidVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   memset(&data, 0, sizeof(data));
   data.data.size = buffer->data_size();
   data.data.data = const_cast<uint8_t*>(buffer->data());
-  // droidmedia lavora in microsecondi come Chromium: nessuna conversione.
+  // In INGRESSO droidmedia vuole microsecondi (e li converte lui per
+  // MediaCodec). In USCITA invece riconsegna nanosecondi: l'asimmetria e'
+  // verificata, vedi OnDataAvailable.
   data.ts = buffer->timestamp().InMicroseconds();
   data.decoding_ts = data.ts;
   data.sync = buffer->is_key_frame();
 
-  // ⚠️ DA IRROBUSTIRE: il vendor puo' tenersi il buffer oltre la queue(), quindi
-  // la memoria di `buffer` deve sopravvivere finche' non lo rilascia. Qui ci
-  // appoggiamo alla copia che fa MediaCodec con NO_MEDIA_BUFFER; se il collaudo
-  // mostrasse corruzione, va usato DroidMediaBufferCallbacks per tenere il ref
-  // al DecoderBuffer e rilasciarlo nella unref.
-  droid_media_codec_queue(codec_, &data, nullptr);
+  // 🔴 NON passare nullptr come terzo argomento: droidmedia lo dereferenzia e il
+  // processo muore di SIGSEGV. Riprodotto fuori da Chromium il 18/09, in venti
+  // righe di C: con nullptr segfault alla PRIMA queue(), con callback valide i
+  // frame escono. E' questo che uccideva il renderer.
+  //
+  // Le callback servono anche a cosa dovevano servire: tengono in vita il
+  // DecoderBuffer finche' il vendor non lo rilascia, il che chiude il punto
+  // debole del "ciclo di vita del buffer" segnato nel NOTE.
+  auto* trattenuto = new scoped_refptr<DecoderBuffer>(buffer);
+  DroidMediaBufferCallbacks bcb;
+  memset(&bcb, 0, sizeof(bcb));
+  bcb.data = trattenuto;
+  bcb.ref = [](void*) {};  // il ref ce l'abbiamo gia': lo teniamo fino alla unref
+  bcb.unref = [](void* d) { delete static_cast<scoped_refptr<DecoderBuffer>*>(d); };
+  droid_media_codec_queue(codec_, &data, &bcb);
   std::move(decode_cb).Run(DecoderStatus::Codes::kOk);
 }
 
 void DroidVideoDecoder::Reset(base::OnceClosure closure) {
-  if (codec_) {
+  LOG(INFO) << "droidmedia: Reset (codec " << (codec_ ? "presente" : "assente")
+            << ", frame consegnati finora " << consegnati_ << ")";
+  if (drained_.load(std::memory_order_relaxed)) {
+    // Il flusso era finito (fine video, o fine di un segmento su YouTube) e ora
+    // si riparte: qui il flush non basta, il codec va ricreato da zero.
+    Teardown();
+    if (!AvviaCodec(config_)) {
+      LOG(ERROR) << "droidmedia: ricreazione dopo drain fallita, passo al software";
+      broken_.store(true, std::memory_order_relaxed);
+    }
+    drained_.store(false, std::memory_order_relaxed);
+  } else if (codec_) {
     droid_media_codec_flush(codec_);
   }
   std::move(closure).Run();
@@ -403,11 +465,12 @@ void DroidVideoDecoder::Reset(base::OnceClosure closure) {
 // static — ATTENZIONE: gira sul thread del loop di droidmedia, non su una
 // sequence di Chromium. Tutto quello che tocca Chromium va rimbalzato.
 void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
-  auto* self = static_cast<DroidVideoDecoder*>(data);
+  auto* ponte = static_cast<Ponte*>(data);
   auto* encoded = static_cast<DroidMediaCodecData*>(encoded_raw);
-  if (!self || !encoded || !encoded->data.data || encoded->data.size <= 0) {
+  if (!ponte || !encoded || !encoded->data.data || encoded->data.size <= 0) {
     return;
   }
+  ponte->Con([encoded](DroidVideoDecoder* self) {
 
   DroidMediaCodecMetaData info;
   DroidMediaRect crop;
@@ -459,7 +522,13 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
 
   scoped_refptr<VideoFrame> frame = VideoFrame::CreateFrame(
       PIXEL_FORMAT_I420, visible, gfx::Rect(visible), visible,
-      base::Microseconds(encoded->ts));
+      // 🔴 NANOsecondi, non micro: droidmedia ACCETTA microsecondi in ingresso
+      // ma RESTITUISCE nanosecondi in uscita. Misurato il 18/09 con una sonda:
+      // frame inviato con ts=33333 us, riconsegnato con ts=33333000. Letto come
+      // microsecondi, ogni frame arriva a Chromium mille volte piu' avanti nel
+      // tempo: il player crede di aver passato la fine e si pianta dopo pochi
+      // fotogrammi (immagine ferma, currentTime schizzato alla durata totale).
+      base::Nanoseconds(encoded->ts));
   if (!frame) {
     return;
   }
@@ -521,10 +590,13 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
     return;
   }
 
+  ++self->consegnati_;
+  // weak_self_ e' stato preso in Initialize, sulla sequence giusta: qui siamo
+  // sul thread del vendor e GetWeakPtr() non si puo' chiamare.
   self->task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&DroidVideoDecoder::DeliverFrameOnSequence,
-                                self->weak_factory_.GetWeakPtr(),
-                                std::move(frame)));
+                                self->weak_self_, std::move(frame)));
+  });
 }
 
 void DroidVideoDecoder::DeliverFrameOnSequence(scoped_refptr<VideoFrame> frame) {
@@ -542,20 +614,25 @@ void DroidVideoDecoder::OnSignalEos(void* data) {
 // static
 void DroidVideoDecoder::OnError(void* data, int err) {
   LOG(ERROR) << "droidmedia: errore del decoder vendor: " << err;
+  auto* ponte = static_cast<Ponte*>(data);
+  if (!ponte) {
+    return;
+  }
+  ponte->Con([](DroidVideoDecoder* self) {
+    self->broken_.store(true, std::memory_order_relaxed);
+  });
   // Gira sul thread del loop di droidmedia: si alza solo il flag, senza toccare
   // niente di Chromium. Il prossimo Decode() lo legge e fallisce, e la pipeline
   // ripiega sul software.
-  if (auto* self = static_cast<DroidVideoDecoder*>(data)) {
-    self->broken_.store(true, std::memory_order_relaxed);
-  }
 }
 
 // static
 int DroidVideoDecoder::OnSizeChanged(void* data, int32_t width, int32_t height) {
-  auto* self = static_cast<DroidVideoDecoder*>(data);
-  if (self) {
-    base::AutoLock lock(self->size_lock_);
-    self->coded_size_ = gfx::Size(width, height);
+  if (auto* ponte = static_cast<Ponte*>(data)) {
+    ponte->Con([width, height](DroidVideoDecoder* self) {
+      base::AutoLock lock(self->size_lock_);
+      self->coded_size_ = gfx::Size(width, height);
+    });
   }
   return 0;
 }

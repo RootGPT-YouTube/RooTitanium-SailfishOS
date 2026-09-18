@@ -15,10 +15,10 @@
 #include <atomic>
 #include <memory>
 
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/threading/thread.h"
 #include "media/base/media_export.h"
 #include "media/base/video_decoder.h"
 #include "media/base/video_decoder_config.h"
@@ -63,11 +63,52 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
   VideoDecoderType GetDecoderType() const override;
 
  private:
-  // Il ciclo di droidmedia gira su un thread suo: droid_media_codec_loop()
-  // blocca finche' non c'e' lavoro, quindi non puo' stare su una sequence di
-  // Chromium.
-  void LoopThreadMain();
+  // ⭐ Ponte fra il thread del vendor e noi. I callback di droidmedia arrivano
+  // su un thread suo, che non sa niente del ciclo di vita degli oggetti di
+  // Chromium: senza questo, un fotogramma in volo puo' trovare il decoder gia'
+  // distrutto. Il Ponte tiene un lock e un puntatore che azzeriamo PRIMA di
+  // chiudere il codec, cosi' un callback o arriva mentre siamo vivi, o non
+  // tocca niente. (Il fullscreen falliva proprio qui: la transizione distrugge
+  // il decoder mentre sta decodificando — 18/09.)
+  class Ponte : public base::RefCountedThreadSafe<Ponte> {
+   public:
+    explicit Ponte(DroidVideoDecoder* decoder) : decoder_(decoder) {}
+    Ponte(const Ponte&) = delete;
+    Ponte& operator=(const Ponte&) = delete;
+
+    // Da chiamare sulla sequence del decoder, PRIMA di fermare il codec: se un
+    // callback e' dentro, aspetta che finisca; quelli dopo non faranno nulla.
+    void Scollega() {
+      base::AutoLock lock(lock_);
+      decoder_ = nullptr;
+    }
+
+    template <typename F>
+    void Con(F funzione) {
+      base::AutoLock lock(lock_);
+      if (decoder_) {
+        funzione(decoder_);
+      }
+    }
+
+   private:
+    friend class base::RefCountedThreadSafe<Ponte>;
+    ~Ponte() = default;
+    base::Lock lock_;
+    DroidVideoDecoder* decoder_ GUARDED_BY(lock_);
+  };
+
+  // ⚠️ NIENTE thread del loop, ed e' deliberato: senza il flag
+  // USE_EXTERNAL_LOOP droidmedia avvia GIA' un thread suo che chiama
+  // droid_media_codec_loop(). Farne partire un secondo nostro voleva dire due
+  // consumatori sullo stesso codec, e il renderer moriva in silenzio (18/09).
+  // gmp-droid, per la stessa ragione, non ha nessun loop proprio.
   void Teardown();
+
+  // Crea, configura e avvia il codec del vendor secondo `config`. Sta a parte
+  // perche' serve in due punti: alla prima inizializzazione e alla ripartenza
+  // dopo un drain, dove ricreare il codec e' l'UNICO modo di farlo tornare vivo.
+  bool AvviaCodec(const VideoDecoderConfig& config);
 
   // Chiamate DAL thread del loop: rimbalzano sulla sequence del chiamante.
   // `encoded` e' un DroidMediaCodecData*, ma quel tipo non si puo' nominare
@@ -95,7 +136,14 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
   // ferma su un video che non parte (incidente del 18/09). Lo scrive il thread
   // del loop di droidmedia e lo legge la sequence di Chromium: atomico.
   std::atomic<bool> broken_{false};
-  std::unique_ptr<base::Thread> loop_thread_;
+
+  // Quanti fotogrammi abbiamo davvero consegnato: serve a leggere il ciclo di
+  // vita nei log (quando si blocca, e dopo quanti frame).
+  std::atomic<int> consegnati_{0};
+
+  // Abbiamo mandato un end-of-stream al codec: da quel momento e' esaurito e il
+  // prossimo Reset deve ricrearlo, non limitarsi al flush.
+  std::atomic<bool> drained_{false};
 
   VideoDecoderConfig config_;
   OutputCB output_cb_;
@@ -105,6 +153,12 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
   // (size_changed arriva dal thread del loop).
   base::Lock size_lock_;
   gfx::Size coded_size_;
+
+  scoped_refptr<Ponte> ponte_;
+
+  // ⚠️ Preso UNA VOLTA sulla sequence di Chromium, in Initialize: chiamare
+  // GetWeakPtr() dal thread del vendor non e' lecito, e finora lo facevamo.
+  base::WeakPtr<DroidVideoDecoder> weak_self_;
 
   base::WeakPtrFactory<DroidVideoDecoder> weak_factory_{this};
 };

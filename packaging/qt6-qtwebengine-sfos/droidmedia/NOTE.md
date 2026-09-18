@@ -9,6 +9,71 @@ rigenera e si porterebbe via tutto (è la lezione delle ~10 fix della Fase 2 del
 Entreranno in `media/filters/` tramite una patch numerata in `../patches/`,
 insieme al cablaggio GN e alla riga in `DefaultDecoderFactory`.
 
+## ✅ 18/09: FUNZIONA SUL DEVICE (POCO M4 Pro)
+
+Misurato, non dedotto:
+- VP9 1080p30 **decodificato in hardware**, `hal_format=19` (I420 planare),
+  crop pieno, buffer 3.110.400 byte = esattamente 1920×1080×1,5;
+- video locale: **0 fotogrammi persi**, CPU del renderer **57%** di un core
+  contro **71%** in software (stesso video, stessa pagina, stesso device);
+- **loop e seek** reggono (era il difetto n.5 qui sotto);
+- **YouTube 1080p** scorre oltre il minuto: 1501 frame, 6 persi;
+- fullscreen sul video locale OK anche con la decodifica attiva.
+
+⚠️ Il guadagno di CPU e' **reale ma modesto** (−14 punti, non il crollo sperato):
+tolta la decodifica, il costo dominante e' diventata la **copia** dei fotogrammi
+(3,1 MB a frame, ~93 MB/s a 30 fps) che libyuv fa comunque in CPU. Il salto vero
+richiede lo zero-copy — consegnare a Chromium la texture del vendor invece di
+copiarla — ed e' un lavoro a se'.
+
+### I sei difetti trovati, in ordine
+1. **`libI420colorconvert.so` assente** (e' libreria Qualcomm/TI, non MediaTek):
+   `droid_media_convert_*` inutilizzabile. Eliminato, ora converte **libyuv**.
+2. **Nessun rifiuto**: con `convert_` a NULL scartavamo i frame in silenzio e
+   `Initialize()` rispondeva `kOk` → la pipeline non ripiegava mai sul software.
+   Ora c'e' il flag `broken_` e il rifiuto anticipato sui color format.
+3. **Due loop concorrenti**: senza `USE_EXTERNAL_LOOP` droidmedia avvia gia' un
+   thread suo; il nostro era di troppo. Rimosso.
+4. 🔴 **`queue(codec, &data, nullptr)` = SIGSEGV**: droidmedia dereferenzia il
+   terzo argomento. E' questo che uccideva il renderer. Ora passiamo
+   `DroidMediaBufferCallbacks` valide, che trattengono anche il `DecoderBuffer`
+   finche' il vendor non lo rilascia (`unref` arriva, misurato 40 su 40).
+5. 🔴 **Timestamp: droidmedia ACCETTA microsecondi ma RESTITUISCE nanosecondi**.
+   Letti come microsecondi, i frame arrivavano mille volte piu' avanti nel tempo:
+   il player credeva di aver passato la fine e si piantava dopo pochi fotogrammi.
+6. 🔴 **Dopo un `drain` il `flush` NON basta**: il codec resta muto per sempre e
+   va **ricreato**. Misurato: drain+flush = 0 frame, drain+ricreazione = 40 su 40.
+   Era questo a bloccare il loop del video e ogni fine segmento su YouTube.
+7. **Corsa nel ciclo di vita**: i callback arrivano su un thread del vendor e
+   toccavano il decoder mentre veniva distrutto — per giunta chiamando
+   `GetWeakPtr()`, che in Chromium si puo' usare solo dalla sequence proprietaria.
+   Ora c'e' la classe `Ponte` (lock + puntatore azzerato prima di chiudere) e il
+   `WeakPtr` viene preso una volta in `Initialize`.
+
+### ⭐ Il metodo che ha fatto la differenza
+Tutti e sei sono stati isolati con **sonde in C da venti righe**, fuori da
+Chromium (`../../../scratch/sonde/`), non con le build: un giro da due minuti
+invece che da due ore e mezza. Le sonde rispondono a domande che il log non
+risponde — «cosa restituisce davvero questa chiamata?», «dopo un drain il flush
+basta?» — e vanno rilanciate **con l'app chiusa**, perche' il device ha una sola
+istanza del decoder VP9 hardware.
+
+⚠️ Attenzione al ritmo: una sonda che invia i frame piu' veloce del real-time
+riempie la coda del vendor e `queue()` **blocca** — non e' un difetto, e' backpressure.
+
+### Interruttore per il collaudo
+`RT_DROIDMEDIA=0` spegne la decodifica hardware lasciando **identico** il resto
+del motore: e' l'unico modo di fare un confronto onesto quando si deve capire se
+un sintomo viene dal decoder o da altro.
+
+### 🔴 Aperto: fullscreen su YouTube
+Il fullscreen entra e dopo ~400 ms YouTube esce e mette in pausa, perche' la
+finestra non ruota in tempo. **NON e' il decoder**: con `RT_DROIDMEDIA=0` fallisce
+identico, mentre la 1.8-1 (motore di agosto) riesce 3 volte su 3. Il sospetto e'
+una fix volatile del build tree persa in una delle rigenerazioni. Da bisecare.
+
+## Stato precedente
+
 ## ✅ Stato: COMPILA E SI LINKA (18/09, build di 4h14m, exit 0)
 
 Verificato su `libQt6WebEngineCore.so.6.8.3` (1,34 GB) appena prodotta:
