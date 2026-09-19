@@ -271,7 +271,7 @@ Window {
     property int findCur: 0
     property int findTot: 0
     // un solo handler per segnale: QML rifiuta i duplicati
-    onCurrentTabChanged: { closeFind(); videoPollSaysPlaying = false }
+    onCurrentTabChanged: { closeFind(); videoPollSaysPlaying = false; swipeF = 0 }
     function closeFind() {
         if (!findBar.open) return
         findBar.open = false
@@ -388,6 +388,7 @@ Window {
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
+    property bool cfgSwipeNav: true         // swipe orizzontale dal centro = Indietro/Avanti (acceso di default: scelta utente 19 set, dopo il collaudo)
     // --- task 1.3: hardening privacy. Erano tutti e tre spenti di default (20
     // lug): sono le misure che possono rompere siti. Il 17 set i cookie di terze
     // parti passano ACCESI di default (scelta dell'utente, collaudata sul POCO);
@@ -451,6 +452,7 @@ Window {
         cfgCloseTabs    = kvGet("set_closetabs", "1") === "1"
         cfgFarble       = kvGet("set_farble", "1") === "1"
         cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
+        cfgSwipeNav     = kvGet("set_swipenav", "1") === "1"
         cfgPermCam      = kvGet("set_perm_cam", "1") === "1"
         cfgPermMic      = kvGet("set_perm_mic", "1") === "1"
         cfgPermLoc      = kvGet("set_perm_loc", "1") === "1"
@@ -506,6 +508,7 @@ Window {
                                          if (on) kvSet("session_tabs", "[]"); else saveSession() }
         else if (k === "farble")   { cfgFarble = on;   kvSet("set_farble", v); applyViewPrefs() }
         else if (k === "nocookie") { cfgNoCookieBanner = on; kvSet("set_nocookie", v); applyViewPrefs() }
+        else if (k === "swipenav") { cfgSwipeNav = on; kvSet("set_swipenav", v); applyViewPrefs() }
         else if (k === "permcam")   { cfgPermCam = on;      kvSet("set_perm_cam", v) }
         else if (k === "permmic")   { cfgPermMic = on;      kvSet("set_perm_mic", v) }
         else if (k === "permloc")   { cfgPermLoc = on;      kvSet("set_perm_loc", v) }
@@ -799,6 +802,13 @@ Window {
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: true
+        })
+        if (cfgSwipeNav) s.push({
+            name: "rtSwipeNav",
+            sourceCode: swipeNavJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: false   // solo il frame principale: è lui che ha la cronologia
         })
         if (cfgNoCookieBanner) s.push({
             name: "rtCookieBanner",
@@ -1613,6 +1623,7 @@ ${dldirs}
 <a class="srow" href="https://settings.local/set?k=uitheme&v=light"><span class="rad${!win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Chiaro", "Light")}</span></span></a>
 <h2>${win.t("Pagine web", "Web pages")}</h2>
 ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
+${sToggle("swipenav", cfgSwipeNav, win.t("Swipe per Indietro e Avanti", "Swipe for Back and Forward"), win.t("Trascina dal centro della pagina: verso destra torni indietro, verso sinistra vai avanti", "Drag from the middle of the page: right goes back, left goes forward"))}
 <h2>${win.t("Informazioni", "About")}</h2>
 <a class="srow" href="https://about.local/"><span class="sbody"><span class="st">${win.t("Informazioni su RooTitanium", "About RooTitanium")}</span><span class="sd">${win.t("Versione, crediti e licenza", "Version, credits and license")}</span></span><span class="chev">›</span></a>
 </body></html>`
@@ -2300,6 +2311,111 @@ ${histCss}
         }, {capture:true, passive:true});
     })();`
 
+    // ===================== SWIPE INDIETRO/AVANTI (toggle, acceso di default) =====================
+    // Trascinando dal centro della pagina verso destra si torna indietro, verso
+    // sinistra si va avanti. Come rtYtTapFix, lo script ASCOLTA soltanto (tutti
+    // listener passive): il sito riceve ogni tocco come prima. Una MouseArea QML
+    // sopra la pagina invece si mangerebbe i tocchi (era il difetto della
+    // selezione del testo). Verso QML parla col canale di console già usato da
+    // rtSelectMenu: "__rtswipe:p:<f>" durante il gesto (f = frazione della
+    // soglia, >0 verso Indietro), poi "go:back" / "go:fwd" oppure "end".
+    //
+    // Il gesto resta al sito quando il sito lo usa: caroselli che chiamano
+    // preventDefault, elementi con touch-action senza pan-x (mappe, slider fatti
+    // coi pointer event), contenitori che scorrono in orizzontale, campi, video,
+    // canvas, iframe, la barra di YouTube; e poi pagina ingrandita, selezione in
+    // corso, due dita.
+    readonly property string swipeNavJs: `(function(){
+        if (window.__rtSwipeNav) return; window.__rtSwipeNav = true;
+        var SKIP = 'input,textarea,select,[contenteditable=""],[contenteditable="true"],video,canvas,iframe,embed,object,'
+                 + '[role=slider],[role=scrollbar],yt-progress-bar,.ytp-progress-bar,.ytPlayerProgressBarDragContainer';
+        var g = null;
+        function send(m){ console.log('__rtswipe:' + m); }
+        function blocked(t){
+            if (!t || t.nodeType !== 1) t = t && t.parentElement;
+            if (!t) return true;
+            if (t.closest(SKIP)) return true;
+            for (var el = t; el && el.nodeType === 1; el = el.parentElement) {
+                var cs = getComputedStyle(el), ta = cs.touchAction;
+                // touch-action che esclude pan-x = il sito gestisce da sé il laterale
+                if (ta && ta !== 'auto' && ta !== 'manipulation' && ta.indexOf('pan-x') < 0) return true;
+                if (el !== document.documentElement && el !== document.body) {
+                    var ox = cs.overflowX;
+                    if ((ox === 'auto' || ox === 'scroll') && el.scrollWidth > el.clientWidth + 2) return true;
+                }
+            }
+            return false;
+        }
+        function finish(){
+            window.removeEventListener('touchmove', onMove, {passive:true});
+            var s = g; g = null; return s;
+        }
+        function kill(){ if (g && !g.dead) { if (g.shown) send('end'); g.dead = true; g.shown = false; } }
+        function onMove(e){
+            if (!g || g.dead) return;
+            var p = e.touches && e.touches[0];
+            // il sito ha preso il gesto, o la pagina ha scorso in orizzontale: è suo
+            if (!p || e.touches.length !== 1 || e.defaultPrevented || window.scrollX !== g.sx) { kill(); return; }
+            var dx = p.clientX - g.x, dy = p.clientY - g.y, ax = Math.abs(dx), ay = Math.abs(dy);
+            if (!g.dir) {
+                if (ax < 12 && ay < 12) return;
+                if (ay > ax * 0.7) { kill(); return; }       // verticale: è uno scroll
+                g.dir = 1;
+            } else if (ay > Math.max(48, ax * 0.8)) { kill(); return; }
+            var f = dx / (g.w * 0.25);                       // soglia = un quarto della larghezza
+            if (Math.abs(f - g.f) >= 0.06 || (Math.abs(f) >= 1) !== (Math.abs(g.f) >= 1)) {
+                send('p:' + f.toFixed(2)); g.shown = true; g.f = f;
+            }
+            g.f = f;
+        }
+        window.addEventListener('touchstart', function(e){
+            if (g) { kill(); finish(); }                     // secondo dito o gesto nuovo
+            if (!e.touches || e.touches.length !== 1) return;
+            var vv = window.visualViewport;
+            if (vv && vv.scale > 1.05) return;               // ingrandita: il laterale serve a muoversi
+            var p = e.touches[0], w = window.innerWidth;
+            if (p.clientX < w * 0.2 || p.clientX > w * 0.8) return;   // solo dal centro
+            var sel = window.getSelection && window.getSelection();
+            if (sel && !sel.isCollapsed) return;             // selezione in corso: ci sono i pallini
+            if (blocked(e.target)) return;
+            g = { x: p.clientX, y: p.clientY, sx: window.scrollX, w: w, dir: 0, f: 0, shown: false, dead: false };
+            // registrato ADESSO, cioè dopo gli handler della pagina: così a ogni
+            // touchmove vede se uno di loro ha chiamato preventDefault
+            window.addEventListener('touchmove', onMove, {passive:true});
+        }, {capture:true, passive:true});
+        window.addEventListener('touchend', function(){
+            var s = finish(); if (!s || s.dead) return;
+            if (s.dir && Math.abs(s.f) >= 1) send(s.f > 0 ? 'go:back' : 'go:fwd');
+            else if (s.shown) send('end');
+        }, {capture:true, passive:true});
+        window.addEventListener('touchcancel', function(){ kill(); finish(); }, {capture:true, passive:true});
+    })();`
+
+    // avanzamento dello swipe nella scheda corrente: >0 verso Indietro, <0 verso
+    // Avanti, |1| = soglia superata. Resta 0 se in quella direzione non c'è pagina.
+    property real swipeF: 0
+    // rete di sicurezza: se la pagina sparisce a metà gesto (navigazione, crash
+    // del renderer) il messaggio di fine non arriva e la freccia resterebbe su.
+    // Legata agli eventi e non a un timer: un timer la toglieva anche col dito
+    // fermo e ancora giù.
+    Connections {
+        target: win.currentView
+        ignoreUnknownSignals: true
+        function onLoadingChanged() { win.swipeF = 0 }
+        function onRenderProcessTerminated() { win.swipeF = 0 }
+    }
+    function onSwipeMsg(view, m) {
+        if (view !== currentView) return
+        if (m === "end")    { swipeF = 0; return }
+        if (m === "go:back") { swipeF = 0; if (view.canGoBack) view.goBack(); return }
+        if (m === "go:fwd")  { swipeF = 0; if (view.canGoForward) view.goForward(); return }
+        if (m.indexOf("p:") === 0) {
+            var f = parseFloat(m.substring(2)) || 0
+            if ((f > 0 && !view.canGoBack) || (f < 0 && !view.canGoForward)) f = 0
+            swipeF = f
+        }
+    }
+
     function pushOrientation() {
         var land = orient !== 0
         for (var i = 0; i < tabsRepeater.count; i++) {
@@ -2549,6 +2665,47 @@ ${histCss}
             // di YouTube di essere minimizzato → exitFullscreen + pausa (via CDP)
             Behavior on height { enabled: inputPanel.active; NumberAnimation { duration: 150 } }
 
+            // freccia dello swipe Indietro/Avanti: entra dal bordo mentre trascini
+            // e si accende oltre la soglia. Nessuna MouseArea: non tocca i tocchi.
+            Rectangle {
+                id: swipeArrow
+                readonly property real f: win.swipeF
+                readonly property real a: Math.min(Math.abs(f), 1)
+                readonly property bool armed: Math.abs(f) >= 1
+                readonly property bool back: f > 0
+                visible: f !== 0 && !win.videoFS
+                z: 30
+                width: 56 * win.u; height: width; radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                x: back ? (-width + a * (width + 16 * win.u)) : (parent.width - a * (width + 16 * win.u))
+                color: armed ? win.pal.accent : win.pal.surface
+                border.color: win.pal.border; border.width: armed ? 0 : 1
+                opacity: 0.35 + 0.65 * a
+                onBackChanged: arrowIco.requestPaint()
+                onArmedChanged: arrowIco.requestPaint()
+                Canvas {
+                    id: arrowIco
+                    anchors.centerIn: parent
+                    width: 28 * win.u; height: width
+                    Component.onCompleted: requestPaint()
+                    onPaint: {
+                        var c = getContext("2d"); c.reset()
+                        var s = width
+                        c.strokeStyle = swipeArrow.armed ? "#ffffff" : win.pal.fg
+                        c.lineWidth = Math.max(1, s * 0.1); c.lineCap = "round"; c.lineJoin = "round"
+                        c.beginPath()
+                        if (swipeArrow.back) {
+                            c.moveTo(s*0.80, s*0.5); c.lineTo(s*0.22, s*0.5)
+                            c.moveTo(s*0.44, s*0.26); c.lineTo(s*0.20, s*0.5); c.lineTo(s*0.44, s*0.74)
+                        } else {
+                            c.moveTo(s*0.20, s*0.5); c.lineTo(s*0.78, s*0.5)
+                            c.moveTo(s*0.56, s*0.26); c.lineTo(s*0.80, s*0.5); c.lineTo(s*0.56, s*0.74)
+                        }
+                        c.stroke()
+                    }
+                }
+            }
+
             Repeater {
                 id: tabsRepeater
                 model: tabsModel
@@ -2785,6 +2942,7 @@ ${histCss}
                     // li ristampiamo noi, com'era prima.
                     onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
                         if (message === "__rtsel:open") { win.openSelectMenu(this); return }
+                        if (message.indexOf("__rtswipe:") === 0) { win.onSwipeMsg(this, message.substring(10)); return }
                         if (level >= WebEngineView.WarningMessageLevel)
                             console.warn("[js] " + sourceID + ":" + lineNumber + " " + message)
                     }
