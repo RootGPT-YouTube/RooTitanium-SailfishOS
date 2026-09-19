@@ -289,3 +289,41 @@ non conosciamo le dipendenze runtime**.
   in un Chromium desktop-style: siamo i primi, quindi stime larghe.
 - Il guadagno non tocca AV1 sul POCO (non c'è in hardware).
 - La copia I420 resta a carico della CPU.
+
+## ⭐ Misura del 19/09: software contro hardware, a coppie
+
+POCO M4 Pro a batteria, CPU **sbloccate** (il 18/09 erano bloccate al massimo dal
+boost di avvio del vendor, e la misura di quel giorno è da considerare falsata),
+VP9 1080p30 locale in loop, luminosità fissa 60, giri da 180 s, stesso motore con
+`RT_DROIDMEDIA=0/1`. Dati grezzi e script in `scratch/misura-consumi-0919/`.
+
+Due ripetizioni della stessa configurazione possono differire fino a 0,4 W: per
+questo si confrontano solo **giri adiacenti**, mai i valori assoluti.
+
+| | Coppia 1 (sbloccate) | Coppia 2 (sbloccate, ordine inverso) | Coppia 3 (CPU bloccate) | **Media** |
+|---|---|---|---|---|
+| Consumo sw → hw | 3,52 → 3,28 W | 3,08 → 2,89 W | 3,07 → 2,75 W | **−0,25 W (−8%)** |
+| CPU del browser sw → hw (% di un core) | 143 → 85 | 153 → 89 | 107 → 59 | **−43%** |
+| CPU di tutto il telefono sw → hw | 42,9 → 40,3% | 44,6 → 41,3% | 35,4 → 32,7% | **−3 punti** |
+| Temperatura CPU a fine giro sw → hw | 63,7 → 61,7 °C | 59,4 → 58,3 °C | 59,1 → 56,5 °C | **−1,9 °C** |
+| Picco di temperatura sw → hw | 68,1 → 67,5 °C | 68,1 → 67,1 °C | 67,3 → 63,4 °C | **−1,8 °C** |
+| Riscaldamento batteria sw → hw | +1,2 → +0,6 °C | +0,4 → +0,3 °C | +0,3 → +0,1 °C | leggermente meno |
+| GPU sw → hw | 41 → 42% | 41 → 41% | 41 → 41% | uguale |
+| Frame persi sw → hw | 0 → 0 | 0 → 0 | 0 → 0 | nessuno |
+
+L'hardware vince in **tutte e tre** le coppie, anche a ordine invertito: il
+risparmio non è un effetto della deriva lungo la serie.
+
+**Perché sul totale sembra poco.** Con lo schermo acceso e l'app ferma il
+telefono consuma già **2,80 W**. Il video aggiunge +0,50 W in software e +0,29 W
+in hardware: sulla parte che dipende da noi l'hardware toglie circa il **40%**,
+sul totale solo l'8%. Stima teorica, non misurata: con la batteria da ~19 Wh
+circa 5 h 50 min di video in software contro 6 h 15 min in hardware (~+25 min).
+
+La stessa serie ha misurato anche l'app ferma, il rendering tutto software
+(`--disable-gpu`: consuma meno solo perché perde il 6-7% dei fotogrammi) e le
+CPU bloccate contro sbloccate.
+
+Lo zero-copy, che sembrava il passo successivo, è stato **valutato e bocciato
+da una misura** lo stesso giorno: un lettore già zero-copy non consuma meno di
+RooTitanium con la copia. Vedi `Documentation/TASK-zero-copy-video.md`.
