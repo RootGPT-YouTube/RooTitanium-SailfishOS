@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.9
-Release:    9
+Version:    2.0
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -85,17 +85,23 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
-* Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-9
-- Decodifica video in hardware funzionante: i video VP9 (il formato di
-  YouTube) vengono ora decodificati dal chip del telefono invece che dal
-  processore. Sul POCO M4 Pro il consumo scende da 71%% a 57%% di un core
-  su un 1080p, senza perdere un fotogramma.
-- Rispetto alle prove precedenti sono stati corretti: il blocco del video
-  quando riparte da capo o cambia segmento, i tempi dei fotogrammi
-  (erano letti in un'unita' sbagliata), e un crash che chiudeva la pagina
-  appena partiva un video.
-- Dove la decodifica hardware non e' disponibile o il formato non e'
-  supportato, il browser torna da solo a quella normale.
+* Sat Sep 19 2026 RootGPT <emagiampa@gmail.com> - 2.0-1
+- Decodifica video in hardware: i video VP9, il formato di YouTube, li
+  decodifica il chip del telefono invece del processore. Misurato sul
+  POCO M4 Pro con un 1080p: il 43%% di CPU del browser in meno, circa
+  2 gradi in meno e da 0,2 a 0,3 W in meno, senza perdere fotogrammi.
+  Dove la decodifica hardware non c'e' o il formato non e' supportato,
+  il browser torna da solo a quella normale. Il pezzo di droidmedia che
+  lo rende possibile e' incluso nel pacchetto: nessuna dipendenza nuova.
+- Swipe per Indietro e Avanti: trascinando dal centro della pagina verso
+  destra si torna indietro, verso sinistra si va avanti. Una freccia
+  segue il dito e si accende oltre la soglia; rilasciando prima si
+  annulla. Il gesto resta al sito quando il sito lo usa (caroselli,
+  mappe, zone che scorrono di lato, pagina ingrandita). Acceso di
+  default, si spegne da Impostazioni -> Pagine web.
+- Pagina Informazioni: crediti per droidmedia e libhybris, che
+  permettono di usare il decoder video del telefono.
+- Questa versione sostituisce la 1.9-9, preparata ma mai pubblicata.
 
 * Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-4
 - I video ora scorrono: il decoder leggeva il tempo di ogni fotogramma

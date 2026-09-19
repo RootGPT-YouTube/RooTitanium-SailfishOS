@@ -165,7 +165,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "1.9"
+    readonly property string appVersion: "2.0"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -1672,6 +1672,8 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
 <a class="crlnk" href="https://chromereleases.googleblog.com/">${win.t("Apri gli annunci di sicurezza di Chrome", "Open the Chrome security releases")}</a>
 <div class="cr">${win.t("Le correzioni che fanno funzionare il motore su Sailfish OS — EGL, compositor a texture condivise, aarch64 — sono di Rinigus, che cura il packaging del motore per la community, con i contributi di Adam Pigg (piggz) e Peter G. (nephros). Senza il loro lavoro questo browser non esisterebbe.", "The fixes that make the engine work on Sailfish OS — EGL, shared GL texture compositor, aarch64 — are by Rinigus, who maintains the engine packaging for the community, with contributions from Adam Pigg (piggz) and Peter G. (nephros). Without their work this browser would not exist.")}</div>
 <a class="crlnk" href="https://github.com/sailfishos-chum/qt6-qtwebengine">${win.t("Apri il packaging del motore", "Open the engine packaging")}</a>
+<div class="cr">${win.t("I video vengono decodificati dal chip del telefono grazie a droidmedia di Jolla, che porta il decoder video di Android su Sailfish OS attraverso libhybris. droidmedia è disponibile secondo la licenza Apache 2.0.", "Videos are decoded by the phone's own chip thanks to droidmedia by Jolla, which brings Android's video decoder to Sailfish OS through libhybris. droidmedia is available under the Apache 2.0 license.")}</div>
+<a class="crlnk" href="https://github.com/sailfishos/droidmedia">${win.t("Apri droidmedia su GitHub", "Open droidmedia on GitHub")}</a>
 <div class="cr">${win.t("Le protezioni anti-fingerprint e il blocco dei banner cookie sono ispirati a Brave e Cromite. Grazie per il lavoro pionieristico sulla privacy nel browser!", "The anti-fingerprint protections and cookie-banner blocking are inspired by Brave and Cromite. Thanks for the pioneering work on browser privacy!")}</div>
 <a class="crlnk" href="https://github.com/brave/brave-browser" style="margin-bottom:2px">${win.t("Apri Brave su GitHub", "Open Brave on GitHub")}</a>
 <a class="crlnk" href="https://github.com/uazo/cromite">${win.t("Apri Cromite su GitHub", "Open Cromite on GitHub")}</a>
