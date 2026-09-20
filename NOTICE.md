@@ -90,6 +90,17 @@ it lean.
 - Source: https://github.com/mozilla/readability (tag 0.6.0)
 - © 2010 Arc90 Inc, Mozilla and contributors
 
+**droidmedia** (Jolla Ltd.) — hardware video decoding
+- Role: reaches the phone's Android MediaCodec video decoder through libhybris;
+  RooTitanium's decoder puts it in front of Chromium's software decoders and
+  falls back to them when it is unavailable
+- License: Apache-2.0 — text bundled in `/home/rootitanium/LICENSES/Apache-2.0.txt`
+- Distribution: the small loader shim (`libdroidmedia.a`, built from
+  `hybris.c`, © 2014-2015 Jolla Ltd.) is **statically linked** into
+  `libQt6WebEngineCore`; `libdroidmedia.so` itself is **not bundled**, it is
+  loaded at runtime from the device's own adaptation packages
+- Source: https://github.com/sailfishos/droidmedia
+
 **libhybris** and the Android HAL (EGL / GPU)
 - Role: GPU acceleration on SailfishOS — QtWebEngine renders through EGL over the
   device's Android graphics drivers via libhybris

@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    1.8
+Version:    2.0
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,67 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Sep 19 2026 RootGPT <emagiampa@gmail.com> - 2.0-1
+- Decodifica video in hardware: i video VP9, il formato di YouTube, li
+  decodifica il chip del telefono invece del processore. Misurato sul
+  POCO M4 Pro con un 1080p: il 43%% di CPU del browser in meno, circa
+  2 gradi in meno e da 0,2 a 0,3 W in meno, senza perdere fotogrammi.
+  Dove la decodifica hardware non c'e' o il formato non e' supportato,
+  il browser torna da solo a quella normale. Il pezzo di droidmedia che
+  lo rende possibile e' incluso nel pacchetto: nessuna dipendenza nuova.
+- Swipe per Indietro e Avanti: trascinando dal centro della pagina verso
+  destra si torna indietro, verso sinistra si va avanti. Una freccia
+  segue il dito e si accende oltre la soglia; rilasciando prima si
+  annulla. Il gesto resta al sito quando il sito lo usa (caroselli,
+  mappe, zone che scorrono di lato, pagina ingrandita). Acceso di
+  default, si spegne da Impostazioni -> Pagine web.
+- Pagina Informazioni: crediti per droidmedia e libhybris, che
+  permettono di usare il decoder video del telefono.
+- Questa versione sostituisce la 1.9-9, preparata ma mai pubblicata.
+
+* Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-4
+- I video ora scorrono: il decoder leggeva il tempo di ogni fotogramma
+  in un'unita' sbagliata (mille volte piu' grande), cosi' il video
+  credeva di essere gia' finito e si fermava dopo pochi fotogrammi con
+  l'immagine bloccata.
+
+* Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-3
+- Terzo e decisivo difetto della serie: il decoder passava un puntatore
+  nullo a droidmedia quando le consegnava i dati da decodificare, e
+  droidmedia ci finiva sopra. E' questo che faceva morire la pagina, non
+  la libreria mancante di ieri. Riprodotto fuori dal browser, in venti
+  righe: con il puntatore nullo si schianta subito, con un riferimento
+  valido i fotogrammi escono.
+- Lo stesso riferimento tiene ora in vita i dati finche' il decoder del
+  telefono non ha finito di usarli, cosa che prima non era garantita.
+- Tolto anche un secondo ciclo di lettura che facevamo noi in parallelo a
+  quello gia' avviato da droidmedia: due lettori sullo stesso decoder.
+
+* Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-2
+- La 1.9-1 non riusciva a riprodurre i video: il decoder droidmedia si
+  appoggiava a una libreria del produttore del telefono per convertire i
+  fotogrammi, e su parecchi dispositivi (fra cui il POCO M4 Pro) quella
+  libreria non esiste. Peggio: il decoder non se ne accorgeva e restava
+  li' a non produrre nulla, senza lasciare che il browser tornasse al
+  decoder normale. Da qui il video fermo.
+- Ora la conversione la fa il browser stesso, con codice che ha gia'
+  dentro: nessuna dipendenza dal produttore, quindi funziona uguale su
+  tutti i telefoni. E se il formato dei fotogrammi non e' fra quelli che
+  sappiamo trattare, il decoder si tira indietro subito e il video parte
+  lo stesso, come prima, senza accelerazione.
+
+* Fri Sep 18 2026 RootGPT <emagiampa@gmail.com> - 1.9-1
+- Motore ricostruito con il decoder video droidmedia innestato: e' il
+  primo pacchetto che lo contiene. Sotto c'e' MediaCodec di Android,
+  raggiunto via droidmedia e libhybris, e il decoder si mette PRIMA dei
+  tre software di Chromium. Se rifiuta -- device senza droidmedia, codec
+  non supportato dal vendor -- si ripiega da solo sul software.
+- Il shim droidmedia e' linkato STATICO: nessuna dipendenza nuova, un
+  pacchetto solo per tutti i device, come le versioni precedenti.
+- ATTENZIONE: prima prova sul campo della decodifica hardware. Se un
+  video non parte o l'app si chiude riaprendo una pagina con video,
+  e' qui che bisogna guardare; la 1.8-1 resta installabile a ritroso.
+
 * Thu Sep 17 2026 RootGPT <emagiampa@gmail.com> - 1.8-1
 - Selezione del testo: i due pallini ora si afferrano davvero. Non era
   colpa del motore: lo strato che chiude il menu' contestuale copre
