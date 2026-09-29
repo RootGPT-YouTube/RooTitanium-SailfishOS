@@ -40,3 +40,24 @@ di memoria `debug-login-antibot-cdp`.
 ## Cura possibile per il costo del farbling (indipendente dal blocco)
 Farbling solo su tele piccole, o campionamento sparso invece che pixel per pixel:
 si toglie il costo senza dover scegliere fra privacy e usabilità.
+
+## ✅ Risolta il 29/09/2026 — era il nostro script «Rifiuta cookie»
+Guardando la pagina dal vivo via DevTools (POCO, RPM 2.0-1): `scrollY` sempre 0,
+`documentElement.scrollHeight` = 808 (l'altezza dello schermo) e il **body** con
+15.939 px di scroll suo. Lo script `cookieBannerJs` iniettava su ogni sito
+`html,body{overflow:auto!important}`: con `html` non più `visible`, l'overflow del
+body non si propaga alla finestra e il body diventa un contenitore di scroll a sé.
+La finestra non scrolla mai, niente evento `scroll` su `window`, e la timeline
+virtualizzata di X resta ai primi 4 post mentre il dito scorre nel vuoto.
+
+Prova A/B sulla stessa pagina, 24 swipe per lato:
+- con la regola: 4 post, scrollY 0, nessuna richiesta di altri post;
+- tolta la regola a caldo: la finestra scrolla e X carica altri post (4→10).
+
+Cura: lo scroll si sblocca **solo** se un banner c'è stato (selettore noto
+trovato o bottone «rifiuta» cliccato) e solo sull'elemento che ha davvero
+`overflow-y: hidden`, mettendolo a `visible` (che mantiene la propagazione alla
+finestra). Dopo la cura, stesso test: 21.000 px scorsi, pagina da 15.600 a 34.200 px.
+
+Riguardava **ogni sito** che carica o anima allo scroll della finestra, col toggle
+«Rifiuta cookie» acceso. Il costo del farbling resta un tema a parte (sopra).

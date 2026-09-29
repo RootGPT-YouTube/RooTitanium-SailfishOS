@@ -638,19 +638,29 @@ Window {
   // bottoni "rifiuta" identificati per SELETTORE-classe nei vari CMP (anche <a>,
   // che il match per testo — solo button/[role=button] — non prenderebbe)
   var RSEL=['.iubenda-cs-reject-btn','.cc-btn.cc-deny','.osano-cm-denyAll','.cmp-reject-all','.fc-cta-do-not-consent','[data-role=reject-all]','[aria-label*="Rifiuta"]','[aria-label*="Reject"]'];
-  function css(){try{if(document.getElementById('__rtNoCookieCss'))return;var s=document.createElement('style');s.id='__rtNoCookieCss';s.textContent=HIDE.join(',')+'{display:none!important;visibility:hidden!important;}html,body{overflow:auto!important;}';(document.head||document.documentElement).appendChild(s);}catch(e){}}
+  function css(){try{if(document.getElementById('__rtNoCookieCss'))return;var s=document.createElement('style');s.id='__rtNoCookieCss';s.textContent=HIDE.join(',')+'{display:none!important;visibility:hidden!important;}';(document.head||document.documentElement).appendChild(s);}catch(e){}}
+  // sblocca lo scroll SOLO se un banner c'e' stato e l'ha bloccato (overflow
+  // hidden), e con 'visible': un overflow:auto forzato su html E body fa del body
+  // un contenitore di scroll a se', la finestra non scrolla piu' (scrollY=0) e i
+  // siti che caricano allo scroll della finestra si fermano (x.com: 4 post e basta)
+  var seen=false;
+  function unlock(){try{
+    if(!seen){for(var h=0;h<HIDE.length;h++){if(document.querySelector(HIDE[h])){seen=true;break;}}}
+    if(!seen)return;
+    [document.documentElement,document.body].forEach(function(el){if(el&&getComputedStyle(el).overflowY==='hidden')el.style.setProperty('overflow','visible','important');});
+  }catch(e){}}
   var RE=/^(rifiuta|rifiuta tutto|rifiuta tutti|solo (i )?necessari|reject|reject all|decline|necessary only|only necessary|continua senza accettare|non accetto|no thanks)$/i;
   // clicca TUTTI i bottoni "rifiuta" non ancora gestiti (marcati con __rtDone,
   // così non si ri-cliccano e non bloccano la gestione di altri banner)
   function rej(){try{
-    for(var i=0;i<RIDS.length;i++){var el=document.getElementById(RIDS[i]);if(el&&!el.__rtDone){el.__rtDone=1;el.click();}}
-    for(var k=0;k<RSEL.length;k++){document.querySelectorAll(RSEL[k]).forEach(function(e){if(!e.__rtDone){e.__rtDone=1;e.click();}});}
+    for(var i=0;i<RIDS.length;i++){var el=document.getElementById(RIDS[i]);if(el&&!el.__rtDone){el.__rtDone=1;el.click();seen=true;}}
+    for(var k=0;k<RSEL.length;k++){document.querySelectorAll(RSEL[k]).forEach(function(e){if(!e.__rtDone){e.__rtDone=1;e.click();seen=true;}});}
     var b=document.querySelectorAll('button,a[role=button],[role=button]');
-    for(var j=0;j<b.length;j++){var e2=b[j];if(e2.__rtDone)continue;var t=(e2.textContent||'').trim();if(t&&t.length<40&&RE.test(t)){e2.__rtDone=1;e2.click();}}
+    for(var j=0;j<b.length;j++){var e2=b[j];if(e2.__rtDone)continue;var t=(e2.textContent||'').trim();if(t&&t.length<40&&RE.test(t)){e2.__rtDone=1;e2.click();seen=true;}}
   }catch(e){}}
   css();
-  var n=0;var iv=setInterval(function(){css();rej();if(++n>20)clearInterval(iv);},500);
-  try{var mo=new MutationObserver(function(){css();rej();});mo.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){try{mo.disconnect();}catch(e){}},12000);}catch(e){}
+  var n=0;var iv=setInterval(function(){css();rej();unlock();if(++n>20)clearInterval(iv);},500);
+  try{var mo=new MutationObserver(function(){css();rej();unlock();});mo.observe(document.documentElement,{childList:true,subtree:true});setTimeout(function(){try{mo.disconnect();}catch(e){}},12000);}catch(e){}
 })();`
 
     // Menù a tendina: il popup nativo dei <select> finisce in una QQuickWindow
