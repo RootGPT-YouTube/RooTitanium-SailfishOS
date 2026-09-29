@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.0
+Version:    2.1
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -85,6 +85,14 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Tue Sep 29 2026 RootGPT <emagiampa@gmail.com> - 2.1-1
+- x.com: scorrendo la timeline i post si caricano di nuovo, invece di
+  fermarsi ai primi. La colpa era dell'opzione «Rifiuta cookie», che su
+  ogni sito spostava lo scroll dalla finestra al corpo della pagina: i
+  siti che caricano contenuti mentre si scorre non se ne accorgevano.
+  Ora lo scroll viene sbloccato solo dove un banner dei cookie lo aveva
+  davvero bloccato. Valeva per tutti i siti di questo tipo, non solo X.
+
 * Sat Sep 19 2026 RootGPT <emagiampa@gmail.com> - 2.0-1
 - Decodifica video in hardware: i video VP9, il formato di YouTube, li
   decodifica il chip del telefono invece del processore. Misurato sul
