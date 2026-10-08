@@ -104,11 +104,17 @@ Patch301: 0301-rootitanium-sockaddr-include-order.patch
 Patch302: 0302-rootitanium-browser-interface-binders-O1.patch
 Patch303: 0303-rootitanium-terser-in-process.patch
 Patch304: 0304-rootitanium-compress-files-sequential.patch
+# build armv7hl: il gcc ARM 32 bit rifiuta -march=armv8-a+aes+crc (zlib crc32)
+Patch305: 0305-rootitanium-zlib-crc32-gcc-arm32.patch
+# build armv7hl: gcc + vettorizzazione = SIGBUS sui backing Oilpan allineati a 4
+Patch306: 0306-rootitanium-arm32-gcc-no-tree-vectorize.patch
 
 # handled by qt6-srpm-macros, which defines %%qt6_qtwebengine_arches
 # FIXME use/update qt6_qtwebengine_arches
 # 32-bit arches not supported (https://bugreports.qt.io/browse/QTBUG-102143)
-ExclusiveArch: aarch64 x86_64
+# RooTitanium: armv7hl invece si compila e funziona (Node aarch64 nel target,
+# patch 0305/0306 per gcc su ARM32) — vedi RUNBOOK-armv7hl.md
+ExclusiveArch: aarch64 x86_64 armv7hl
 
 BuildRequires: cmake
 BuildRequires: make
@@ -423,6 +429,8 @@ popd
 %patch -P302 -p1 -b .rt-bib-O1
 %patch -P303 -p1 -b .rt-terser
 %patch -P304 -p1 -b .rt-compress
+%patch -P305 -p1 -b .rt-zlib-arm32
+%patch -P306 -p1 -b .rt-arm32-novec
 
 # ## upstreamable patches
 # %%patch -P110 -p1 -b .webrtc-system-openh264
@@ -487,7 +495,7 @@ export NINJAFLAGS="%{__ninja_common_opts}"
 export NINJA_PATH=%{__ninja}
 
 %cmake_qt6 \
-  -DCMAKE_TOOLCHAIN_FILE:STRING="/usr/lib64/cmake/Qt6/qt.toolchain.cmake" \
+  -DCMAKE_TOOLCHAIN_FILE:STRING="%{_libdir}/cmake/Qt6/qt.toolchain.cmake" \
   -DFEATURE_qtpdf_build:BOOL=ON \
   -DFEATURE_webengine_developer_build:BOOL=OFF \
   -DFEATURE_webengine_embedded_build:BOOL=OFF \

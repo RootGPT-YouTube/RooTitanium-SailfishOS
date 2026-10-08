@@ -21,13 +21,22 @@ set -euo pipefail
 # come negli altri script: niente path assoluti cablati.
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 VER=${VER:-6.8.4}
-BT=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-$VER/upstream
-GNDIR=$BT/src/core/RelWithDebInfo/aarch64
+# ARCH=armv7hl per il motore a 32 bit (albero e target separati, vedi
+# RUNBOOK-armv7hl.md); senza, tutto come prima (aarch64).
+ARCH=${ARCH:-aarch64}
+case "$ARCH" in
+  aarch64) TOPDIR=build;         GNSUB=RelWithDebInfo/aarch64
+           TARGET=SailfishOS-5.1.0.11-aarch64.default; QEMUBIN=qemu-aarch64-10 ;;
+  armv7hl) TOPDIR=build-armv7hl; GNSUB=Release/armv7l
+           TARGET=SailfishOS-5.1.0.11-armv7hl;         QEMUBIN=qemu-arm-10 ;;
+  *) echo "ERRORE: ARCH sconosciuta: $ARCH" >&2; exit 1 ;;
+esac
+BT=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
+GNDIR=$BT/src/core/$GNSUB
 ENGINE=sailfish-sdk-build-engine_RootGPT
-TARGET=SailfishOS-5.1.0.11-aarch64.default
-# qemu-aarch64-static 10.x dell'HOST, copiato nella home (dev'essere sotto /home:
+# qemu-<arch>-static 10.x dell'HOST, copiato nella home (dev'essere sotto /home:
 # /tmp NON e' condiviso col container). Si sposta con QEMU10=...
-QEMU10=${QEMU10:-$HOME/qemu-aarch64-10}
+QEMU10=${QEMU10:-$HOME/$QEMUBIN}
 
 die() { echo "ERRORE: $*" >&2; exit 1; }
 [ -d "$BT" ] || die "build tree non trovato: $BT (VER=$VER giusto?)"
@@ -78,7 +87,9 @@ fix_gn() {
 fix_rsp() {
   local f=$GNDIR/toolchain.ninja
   [ -f "$f" ] || die "toolchain.ninja non trovato: $f"
-  local mangled="home_RootGPT_Developing_SailfishOS_RooTitanium_packaging_qt6-qtwebengine-sfos_build_BUILD_qt6-qtwebengine-${VER}_upstream_src_core_"
+  # = path di $BT/src/core/ senza la / iniziale e con gli slash in underscore
+  local mangled
+  mangled=$(echo "${BT#/}/src/core/" | tr / _)
   if grep -q "$mangled" "$f"; then
     cp -n "$f" "$f.bak-rsplen"
     sed -i "/^  rspfile = /s#${mangled}##g" "$f"
@@ -123,7 +134,7 @@ fix_link() {
 # qemu dell'host. Cosi' e' ninja stesso a produrre il .bin e a registrarne il
 # successo, e il passo non si ripresenta piu'. Idempotente.
 fix_snapshot() {
-  [ -x "$QEMU10" ] || die "manca $QEMU10 (copia /usr/bin/qemu-aarch64-static dell'host; NB: /tmp non e' condiviso col container, /home si')"
+  [ -x "$QEMU10" ] || die "manca $QEMU10 (copia /usr/bin/qemu-<arch>-static dell'host; NB: /tmp non e' condiviso col container, /home si')"
   local gen=$GNDIR/v8_context_snapshot_generator
   [ -f "$gen" ] || die "generatore non trovato: $gen"
   # ⚠️ Il test NON puo' essere "esiste $gen.real" (com'era fino al 18/09): ogni
@@ -137,7 +148,7 @@ fix_snapshot() {
     mv -f "$gen" "$gen.real"
     cat > "$gen" <<EOF
 #!/bin/sh
-# Wrapper RooTitanium: esegue il generatore aarch64 col qemu 10 dell'host,
+# Wrapper RooTitanium: esegue il generatore ($ARCH) col qemu 10 dell'host,
 # perche' quello del target (5.1) trappa con signal 5.
 exec $QEMU10 -L /srv/mer/targets/$TARGET "\$(dirname "\$0")/v8_context_snapshot_generator.real" "\$@"
 EOF

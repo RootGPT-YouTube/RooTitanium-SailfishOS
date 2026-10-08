@@ -1,0 +1,17 @@
+--- a/src/3rdparty/chromium/third_party/zlib/BUILD.gn	2026-10-08 10:38:20.571463277 +0200
++++ b/src/3rdparty/chromium/third_party/zlib/BUILD.gn	2026-10-08 10:38:20.583238746 +0200
+@@ -163,7 +163,13 @@
+     if (!is_win && !is_clang) {
+       assert(!use_thin_lto,
+              "ThinLTO fails mixing different module-level targets")
+-      cflags_c = [ "-march=armv8-a+aes+crc" ]
++      # RooTitanium: il gcc ARM a 32 bit non conosce "+aes" (li' l'estensione
++      # si chiama "+crypto"), e crc32_simd.c su arm usa solo le istruzioni CRC.
++      if (current_cpu == "arm") {
++        cflags_c = [ "-march=armv8-a+crc" ]
++      } else {
++        cflags_c = [ "-march=armv8-a+aes+crc" ]
++      }
+     }
+ 
+     sources = [

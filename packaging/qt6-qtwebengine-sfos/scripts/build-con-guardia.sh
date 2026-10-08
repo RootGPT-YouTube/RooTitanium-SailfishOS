@@ -30,8 +30,15 @@ REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 # tree vecchio senza toccare lo spec).
 VER=${VER:-$(sed -n 's/^Version: *//p' "$REPO/packaging/qt6-qtwebengine-sfos/rpm/qt6-qtwebengine.spec" | head -1)}
 [ -n "$VER" ] || { echo "ERRORE: versione non determinata (spec illeggibile?)"; exit 1; }
-BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-$VER/upstream
-TARGET=SailfishOS-5.1.0.11-aarch64
+# ARCH=armv7hl ./build-con-guardia.sh = motore a 32 bit (albero build-armv7hl/)
+ARCH=${ARCH:-aarch64}
+case "$ARCH" in
+  aarch64) TOPDIR=build ;;
+  armv7hl) TOPDIR=build-armv7hl ;;
+  *) echo "ERRORE: ARCH sconosciuta: $ARCH"; exit 1 ;;
+esac
+BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
+TARGET=SailfishOS-5.1.0.11-$ARCH
 ENGINE=sailfish-sdk-build-engine_RootGPT
 CHIP=it8689-isa-0a40
 
@@ -52,7 +59,7 @@ STALL_FINESTRA=${STALL_FINESTRA:-900} # secondi (15 min) tra i controlli anti-st
 # piatti sui 73-77°C. Alzare la soglia oltre ~90 non serve a niente di utile:
 # a J=16 bastano 88-90 per non throttlare mai.
 
-LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build
+LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR   # log separati per arch
 BUILDLOG=${BUILDLOG:-$LOGDIR/build.log}
 GUARDLOG=$LOGDIR/guardia-vrm.log
 
@@ -76,7 +83,7 @@ command -v sfdk >/dev/null || PATH=$PATH:$HOME/SailfishOS/bin
 command -v sfdk >/dev/null || { echo "ERRORE: sfdk non trovato"; exit 1; }
 
 ripristina_cpu   # imposta subito il regime stazionario (${CORE_PIENI} core)
-nota "=== Avvio build -j${J} via sb2 (cross-gcc NATIVO) con guardia VRM (regime ${CORE_PIENI} core, ninja -j${J}, throttle >=${SOGLIA_STOP}°C -> ${CORE_RIDOTTI} core, ripresa <=${SOGLIA_RIPRESA}°C). VRM ora: ${t}°C ==="
+nota "=== Avvio build $ARCH -j${J} via sb2 (cross-gcc NATIVO) con guardia VRM (regime ${CORE_PIENI} core, ninja -j${J}, throttle >=${SOGLIA_STOP}°C -> ${CORE_RIDOTTI} core, ripresa <=${SOGLIA_RIPRESA}°C). VRM ora: ${t}°C ==="
 
 # --- build in background ---------------------------------------------------
 # sb2 mappa /usr/bin/c++ sul cross-compiler host-nativo (opt/cross, gcc 13.4.0):

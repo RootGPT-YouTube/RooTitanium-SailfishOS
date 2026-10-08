@@ -18,7 +18,14 @@
 set -u
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 SCRIPTS=$REPO/packaging/qt6-qtwebengine-sfos/scripts
-LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build
+# ARCH=armv7hl = motore a 32 bit; passa da sola agli altri due script
+ARCH=${ARCH:-aarch64}
+export ARCH
+case "$ARCH" in
+  aarch64) LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build ;;
+  armv7hl) LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build-armv7hl ;;
+  *) echo "ERRORE: ARCH sconosciuta: $ARCH"; exit 1 ;;
+esac
 BUILDLOG=$LOGDIR/build.log
 LOG=$LOGDIR/build-ripresa.log
 MAX_GIRI=${MAX_GIRI:-15}
@@ -28,7 +35,7 @@ export VER
 
 nota() { echo "$(date '+%F %T')  $*" | tee -a "$LOG"; }
 
-nota "=== build con ripresa, versione $VER, massimo $MAX_GIRI giri ==="
+nota "=== build con ripresa $ARCH, versione $VER, massimo $MAX_GIRI giri ==="
 
 # Rete di sicurezza contro i giri a vuoto: se lo stesso rimedio si ripete senza
 # che la build sia avanzata, il rimedio non c'entra col guasto — meglio fermarsi
@@ -66,7 +73,12 @@ for giro in $(seq 1 "$MAX_GIRI"); do
         # ("FAILED: v8_context_snapshot.bin"), non il binario che l'ha prodotto:
         # cercare "…_generator" non bastava (build ferma per questo il 14 ago).
         # Qui il pattern largo e' sicuro perche' si guardano solo righe di errore.
-        *v8_context_snapshot*)
+        # ⚠️ 8 ott 2026 (build armv7hl): NON basta "*v8_context_snapshot*". Il
+        # ninja esterno, quando muore QUALSIASI cosa dentro QtWebEngineCore,
+        # stampa "FAILED: .../QtWebEngineCore.stamp .../v8_context_snapshot.stamp"
+        # e il pattern largo scambiava un errore di compilazione (zlib crc32)
+        # per lo snapshot: 5 giri a vuoto. Si guarda il nome del .bin.
+        *"FAILED: v8_context_snapshot.bin"*|*"uncaught target signal"*)
             rimedio=snapshot ;;
         *)
             rimedio="" ;;
@@ -90,7 +102,10 @@ for giro in $(seq 1 "$MAX_GIRI"); do
     fi
 
     nota "giro $giro: rimedio '$rimedio' (avanzamento ${avanz:-n/d})"
-    if ! "$SCRIPTS/apply-build-fixes.sh" "$rimedio" 2>&1 | tee -a "$LOG"; then
+    # PIPESTATUS: con la sola pipe contava l'exit di tee, e un rimedio fallito
+    # ("generatore non trovato") passava per riuscito
+    "$SCRIPTS/apply-build-fixes.sh" "$rimedio" 2>&1 | tee -a "$LOG"
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
         nota "=== FERMO: il rimedio '$rimedio' e' fallito. ==="
         exit 1
     fi

@@ -1,0 +1,20 @@
+--- a/src/3rdparty/chromium/build/config/compiler/BUILD.gn
++++ b/src/3rdparty/chromium/build/config/compiler/BUILD.gn
+@@ -1249,6 +1249,17 @@
+       if (arm_tune != "") {
+         cflags += [ "-mtune=$arm_tune" ]
+       }
++      # RooTitanium (build armv7hl con gcc): niente vettorizzazione automatica.
++      # Su 32 bit Oilpan allinea i backing di HeapVector/HashTable a 4 byte
++      # (HeapVectorBacking<T> e' una classe vuota, alignof 4) anche quando T
++      # vuole 8 (es. blink::MatchedRule, che ha campi uint64_t). Il vettorizzatore
++      # SLP di gcc copia quegli elementi con "vld1.64 {..}, [rN :64]", e
++      # l'hint di allineamento fa SIGBUS sull'hardware (il kernel non lo
++      # corregge): renderer morto su quasi ogni pagina con CSS vero. clang, il
++      # compilatore di Chromium, non genera quegli hint e il problema non si vede.
++      if (!is_clang) {
++        cflags += [ "-fno-tree-vectorize" ]
++      }
+     } else if (current_cpu == "arm64") {
+       if (is_clang && !is_android && !is_nacl && !is_fuchsia &&
+           !(is_chromeos_lacros && is_chromeos_device)) {

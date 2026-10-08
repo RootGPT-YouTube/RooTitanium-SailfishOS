@@ -53,12 +53,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* LD_LIBRARY_PATH = HERE/lib : path sistema/hybris : LD_LIBRARY_PATH esistente */
+    /* LD_LIBRARY_PATH = HERE/lib : path sistema/hybris : LD_LIBRARY_PATH esistente.
+     * Il suffisso dei path di sistema segue l'architettura del pacchetto:
+     * lib64 su aarch64, lib sul pacchetto armv7hl (userspace Sailfish a 32 bit,
+     * HAL android a 32 bit in /system/lib, /vendor/lib...). */
+#if defined(__aarch64__)
+#define RT_LIB "lib64"
+#else
+#define RT_LIB "lib"
+#endif
     {
         const char *old = getenv("LD_LIBRARY_PATH");
         char buf[PATH_MAX * 3];
         snprintf(buf, sizeof(buf),
-                 "%s/lib:/usr/lib64:/usr/libexec/droid-hybris/system/lib64:/system/lib64:/vendor/lib64:/odm/lib64%s%s",
+                 "%s/lib:/usr/" RT_LIB ":/usr/libexec/droid-hybris/system/" RT_LIB
+                 ":/system/" RT_LIB ":/vendor/" RT_LIB ":/odm/" RT_LIB "%s%s",
                  HERE, old && *old ? ":" : "", old ? old : "");
         setenv("LD_LIBRARY_PATH", buf, 1);
     }

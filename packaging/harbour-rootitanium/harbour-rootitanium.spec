@@ -24,12 +24,13 @@ License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
 # Vedi LICENSE (GPL-3.0) e NOTICE.md (terze parti) nel repo.
 Group:      Applications/Internet
-BuildArch:  aarch64
+# aarch64 e armv7hl (dall'8 ott 2026): l'arch la decide il target sb2 di rpmbuild
+ExclusiveArch: aarch64 armv7hl
 AutoReqProv: no
 
 %description
 Browser sperimentale basato su Qt6 WebEngine (Chromium 122) accelerato via
-libhybris/EGL su SailfishOS 5.1 aarch64. Bundle self-contained in /home/rootitanium;
+libhybris/EGL su SailfishOS 5.1 (aarch64 e armv7hl). Bundle self-contained in /home/rootitanium;
 nessuna dipendenza Qt6 di sistema richiesta. Studio di fattibilita'.
 
 %prep
@@ -92,6 +93,9 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
   siti che caricano contenuti mentre si scorre non se ne accorgevano.
   Ora lo scroll viene sbloccato solo dove un banner dei cookie lo aveva
   davvero bloccato. Valeva per tutti i siti di questo tipo, non solo X.
+- Dall'8 ottobre anche per telefoni a 32 bit (armv7hl): stesso browser,
+  motore ricompilato per ARM a 32 bit. Qui la decodifica video e' solo
+  software (il decoder hardware droidmedia c'e' solo nel pacchetto aarch64).
 
 * Sat Sep 19 2026 RootGPT <emagiampa@gmail.com> - 2.0-1
 - Decodifica video in hardware: i video VP9, il formato di YouTube, li
