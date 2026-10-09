@@ -17,7 +17,15 @@ set -euo pipefail
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 VER=${VER:-6.8.4}
-BT=$REPO/packaging/qt6-qtwebengine-sfos/build/BUILD/qt6-qtwebengine-$VER/upstream
+# ARCH=armv7hl = innesto nell'albero a 32 bit (build-armv7hl/); serve
+# droidmedia-devel armv7hl nel target (repo adaptation-common, 8 ott 2026)
+ARCH=${ARCH:-aarch64}
+case "$ARCH" in
+  aarch64) TOPDIR=build ;;
+  armv7hl) TOPDIR=build-armv7hl ;;
+  *) echo "ERRORE: ARCH sconosciuta: $ARCH" >&2; exit 1 ;;
+esac
+BT=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
 SRC=$REPO/packaging/qt6-qtwebengine-sfos/droidmedia
 CR=$BT/src/3rdparty/chromium
 
@@ -147,5 +155,5 @@ echo
 # RISCRIVE toolchain.ninja riportando i nomi .rsp lunghi (>255 char per via del
 # path del build tree): "File name too long" a meta' build. Trappola presa il
 # 17/09 dopo il fix dell'import pkg_config.
-echo "⚠️  Ora lancia:  ./apply-build-fixes.sh ninja"
+echo "⚠️  Ora lancia:  ARCH=$ARCH ./apply-build-fixes.sh ninja"
 echo "    (il gn-regen innescato da BUILD.gn riporta i nomi .rsp oltre NAME_MAX)"

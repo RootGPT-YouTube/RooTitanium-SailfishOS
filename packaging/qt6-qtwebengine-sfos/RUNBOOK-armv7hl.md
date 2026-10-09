@@ -4,8 +4,14 @@ Avviato l'8 ottobre 2026, perché gli utenti continuano a chiedere la versione a
 32 bit. Stesso motore della 2.1 aarch64 (QtWebEngine **6.8.4**, Chromium 122,
 backport CVE fino a 138), ricompilato per ARMv7 hard-float con NEON.
 
-**Senza** l'innesto droidmedia (decodifica video hardware): sul 32 bit non è
-collaudabile e il guadagno misurato su aarch64 era modesto. Decodifica software.
+**Con** l'innesto droidmedia (decodifica video hardware), aggiunto il 9 ott 2026
+su richiesta dell'utente: sui 32 bit, con CPU più deboli, il guadagno conta più
+che sul POCO. `droidmedia-devel` armv7hl sta in `adaptation-common` (stessa
+versione 0.20260522.0 dell'aarch64); `ARCH=armv7hl scripts/apply-droidmedia.sh`.
+Il decoder carica `libhybris-common.so.1` e `libdroidmedia.so` per soname a runtime:
+dove mancano o rifiutano il codec si ripiega da solo sul software (verificato
+sotto qemu). ⚠️ Il percorso hardware NON è collaudato: serve un telefono a 32 bit
+vero (nel chroot sul POCO non c'è hybris a 32 bit).
 
 ## Albero e target separati
 

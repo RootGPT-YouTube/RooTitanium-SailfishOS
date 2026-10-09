@@ -94,8 +94,9 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
   Ora lo scroll viene sbloccato solo dove un banner dei cookie lo aveva
   davvero bloccato. Valeva per tutti i siti di questo tipo, non solo X.
 - Dall'8 ottobre anche per telefoni a 32 bit (armv7hl): stesso browser,
-  motore ricompilato per ARM a 32 bit. Qui la decodifica video e' solo
-  software (il decoder hardware droidmedia c'e' solo nel pacchetto aarch64).
+  motore ricompilato per ARM a 32 bit, con lo stesso decoder video hardware
+  droidmedia dell'aarch64. Dove il telefono non lo supporta, il video passa
+  da solo alla decodifica software.
 
 * Sat Sep 19 2026 RootGPT <emagiampa@gmail.com> - 2.0-1
 - Decodifica video in hardware: i video VP9, il formato di YouTube, li
