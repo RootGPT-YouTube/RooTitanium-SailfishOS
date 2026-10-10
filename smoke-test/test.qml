@@ -271,7 +271,7 @@ Window {
     property int findCur: 0
     property int findTot: 0
     // un solo handler per segnale: QML rifiuta i duplicati
-    onCurrentTabChanged: { closeFind(); videoPollSaysPlaying = false; swipeF = 0 }
+    onCurrentTabChanged: { closeFind(); videoPollSaysPlaying = false; swipeF = 0; barShow() }
     function closeFind() {
         if (!findBar.open) return
         findBar.open = false
@@ -409,6 +409,31 @@ Window {
     property bool cfgFirstRunSeen: false    // pop-up una-tantum "primo avvio" già mostrato
     property string cfgHome: ""             // vuoto = HOME interna RooTitanium
     property string cfgSearch: "duckduckgo"
+    // Barra degli indirizzi in basso + nascondi scorrendo (task 2.5 #2).
+    // L'auto-hide vale solo con la barra in basso (scelta utente).
+    property bool cfgBarBottom: false
+    property bool cfgBarAutoHide: false
+    readonly property bool barAutoHideOn: cfgBarBottom && cfgBarAutoHide
+    // stato dell'auto-hide: barHide anima 0 (visibile) → 1 (nascosta)
+    property bool barAutoHidden: false
+    property real barLastScrollY: 0
+    property real barHide: (barAutoHideOn && barAutoHidden && !barPinned) ? 1 : 0
+    Behavior on barHide { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+    // la barra non si nasconde mentre serve: scrittura, menù, ricerca nella pagina
+    readonly property bool barPinned: urlbar.activeFocus || menu.open || findBar.open
+                                      || switcher.open || (currentView !== null && currentView.loading === true)
+    // Scroll della scheda attiva: giù oltre la soglia nasconde, su mostra, in
+    // cima mostra sempre. scrollPosition è in px CSS; la soglia evita che il
+    // tremolio del dito faccia lampeggiare la barra.
+    function barOnScroll(y) {
+        if (!barAutoHideOn) return
+        if (y <= 4) { barAutoHidden = false; barLastScrollY = y; return }
+        var d = y - barLastScrollY
+        if (Math.abs(d) < 24) return
+        barAutoHidden = d > 0
+        barLastScrollY = y
+    }
+    function barShow() { barAutoHidden = false; barLastScrollY = 0 }
     property string cfgDlDir: "downloads"   // destinazione download (token in dlDirs)
     // cartelle standard SFOS (inglesi anche con lingua italiana, verificato sul
     // device); scelta chiusa: niente path liberi = niente dir inesistenti
@@ -504,6 +529,8 @@ Window {
         cfgUiTheme      = kvGet("set_uitheme", "dark") === "light" ? "light" : "dark"
         cfgHome         = kvGet("set_homepage", "")
         try { customEngines = JSON.parse(kvGet("set_customsearch", "[]")) || [] } catch(e) { customEngines = [] }
+        cfgBarBottom    = kvGet("set_barbottom", "0") === "1"
+        cfgBarAutoHide  = kvGet("set_barautohide", "0") === "1"
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!engineFor(cfgSearch)) cfgSearch = "duckduckgo"
         cfgDlDir        = kvGet("set_dldir", "downloads")
@@ -534,6 +561,8 @@ Window {
         var on = v === "1"
         if (k === "js")            { cfgJs = on;        kvSet("set_js", v) }
         else if (k === "cookies")  { cfgCookies = on;   kvSet("set_cookies", v) }
+        else if (k === "barbottom"){ cfgBarBottom = on; kvSet("set_barbottom", v); barShow() }
+        else if (k === "barautohide"){ cfgBarAutoHide = on; kvSet("set_barautohide", v); barShow() }
         else if (k === "popups")   { cfgPopups = on;    kvSet("set_popups", v) }
         else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs(); syncPrivacy() }
         else if (k === "cookies3p"){ cfg3pCookies = on; kvSet("set_3pcookies", v); syncPrivacy() }
@@ -1082,7 +1111,7 @@ Window {
 
         // req.position è relativo alla WebEngineView (che sta sotto la toolbar)
         ctxMenu.px = req.position.x
-        ctxMenu.py = req.position.y + (toolbar.visible ? toolbar.height : 0)
+        ctxMenu.py = req.position.y + pageArea.y
         ctxMenu.touchSel = false
         ctxMenu.open = true
     }
@@ -1127,7 +1156,7 @@ Window {
         // tocco: i pallini diventavano inafferrabili dal basso. Ora il franco è
         // pieno; se sotto non entra, il menù va SOPRA la selezione (i pallini
         // stanno sempre sotto la riga, quindi lassù non c'è nulla da coprire).
-        var topOff = (toolbar.visible ? toolbar.height : 0)
+        var topOff = pageArea.y
         var menuH = items.length * 58 * u + 16 * u
         var below = req.selectionBounds.y + req.selectionBounds.height + topOff + win.touchHandleClearance + 8 * u
         ctxMenu.px = req.selectionBounds.x
@@ -1328,7 +1357,8 @@ ${a.c}
             { l: win.t("Incolla", "Paste"),         a: "ub_paste", dis: !urlbar.canPaste }
         ]
         ctxMenu.px = 60 * u
-        ctxMenu.py = toolbar.height + 4 * u
+        ctxMenu.py = win.cfgBarBottom ? toolbar.y - (ctxModel.length * 58 * u + 16 * u) - 4 * u
+                                      : toolbar.height + 4 * u
         ctxMenu.touchSel = false
         ctxMenu.open = true
     }
@@ -1603,7 +1633,7 @@ ${body}
                  + "if(a){var d=a.querySelector('.rad');if(d)d.classList.add('on');}})();"
         }
         var bools = ["js","cookies","popups","dnt","cookies3p","noreferrer",
-                     "storage3p","dark","startprivate","closetabs","farble","nocookie"]
+                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide"]
         if (bools.indexOf(k) >= 0) {           // toggle: commuta .on e inverte l'href
             var on = v === "1"
             return "(function(){var a=document.getElementById('r_" + k + "');if(!a)return;"
@@ -1704,6 +1734,9 @@ ${dldirs}
 <h2>${win.t("Tema dell'app", "App theme")}</h2>
 <a class="srow" href="https://settings.local/set?k=uitheme&v=dark"><span class="rad${win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Scuro", "Dark")}</span></span></a>
 <a class="srow" href="https://settings.local/set?k=uitheme&v=light"><span class="rad${!win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Chiaro", "Light")}</span></span></a>
+<h2>${win.t("Barra degli indirizzi", "Address bar")}</h2>
+${sToggle("barbottom", cfgBarBottom, win.t("Barra degli indirizzi in basso", "Address bar at the bottom"), win.t("Più comoda da raggiungere col pollice", "Easier to reach with your thumb"))}
+${cfgBarBottom ? sToggle("barautohide", cfgBarAutoHide, win.t("Nascondi scorrendo", "Hide while scrolling"), win.t("Scorrendo in giù la barra si nasconde, scorrendo in su ricompare", "Scrolling down hides the bar, scrolling up brings it back")) : ""}
 <h2>${win.t("Pagine web", "Web pages")}</h2>
 ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
 ${sToggle("swipenav", cfgSwipeNav, win.t("Swipe per Indietro e Avanti", "Swipe for Back and Forward"), win.t("Trascina dal centro della pagina: verso destra torni indietro, verso sinistra vai avanti", "Drag from the middle of the page: right goes back, left goes forward"))}
@@ -2602,7 +2635,8 @@ ${histCss}
         id: appRoot
         anchors.fill: parent
 
-    Column {
+    // Item e non Column: la barra può stare in alto o in basso (task 2.5 #2)
+    Item {
         anchors.fill: parent
 
         // ===================== TOOLBAR =====================
@@ -2610,6 +2644,12 @@ ${histCss}
             id: toolbar
             width: parent.width
             height: 78 * win.u
+            // in basso: sopra la tastiera virtuale interna, e scivola giù di
+            // barHide altezze quando l'auto-hide la nasconde
+            y: win.cfgBarBottom
+               ? appRoot.height - (inputPanel.active ? inputPanel.height : 0) - height + win.barHide * height
+               : 0
+            z: 2   // durante lo scivolamento passa SOPRA la pagina
             visible: !win.videoFS     // video a tutto schermo → via la toolbar
             color: win.currentPrivate ? "#2a2233" : win.pal.bg
 
@@ -2759,7 +2799,15 @@ ${histCss}
         Item {
             id: pageArea
             width: parent.width
-            height: appRoot.height - (toolbar.visible ? toolbar.height : 0) - (inputPanel.active ? inputPanel.height : 0)
+            // Con l'auto-hide la pagina si allunga SUBITO quando la barra parte
+            // verso il basso, e si accorcia solo quando la barra è tornata del
+            // tutto: un solo resize atomico per verso (la barra scorre sopra la
+            // pagina nel frattempo), niente reflow a ogni fotogramma.
+            readonly property real barSpace: !toolbar.visible ? 0
+                : (win.cfgBarBottom && (win.barAutoHideOn && win.barAutoHidden && !win.barPinned || win.barHide > 0.001)) ? 0
+                : toolbar.height
+            y: win.cfgBarBottom ? 0 : barSpace
+            height: appRoot.height - barSpace - (inputPanel.active ? inputPanel.height : 0)
             // animazione SOLO per la tastiera: durante fullscreen/rotazione il
             // resize deve essere atomico — il viewport intermedio (larghezza già
             // ruotata, altezza ancora in animazione) faceva credere al watchdog
@@ -2820,6 +2868,7 @@ ${histCss}
                     // proprietà url (niente urlChanged, verificato su 6.8.3),
                     // quindi lo stato va tracciato a parte. "" = pagina web vera.
                     property string localPage: ""
+                    onScrollPositionChanged: if (index === win.currentTab) win.barOnScroll(scrollPosition.y)
                     profile: priv ? incognitoProfile : normalProfile
                     // Zoom sul lato corto dello SCHERMO, non della finestra: la
                     // finestra si rimpicciolisce quando il compositor le sottrae
@@ -3016,7 +3065,7 @@ ${histCss}
                     // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
-                    onUrlChanged: { localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession() }
+                    onUrlChanged: { localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
@@ -3084,7 +3133,7 @@ ${histCss}
         property bool open: false
         // stile Chrome mobile: la barra di ricerca SOSTITUISCE la toolbar
         // (overlay a tutta altezza sopra di essa, z sopra pagina e toolbar)
-        anchors.top: parent.top
+        y: win.cfgBarBottom ? toolbar.y : 0
         width: parent.width; height: toolbar.height
         visible: open && !win.videoFS; z: 40
         color: win.pal.surface
@@ -3137,7 +3186,10 @@ ${histCss}
     Rectangle {
         id: menu
         property bool open: false
-        anchors.right: parent.right; anchors.top: toolbar.bottom
+        // y esplicito: un anchors.top verso toolbar non valeva (toolbar non è
+        // sorella: «Cannot anchor to an item that isn't a parent or sibling»)
+        anchors.right: parent.right
+        y: win.cfgBarBottom ? toolbar.y - height : toolbar.y + toolbar.height
         width: 340 * win.u; height: menuCol.height + 16 * win.u
         color: win.pal.card; border.color: win.pal.border; border.width: 1
         visible: open; z: 50
