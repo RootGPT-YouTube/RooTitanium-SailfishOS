@@ -1834,7 +1834,11 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
         return true   // altri tipi non coperti dai master → flusso normale
     }
     function showPermission(p) {
-        if (!permMasterAllows(p.permissionType)) { try { p.deny() } catch(e) {} return }
+        // Interruttore generale spento: si nega SENZA salvare la decisione per il
+        // sito (reset subito dopo il deny). Prima il rifiuto restava nei «Permessi
+        // siti» come se l'avesse scelto l'utente, e riaccendendo l'interruttore il
+        // sito restava bloccato finché non si faceva «Revoca» a mano.
+        if (!permMasterAllows(p.permissionType)) { try { p.deny(); p.reset() } catch(e) {} return }
         permPending = p
         permDlg.host = permHost(p)
         permDlg.msg = permLabel(p.permissionType)
