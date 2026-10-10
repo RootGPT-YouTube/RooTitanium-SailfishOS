@@ -10,10 +10,13 @@ case "$ARCH" in
   aarch64) T=SailfishOS-5.1.0.11-aarch64.default; L=lib64 ;;
   armv7hl) T=SailfishOS-5.1.0.11-armv7hl;         L=lib ;;
 esac
+# QT612=1: contro lo stack Qt 6.12 del target clonato (task 2.5 #6)
+[ -n "${QT612:-}" ] && T=SailfishOS-5.1.0.11-$ARCH-qt612
+OUT=${QT612:+build-$ARCH-qt612}; OUT=${OUT:-build-$ARCH}
 INC="-I/usr/include/qt6 -I/usr/include/qt6/QtCore -I/usr/include/qt6/QtDBus -I/usr/include/qt6/QtPositioning"
-mkdir -p build-$ARCH
-sb2 -t "$T" /usr/$L/qt6/libexec/moc $INC rtgeoclue1.cpp -o build-$ARCH/rtgeoclue1.moc
-sb2 -t "$T" c++ -std=c++17 -fPIC -O2 -shared $INC -Ibuild-$ARCH rtgeoclue1.cpp \
-  -o build-$ARCH/libqtposition_rtgeoclue1.so -L/usr/$L -lQt6Positioning -lQt6DBus -lQt6Core
-sb2 -t "$T" strip build-$ARCH/libqtposition_rtgeoclue1.so
-ls -l build-$ARCH/libqtposition_rtgeoclue1.so
+mkdir -p $OUT
+sb2 -t "$T" /usr/$L/qt6/libexec/moc $INC rtgeoclue1.cpp -o $OUT/rtgeoclue1.moc
+sb2 -t "$T" c++ -std=c++17 -fPIC -O2 -shared $INC -I$OUT rtgeoclue1.cpp \
+  -o $OUT/libqtposition_rtgeoclue1.so -L/usr/$L -lQt6Positioning -lQt6DBus -lQt6Core
+sb2 -t "$T" strip $OUT/libqtposition_rtgeoclue1.so
+ls -l $OUT/libqtposition_rtgeoclue1.so
