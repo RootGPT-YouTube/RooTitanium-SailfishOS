@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=com.github.RootGPT_YouTube.rootitanium
+Exec=/usr/bin/invoker --type=generic --id=harbour-rootitanium /usr/bin/harbour-rootitanium

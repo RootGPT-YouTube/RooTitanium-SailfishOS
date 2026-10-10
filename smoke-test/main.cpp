@@ -26,7 +26,16 @@
 #include <QTimer>
 #include <QDebug>
 #include <atomic>
+#include <thread>
+#include <chrono>
+#include <signal.h>
+#include <limits.h>
 #include <sys/prctl.h>
+#include <QDBusConnectionInterface>
+#include <QWindow>
+#include <QHash>
+#include <qpa/qplatformnativeinterface.h>
+#include <wayland-client.h>
 // interceptor header (QtWebEngineCore) + profilo QML (QQuickWebEngineProfile
 // espone setUrlRequestInterceptor come metodo C++ pubblico, verificato in 6.8.3)
 #include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
@@ -112,12 +121,140 @@ private:
     }
 };
 
-// Link aperti da ALTRE app quando RooTitanium e' GIA' in esecuzione (task 1.2 #1).
-// Lipstick consegna l'URL eseguendo la riga Exec del .desktop con %u, quindi il
-// secondo processo nasce comunque (l'Exec e' scritto per esteso senza
-// «invoker --single-instance», che altrimenti lo farebbe uscire subito). Quel
-// processo trova il nome di sessione gia' occupato, chiama qui via DBus e muore:
-// e' questo l'unico canale verso l'istanza viva. Interfaccia standard
+// ===================== primo piano su richiesta (task 2.5 #3) =====================
+// Un link in arrivo deve portare avanti l'app anche se e' in cover. Il client
+// Qt6 parla xdg-shell, che non ha alcuna richiesta di raise; lipstick pero'
+// espone ancora qt_surface_extension, il protocollo con cui le app Qt5/Silica
+// fanno QWindow::raise(): la sua richiesta `raise` finisce in
+// LipstickCompositor::windowRaised, cioe' nel primo piano. Qt6 non lo usa
+// piu', quindi lo parliamo a mano: interfacce scritte qui (niente scanner), con
+// l'ordine dei messaggi letto dai metadati di libQt5Compositor sul device:
+// richieste update_generic_property, set_content_orientation_mask,
+// set_window_flags, raise, lower; eventi onscreen_visibility,
+// set_generic_property, close.
+extern "C" {
+static const struct wl_interface *rt_null_types[] = { nullptr, nullptr };
+static const struct wl_message rt_ext_requests[] = {
+    { "update_generic_property", "sa", rt_null_types },
+    { "set_content_orientation_mask", "i", rt_null_types },
+    { "set_window_flags", "i", rt_null_types },
+    { "raise", "", rt_null_types },
+    { "lower", "", rt_null_types },
+};
+static const struct wl_message rt_ext_events[] = {
+    { "onscreen_visibility", "i", rt_null_types },
+    { "set_generic_property", "sa", rt_null_types },
+    { "close", "", rt_null_types },
+};
+static const struct wl_interface rt_qt_extended_surface_interface = {
+    "qt_extended_surface", 1, 5, rt_ext_requests, 3, rt_ext_events };
+static const struct wl_interface *rt_getext_types[] = {
+    &rt_qt_extended_surface_interface, &wl_surface_interface };
+static const struct wl_message rt_surfext_requests[] = {
+    { "get_extended_surface", "no", rt_getext_types },
+};
+static const struct wl_interface rt_qt_surface_extension_interface = {
+    "qt_surface_extension", 1, 1, rt_surfext_requests, 0, nullptr };
+}
+
+class RtWindowRaiser
+{
+public:
+    // true se la richiesta e' partita (non che lipstick l'abbia onorata)
+    static bool raise()
+    {
+        QWindow *w = nullptr;
+        for (QWindow *c : QGuiApplication::topLevelWindows())
+            if (c->isVisible()) { w = c; break; }
+        if (!w) return false;
+        if (!ensure(w)) return false;
+        wl_proxy_marshal(s_ext, 3 /* raise */);
+        wl_display_flush(s_display);
+        return true;
+    }
+
+private:
+    static bool ensure(QWindow *w)
+    {
+        if (s_ext && s_window == w) return true;
+        auto *wa = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
+        QPlatformNativeInterface *ni = QGuiApplication::platformNativeInterface();
+        if (!wa || !ni) return false;
+        s_display = wa->display();
+        auto *surface = static_cast<wl_surface *>(
+            ni->nativeResourceForWindow(QByteArrayLiteral("surface"), w));
+        if (!s_display || !surface) return false;
+        if (!s_surfext && !bindExtension()) {
+            qWarning("[rt] qt_surface_extension assente: niente primo piano automatico");
+            return false;
+        }
+        if (s_ext) wl_proxy_destroy(s_ext);
+        s_ext = wl_proxy_marshal_constructor(s_surfext, 0, &rt_qt_extended_surface_interface,
+                                             nullptr, surface);
+        if (!s_ext) return false;
+        // la coda privata serviva solo al registry: gli eventi della superficie
+        // (close compreso) li consegna il ciclo di Qt sul main thread
+        wl_proxy_set_queue(s_ext, nullptr);
+        wl_proxy_add_listener(s_ext, reinterpret_cast<void (**)(void)>(const_cast<Listener *>(&s_listener)), nullptr);
+        s_window = w;
+        return true;
+    }
+
+    // registry su una coda PRIVATA: un roundtrip sulla coda di Qt
+    // consegnerebbe fuori tempo i suoi eventi
+    static bool bindExtension()
+    {
+        wl_event_queue *q = wl_display_create_queue(s_display);
+        auto *wrapped = static_cast<wl_display *>(wl_proxy_create_wrapper(s_display));
+        wl_proxy_set_queue(reinterpret_cast<wl_proxy *>(wrapped), q);
+        wl_registry *reg = wl_display_get_registry(wrapped);
+        static const wl_registry_listener rl = {
+            [](void *, wl_registry *r, uint32_t name, const char *iface, uint32_t) {
+                if (!s_surfext && strcmp(iface, "qt_surface_extension") == 0)
+                    s_surfext = static_cast<wl_proxy *>(
+                        wl_registry_bind(r, name, &rt_qt_surface_extension_interface, 1));
+            },
+            [](void *, wl_registry *, uint32_t) {}
+        };
+        wl_registry_add_listener(reg, &rl, nullptr);
+        wl_display_roundtrip_queue(s_display, q);
+        wl_registry_destroy(reg);
+        wl_proxy_wrapper_destroy(wrapped);
+        if (s_surfext) wl_proxy_set_queue(s_surfext, nullptr);
+        wl_event_queue_destroy(q);
+        return s_surfext != nullptr;
+    }
+
+    static inline wl_display *s_display = nullptr;
+    static inline wl_proxy *s_surfext = nullptr;
+    static inline wl_proxy *s_ext = nullptr;
+    static inline QWindow *s_window = nullptr;
+
+    // Eventi della superficie estesa. `close` va onorato: e' il gesto di
+    // chiusura dalla cover, che con la superficie estesa lipstick potrebbe
+    // mandare da qui invece che da xdg_toplevel.
+    struct Listener {
+        void (*onscreen_visibility)(void *, wl_proxy *, int32_t);
+        void (*set_generic_property)(void *, wl_proxy *, const char *, wl_array *);
+        void (*close)(void *, wl_proxy *);
+    };
+    static inline const Listener s_listener = {
+        [](void *, wl_proxy *, int32_t) {},
+        [](void *, wl_proxy *, const char *, wl_array *) {},
+        [](void *, wl_proxy *) {
+            qInfo("[rt] chiusura richiesta da lipstick (qt_extended_surface.close)");
+            if (s_window) s_window->close();
+        },
+    };
+
+};
+
+// Link aperti da ALTRE app (task 1.2 #1, rivisto in 2.5 #3). Dalla 2.5 il
+// .desktop dichiara X-Maemo-Service/Object-Path/Method: lipstick e
+// libcontentaction chiamano openUrl QUI, sull'istanza viva, invece di eseguire
+// la riga Exec; ad app chiusa la avvia il .service di attivazione DBus. Resta
+// anche il vecchio inoltro: un secondo processo lanciato con un URL trova il
+// nome occupato e lo passa qui prima di uscire (main()). Interfaccia standard
 // org.freedesktop.Application, come in RooTheater.
 class OpenHandler : public QObject
 {
@@ -129,11 +266,31 @@ public slots:
     void openUrl(const QStringList &uris) { if (!uris.isEmpty()) handle(uris.first()); }
     void openUrl(const QString &url) { handle(url); }
 
+    // «Sei viva?» chiesto dal processo nato da un nuovo lancio (task 2.5 #7).
+    // Gli slot girano nel MAIN thread: un'istanza col ciclo eventi piantato non
+    // risponde, ed e' proprio quello che si vuole scoprire (il Ping standard di
+    // org.freedesktop.DBus.Peer no: lo serve il thread DBus anche a main thread
+    // fermo). Valore = finestre visibili; 0 = istanza viva ma senza finestra.
+    int rtAlive()
+    {
+        int n = 0;
+        for (QWindow *w : QGuiApplication::allWindows())
+            if (w->isVisible()) ++n;
+        return n;
+    }
+
 signals:
     void openRequested(const QString &url);   // → QML: apri in NUOVA scheda
 
 private:
-    void handle(const QString &uri) { if (!uri.isEmpty()) emit openRequested(uri); }
+    void handle(const QString &uri)
+    {
+        if (uri.isEmpty()) return;
+        emit openRequested(uri);
+        // in cover l'utente non vedrebbe la scheda nuova (task 2.5 #3)
+        if (!RtWindowRaiser::raise())
+            qWarning("[rt] primo piano non richiesto: finestra o protocollo assenti");
+    }
 };
 
 // Helper nativo esposto al QML come "rtNative": cose che il QML Qt6 puro non
@@ -232,6 +389,8 @@ private:
     QSemaphore m_ready;
     RtMaliitContainer *m_adaptor = nullptr;
 };
+
+static void killTree(pid_t root);   // sotto, con gli helper /proc (task 2.5 #7)
 
 class NativeHelper : public QObject
 {
@@ -416,6 +575,20 @@ public:
         }
     }
 
+    // Voce «Esci» del menu' (task 2.5 #7). Chiusura ordinata, con una rete di
+    // sicurezza: se lo spegnimento di Chromium si pianta, fra 5 s il processo
+    // chiude comunque se stesso e i suoi figli. Su SFOS chiudere la cover non
+    // basta a sapere che l'app e' morta davvero: qui lo e'.
+    Q_INVOKABLE void quitApp()
+    {
+        std::thread([] {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            killTree(getpid());
+            _exit(0);
+        }).detach();
+        QCoreApplication::quit();
+    }
+
 private:
     void pauseBlanking() { mceCall(QStringLiteral("req_display_blanking_pause")); }
 
@@ -432,6 +605,104 @@ private:
     RtMaliitContainer *m_maliit = nullptr;
     bool m_keepDisplayOn = false;
 };
+
+// ===================== istanze fantasma (task 2.5 #7) =====================
+// Caso reale (Moto Edge 30 Neo, port non ufficiale): un lancio rimasto vivo
+// senza finestra tiene il nome DBus, e da li' ogni tocco sull'icona trova il
+// nome occupato, crede di parlare con l'istanza buona ed esce muto. L'utente
+// vede solo «l'app non parte». Questi helper leggono /proc per decidere se il
+// proprietario del nome e' davvero un fantasma e, solo allora, chiuderlo con
+// tutti i suoi processi Chromium.
+
+static QString procExe(pid_t pid)
+{
+    char buf[PATH_MAX];
+    const QByteArray link = QStringLiteral("/proc/%1/exe").arg(pid).toLatin1();
+    const ssize_t n = readlink(link.constData(), buf, sizeof(buf) - 1);
+    if (n <= 0) return QString();
+    buf[n] = '\0';
+    return QString::fromLocal8Bit(buf);
+}
+
+// campi di /proc/PID/stat DOPO il nome tra parentesi (che puo' contenere spazi):
+// [0] = stato, [1] = ppid, [19] = starttime in tick
+static QList<QByteArray> procStat(pid_t pid)
+{
+    QFile f(QStringLiteral("/proc/%1/stat").arg(pid));
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QByteArray all = f.readAll();
+    const int close = all.lastIndexOf(')');
+    if (close < 0) return {};
+    return all.mid(close + 2).split(' ');
+}
+
+// secondi da quando il processo e' nato (-1 se non si sa)
+static double procAgeSec(pid_t pid)
+{
+    const QList<QByteArray> st = procStat(pid);
+    QFile up(QStringLiteral("/proc/uptime"));
+    if (st.size() < 20 || !up.open(QIODevice::ReadOnly)) return -1;
+    const double uptime = up.readAll().split(' ').value(0).toDouble();
+    return uptime - st.at(19).toDouble() / sysconf(_SC_CLK_TCK);
+}
+
+// tutti i discendenti (zygote e renderer di Chromium sono nipoti, non figli)
+static QList<pid_t> procDescendants(pid_t root)
+{
+    QHash<pid_t, QList<pid_t>> children;
+    const QStringList dirs = QDir(QStringLiteral("/proc")).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &d : dirs) {
+        bool ok = false;
+        const pid_t pid = d.toInt(&ok);
+        if (!ok) continue;
+        const QList<QByteArray> st = procStat(pid);
+        if (st.size() > 1) children[(pid_t)st.at(1).toInt()].append(pid);
+    }
+    QList<pid_t> out, todo{root};
+    while (!todo.isEmpty()) {
+        const pid_t p = todo.takeFirst();
+        for (pid_t c : children.value(p)) { out.append(c); todo.append(c); }
+    }
+    return out;
+}
+
+static void killTree(pid_t root)
+{
+    for (pid_t p : procDescendants(root)) kill(p, SIGKILL);
+    if (root != getpid()) kill(root, SIGKILL);
+}
+
+// Il proprietario del nome e' un fantasma? Nel dubbio NO: chiudere un'istanza
+// buona costa le schede aperte, lasciare un fantasma costa un altro tocco.
+static bool ownerIsGhost(QDBusConnection &bus, const QString &busName,
+                         const QString &objPath, pid_t pid)
+{
+    if (pid <= 0) return false;
+    // mai uccidere un processo che non e' RooTitanium
+    if (!procExe(pid).endsWith(QLatin1String("/webengine-smoke"))) return false;
+    // ancora in avvio (QML in caricamento = main thread occupato): non e' un
+    // fantasma, e' il doppio tocco sull'icona
+    const double age = procAgeSec(pid);
+    if (age >= 0 && age < 20) return false;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        QDBusMessage m = QDBusMessage::createMethodCall(
+            busName, objPath, QStringLiteral("org.freedesktop.Application"),
+            QStringLiteral("rtAlive"));
+        const QDBusMessage r = bus.call(m, QDBus::Block, 5000);
+        if (r.type() == QDBusMessage::ReplyMessage) {
+            const int windows = r.arguments().value(0).toInt();
+            if (windows > 0) return false;
+            qWarning("[rt] istanza %d viva ma senza finestre", (int)pid);
+            return true;
+        }
+        // versione vecchia senza rtAlive: ha risposto, quindi il ciclo eventi gira
+        if (r.errorName() == QLatin1String("org.freedesktop.DBus.Error.UnknownMethod"))
+            return false;
+        qWarning("[rt] istanza %d non risponde (tentativo %d): %s", (int)pid,
+                 attempt + 1, qPrintable(r.errorName()));
+    }
+    return true;
+}
 
 int main(int argc, char **argv)
 {
@@ -498,8 +769,10 @@ int main(int argc, char **argv)
     // "in avvio" che va in timeout e si chiude da sola (doppia cover all'avvio).
     app.setDesktopFileName(QStringLiteral("harbour-rootitanium"));
 
-    // carica test.qml dalla stessa cartella dell'eseguibile
-    const QString base = QFileInfo(QString::fromLocal8Bit(argv[0])).absolutePath();
+    // carica test.qml dalla stessa cartella dell'eseguibile. Dal VERO percorso
+    // (/proc/self/exe), non da argv[0]: il launcher forgia argv[0] per farsi
+    // riconoscere da lipstick, e cosi' il suo valore resta libero (task 2.5 #3).
+    const QString base = QCoreApplication::applicationDirPath();
 
     // URL da aprire passato dal chooser di sistema (.desktop: Exec=... %u): il
     // primo argomento http(s)/file — lipstick/libcontentaction lancia l'app con
@@ -521,18 +794,34 @@ int main(int argc, char **argv)
     QDBusConnection bus = QDBusConnection::sessionBus();
     bus.registerObject(objPath, &openHandler, QDBusConnection::ExportAllSlots);
     if (!bus.registerService(busName)) {
-        // Nome gia' occupato = l'istanza viva e' un'altra. Le passiamo l'URL
-        // (che aprira' in una scheda nuova) e usciamo senza mai creare una
-        // seconda finestra. Senza URL non c'e' niente da dire: usciamo e basta,
-        // il foreground della finestra esistente lo fa lipstick.
-        if (!openUrl.isEmpty()) {
-            QDBusMessage fwd = QDBusMessage::createMethodCall(
-                busName, objPath, QStringLiteral("org.freedesktop.Application"),
-                QStringLiteral("openUrl"));
-            fwd.setArguments({ openUrl });
-            bus.call(fwd, QDBus::Block);   // Block: il processo esce subito dopo
+        // Nome gia' occupato = l'istanza viva e' un'altra. Prima pero' si
+        // controlla che sia viva davvero (task 2.5 #7): se e' un fantasma la si
+        // chiude e si parte noi, altrimenti l'app non si aprirebbe piu'.
+        const pid_t owner = (pid_t)bus.interface()->servicePid(busName).value();
+        if (!ownerIsGhost(bus, busName, objPath, owner)) {
+            // Istanza buona: le passiamo l'URL (che aprira' in una scheda
+            // nuova) e usciamo senza mai creare una seconda finestra. Senza URL
+            // non c'e' niente da dire: il foreground lo fa lipstick.
+            qInfo("[rt] istanza gia' attiva (pid %d): %s", (int)owner,
+                  openUrl.isEmpty() ? "esco" : "le passo il link ed esco");
+            if (!openUrl.isEmpty()) {
+                QDBusMessage fwd = QDBusMessage::createMethodCall(
+                    busName, objPath, QStringLiteral("org.freedesktop.Application"),
+                    QStringLiteral("openUrl"));
+                fwd.setArguments({ openUrl });
+                bus.call(fwd, QDBus::Block);   // Block: il processo esce subito dopo
+            }
+            return 0;
         }
-        return 0;
+        qWarning("[rt] istanza fantasma (pid %d): la chiudo e parto io", (int)owner);
+        killTree(owner);
+        bool registered = false;
+        for (int i = 0; i < 50 && !(registered = bus.registerService(busName)); ++i)
+            QThread::msleep(100);   // il bus libera il nome appena muore il socket
+        if (!registered) {
+            qWarning("[rt] nome DBus ancora occupato dopo la chiusura del fantasma: esco");
+            return 1;
+        }
     }
 
     QQmlApplicationEngine engine;
@@ -550,14 +839,13 @@ int main(int argc, char **argv)
     engine.load(QUrl::fromLocalFile(base + "/test.qml"));
     if (engine.rootObjects().isEmpty())
         return -1;
-    // NB: qui NON serve portare avanti la finestra da soli. Il foreground lo fa
-    // lipstick, che e' il vero mittente (le app chiamano
-    // org.sailfishos.fileservice.openUrl su com.jolla.lipstick, e lipstick
-    // attiva l'handler oltre a consegnargli l'URL). Verificato sul device:
-    // app in background + link → scheda nuova E app in primo piano.
-    // QWindow::raise()/requestActivate() sarebbero comunque inutili: il client
-    // Qt6 parla xdg-shell, che non ha alcuna richiesta di raise.
-    return app.exec();
+    // Il primo piano su un link lo chiede OpenHandler (RtWindowRaiser): lipstick
+    // consegna l'URL via DBus (X-Maemo-* del .desktop) ma non porta avanti da
+    // solo una finestra Qt6 in cover — misurato il 10 ott (task 2.5 #3).
+    const int rc = app.exec();
+    // Esci dal menu' (task 2.5 #7): niente processi Chromium orfani dopo di noi
+    killTree(getpid());
+    return rc;
 }
 
 #include "main.moc"

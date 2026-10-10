@@ -900,7 +900,9 @@ Window {
         { t: "item", ic: "star",     l: win.t("Segnalibri", "Bookmarks"),           a: "bookmarks" },
         { t: "item", ic: "history",  l: win.t("Cronologia", "History"),             a: "history" },
         { t: "item", ic: "download", l: win.t("Download", "Downloads"),             a: "downloads" },
-        { t: "item", ic: "settings", l: win.t("Impostazioni", "Settings"),          a: "settings" }
+        { t: "item", ic: "settings", l: win.t("Impostazioni", "Settings"),          a: "settings" },
+        { t: "sep" },
+        { t: "item", ic: "exit",     l: win.t("Esci", "Exit"),                      a: "exit" }
     ]
 
     function doAction(a) {
@@ -917,8 +919,19 @@ Window {
         else if (a === "bookmarks") loadInternal(currentView, "bookmarks", bookmarksHtml(), "https://bookmarks.local/")
         else if (a === "downloads") loadInternal(currentView, "downloads", downloadsHtml(), "https://downloads.local/")
         else if (a === "settings") openSettings(currentView)
+        else if (a === "exit") quitApp()
         else if (a === "find") { if (currentView) { findBar.open = true; Qt.callLater(function(){ findInput.forceActiveFocus() }) } }
         else console.log("menu action (placeholder): " + a)
+    }
+
+    // Esci (task 2.5 #7): chiude DAVVERO l'app, processi Chromium compresi.
+    // La sessione si salva prima (se «chiudi schede all'uscita» è spento) così
+    // al prossimo avvio le schede tornano. rtNative.quitApp ha una rete di
+    // sicurezza di 5 s; Qt.quit solo se il binario è più vecchio del test.qml.
+    function quitApp() {
+        saveSession()
+        if (typeof rtNative !== "undefined" && rtNative.quitApp) rtNative.quitApp()
+        else Qt.quit()
     }
 
     // Condividi = dialogo di condivisione DI SISTEMA (sailfish-share via DBus
@@ -2473,6 +2486,17 @@ ${histCss}
         target: (typeof rtOpen !== "undefined") ? rtOpen : null
         function onOpenRequested(url) {
             if (!url) return
+            // Se l'unica scheda è la Home appena aperta (tipico: app avviata
+            // proprio dal link, via attivazione DBus), il link la sostituisce:
+            // una Home vuota accanto al link è solo una scheda in più da chiudere.
+            var v = tabsRepeater.itemAt(0)
+            if (tabsModel.count === 1 && tabsModel.get(0).start === "home" && !tabsModel.get(0).priv
+                    && v && !v.canGoBack && (v.localPage === "home" || ("" + v.url) === cfgHome)) {
+                currentTab = 0
+                v.url = "" + url
+                Qt.callLater(refreshCurrent)
+                return
+            }
             win.newTabUrl(false, "" + url)
         }
     }
@@ -2496,14 +2520,19 @@ ${histCss}
         // URL passato dal chooser di sistema (main.cpp → rtOpenUrl via .desktop %u).
         // typeof: la property manca se il binario è più vecchio del test.qml (scp).
         var initUrl = (typeof rtOpenUrl !== "undefined" && rtOpenUrl) ? "" + rtOpenUrl : ""
-        if (initUrl !== "") { tabsModel.append({ priv: false, start: initUrl, murl: initUrl, mtitle: "…" }); currentTab = 0; return }
-        if (cfgStartPrivate) { newTab(true); return }
+        if (cfgStartPrivate && initUrl === "") { newTab(true); return }
         var urls = []
         if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }
-        if (!urls || !urls.length) { newTab(false); return }
+        if (!urls) urls = []
+        // Avvio con un link (task 2.5 #3): le schede della sessione restano e il
+        // link si apre in una scheda IN PIÙ, attiva. Prima il link sostituiva
+        // l'intera sessione e le schede aperte sparivano.
+        if (!urls.length && initUrl === "") { newTab(false); return }
         for (var i = 0; i < urls.length; i++)
             tabsModel.append({ priv: false, start: "" + urls[i], murl: "" + urls[i], mtitle: "…" })
-        currentTab = 0
+        if (initUrl !== "") tabsModel.append({ priv: false, start: initUrl, murl: initUrl, mtitle: "…" })
+        currentTab = initUrl !== "" ? tabsModel.count - 1 : 0
+        if (initUrl !== "") saveSession()
         Qt.callLater(refreshCurrent)
     }
 
@@ -3331,6 +3360,10 @@ ${histCss}
             } else if (k === "file") {
                 ctx.beginPath(); ctx.moveTo(s*0.28,s*0.16); ctx.lineTo(s*0.58,s*0.16); ctx.lineTo(s*0.74,s*0.32); ctx.lineTo(s*0.74,s*0.84); ctx.lineTo(s*0.28,s*0.84); ctx.closePath(); ctx.stroke()
                 ctx.beginPath(); ctx.moveTo(s*0.58,s*0.16); ctx.lineTo(s*0.58,s*0.32); ctx.lineTo(s*0.74,s*0.32); ctx.stroke()
+            } else if (k === "exit") {
+                // simbolo di spegnimento: arco aperto in alto + barretta
+                ctx.beginPath(); ctx.arc(cx,cy+s*0.04,s*0.30,-Math.PI*0.32,Math.PI*1.32,false); ctx.stroke()
+                ctx.beginPath(); ctx.moveTo(cx,s*0.12); ctx.lineTo(cx,s*0.48); ctx.stroke()
             } else if (k === "up") {
                 ctx.beginPath(); ctx.moveTo(cx,s*0.78); ctx.lineTo(cx,s*0.24); ctx.moveTo(cx-s*0.20,s*0.44); ctx.lineTo(cx,s*0.22); ctx.lineTo(cx+s*0.20,s*0.44); ctx.stroke()
             }

@@ -180,20 +180,23 @@ int main(int argc, char **argv) {
            "--enable-features=BlockInsecurePrivateNetworkRequests", 0);
 
     /* execv del binario webengine-smoke, ma con argv[0] FORGIATO =
-     * /home/rootitanium/harbour-rootitanium. Due requisiti in uno:
-     *   - basename(argv[0]) == "harbour-rootitanium" == basename del .desktop:
-     *     lipstick deriva l'app-id della finestra dalla cmdline del processo
-     *     client (/proc/PID) e la confronta col launcher item; se non combacia
-     *     NON aggancia la finestra alla cover del launcher e resta una
-     *     cover-segnaposto "in avvio" con spinner che va in timeout (doppia cover).
-     *   - dirname(argv[0]) == "/home/rootitanium": main.cpp risolve test.qml da li'. */
+     * /usr/bin/harbour-rootitanium, cioe' il PERCORSO COMPLETO del binario
+     * della riga Exec del .desktop. Lipstick riconosce la finestra di un'app
+     * confrontando la cmdline del processo client (/proc/PID) con la riga
+     * Exec; se non combacia:
+     *   - all'avvio resta una cover-segnaposto "in avvio" (doppia cover);
+     *   - toccando l'icona con l'app gia' aperta, lipstick non trova la
+     *     finestra, non la porta avanti e rilancia l'app (task 2.5 #3).
+     * Il confronto e' sul percorso intero, non sul basename: misurato il
+     * 10 ott sul POCO (/home/rootitanium/harbour-rootitanium = mai
+     * riconosciuta; /usr/bin/harbour-rootitanium = riconosciuta).
+     * main.cpp trova test.qml da /proc/self/exe, non da argv[0]. */
     char bin[PATH_MAX];
     snprintf(bin, sizeof(bin), "%s/webengine-smoke", HERE);
-    char argv0[PATH_MAX];
-    snprintf(argv0, sizeof(argv0), "%s/harbour-rootitanium", HERE);
+    char argv0[] = "/usr/bin/harbour-rootitanium";
     char **nargv = malloc(sizeof(char *) * (argc + 1));
     if (!nargv) return 1;
-    nargv[0] = argv0;                  /* argv[0] = /home/rootitanium/harbour-rootitanium */
+    nargv[0] = argv0;                  /* argv[0] = /usr/bin/harbour-rootitanium */
     for (int i = 1; i < argc; i++) nargv[i] = argv[i];
     nargv[argc] = NULL;
     execv(bin, nargv);

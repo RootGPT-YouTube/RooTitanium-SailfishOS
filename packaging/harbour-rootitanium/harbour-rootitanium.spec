@@ -6,7 +6,7 @@
 # File piccoli   -> /usr/bin (launcher ELF) + /usr/share (.desktop + icone), rootfs.
 # Launcher /usr/bin/harbour-rootitanium: sailjail rifiuta gli script e vuole il
 # binario in /usr/bin. Il launcher imposta l'env del bundle ed esegue
-# /home/rootitanium/webengine-smoke (argv[0] = suo path, cosi' main.cpp trova test.qml).
+# /home/rootitanium/webengine-smoke (argv[0] = /usr/bin/harbour-rootitanium, per lipstick).
 # .desktop: [X-Sailjail] Sandboxing=Disabled (l'app gira fuori dal firejail).
 
 %global _apphome   /home/rootitanium
@@ -63,6 +63,11 @@ install -m0755 %{stagingdir}/rootitanium-launch %{buildroot}%{_bindir}/harbour-r
 # 3) .desktop -> /usr/share/applications
 mkdir -p %{buildroot}%{_datadir}/applications
 install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}/applications/harbour-rootitanium.desktop
+%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
+# 3) attivazione DBus: un link con l'app chiusa la fa partire (task 2.5 #3).
+#    Con Sandboxing=Disabled sailjaild non lo genera da se': va spedito.
+mkdir -p %{buildroot}%{_datadir}/dbus-1/services
+install -m0644 %{stagingdir}/com.github.RootGPT_YouTube.rootitanium.service %{buildroot}%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 # 3) icone -> hicolor (le taglie disponibili nello staging)
 for s in 86 108 128 172; do
   if [ -f %{stagingdir}/icons/${s}.png ]; then
