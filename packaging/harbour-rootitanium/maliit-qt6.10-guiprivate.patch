@@ -1,0 +1,15 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 734f898..7e358c0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -45,6 +45,10 @@ find_package(PkgConfig REQUIRED)
+ find_package(Qt6Core)
+ find_package(Qt6DBus)
+ find_package(Qt6Gui REQUIRED PRIVATE)
++# Qt >= 6.10: i moduli privati vanno chiesti esplicitamente; senza, la vecchia
++# Qt6Gui_PRIVATE_INCLUDE_DIRS resta vuota e moc non trova qpa/*_p.h (RooTitanium)
++find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
++link_libraries(Qt6::GuiPrivate)
+ find_package(Qt6Quick)
+ find_package(Qt6Widgets)
+ 

@@ -34,5 +34,16 @@ Ordine (aarch64, 10 ott 2026, ~45 min in tutto): qtbase, qtshadertools,
 qtsvg, qtdeclarative, qtwebsockets, qtwebchannel, qtpositioning,
 qtvirtualkeyboard. qtwayland **non serve più** (il client è in qtbase).
 
-Nota per il launcher: in 6.12 il plugin di piattaforma è `wayland` (EGL come
-integrazione interna), non più `wayland-egl`.
+Launcher: in 6.12 il plugin di piattaforma si chiama `libqwayland.so`, ma
+accetta ancora la chiave `wayland-egl` (qwayland.json), quindi
+`QT_QPA_PLATFORM=wayland-egl` del launcher resta valido.
+
+## Plugin Maliit (tastiera di sistema)
+Usa API private di Qt (`QPlatformInputContext`): quello di chum compilato per
+6.8 non si carica su 6.12 e va ricompilato. Sorgente esatto del pacchetto in
+uso: repo chum `qt-sfos-maliit-platforminputcontext` commit `9bb86e6`, il cui
+sottomodulo `upstream` = `sailfishos-flatpak/maliit-framework` `f5aa5d6`.
+Opzioni cmake quelle di `rpm/plugin.spec` (solo `enable-qt6-inputcontext`).
+Su Qt >= 6.10 serve `../harbour-rootitanium/maliit-qt6.10-guiprivate.patch`
+(richiede esplicitamente `Qt6::GuiPrivate`, altrimenti moc non trova
+`qpa/*_p.h`). Licenza LGPL-2.1: la patch va pubblicata con il binario (è qui).
