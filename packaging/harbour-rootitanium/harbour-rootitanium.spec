@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.1
+Version:    2.2
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -63,7 +63,6 @@ install -m0755 %{stagingdir}/rootitanium-launch %{buildroot}%{_bindir}/harbour-r
 # 3) .desktop -> /usr/share/applications
 mkdir -p %{buildroot}%{_datadir}/applications
 install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}/applications/harbour-rootitanium.desktop
-%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 # 3) attivazione DBus: un link con l'app chiusa la fa partire (task 2.5 #3).
 #    Con Sandboxing=Disabled sailjaild non lo genera da se': va spedito.
 mkdir -p %{buildroot}%{_datadir}/dbus-1/services
@@ -88,9 +87,29 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_apphome}
 %{_bindir}/harbour-rootitanium
 %{_datadir}/applications/harbour-rootitanium.desktop
+%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Oct 10 2026 RootGPT <emagiampa@gmail.com> - 2.2-1
+- Link da altre app: con RooTitanium in background il link si apre in
+  una scheda nuova e l'app torna in primo piano. Le schede gia' aperte
+  restano. Anche toccando l'icona con l'app aperta, ora l'app torna
+  avanti invece di ripartire.
+- Nuova voce «Esci» nel menu': chiude davvero l'app, compresi i processi
+  del motore.
+- Se un avvio precedente era rimasto bloccato senza finestra, l'app lo
+  chiude da sola e parte: prima toccando l'icona non succedeva nulla.
+- Posizione per i siti: ora funziona, con il GPS del telefono e la
+  posizione dalle celle quando il GPS non ha ancora agganciato i satelliti.
+- Motori di ricerca: aggiunti Yandex, Ecosia, Brave Search e Qwant, e si
+  possono aggiungere motori propri (Impostazioni › Motore di ricerca).
+- Barra degli indirizzi in basso, con l'opzione «Nascondi scorrendo»
+  (Impostazioni › Barra degli indirizzi).
+- Permessi: con un interruttore di «Permessi App» spento, i siti non
+  restano bloccati per sempre; riacceso, tornano a chiedere.
+- Il menu' ⋮ si apre sotto la barra invece di coprirla.
+
 * Tue Sep 29 2026 RootGPT <emagiampa@gmail.com> - 2.1-1
 - x.com: scorrendo la timeline i post si caricano di nuovo, invece di
   fermarsi ai primi. La colpa era dell'opzione «Rifiuta cookie», che su
