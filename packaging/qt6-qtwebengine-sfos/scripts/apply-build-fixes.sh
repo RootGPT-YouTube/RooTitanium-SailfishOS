@@ -128,6 +128,61 @@ fix_link() {
   fi
 }
 
+# ── 4b) gn con il qemu dell'host (Chromium 140, 10 ott 2026) ─────────────────
+# Il gn di QtWebEngine 6.140 e' un binario per il target e sotto il qemu 5.1 di
+# sb2 abortisce ("terminate called recursively", signal 6) appena fa
+# "gn gen": stessa famiglia del guasto dello snapshot V8, stesso rimedio.
+# Se gn viene rilinkato sovrascrive il wrapper: si guarda cosa c'e' adesso.
+fix_gnqemu() {
+  [ -x "$QEMU10" ] || die "manca $QEMU10"
+  local g=$BT/install/bin/gn
+  [ -f "$g" ] || die "gn non trovato: $g"
+  # Ponte per gli script Python di gn: lanciato direttamente da gn sotto il
+  # qemu dell'host, /usr/bin/python3 parte senza libreria standard
+  # ("init_fs_encoding"). Uno script NATIVO fuori dal sysroot rientra invece
+  # nella mappatura di sb2 (LD_PRELOAD sopravvive al passaggio) e trova il
+  # python giusto e i pkg-config del target (verificato: Qt6Core 6.12.0).
+  printf '#!/bin/sh\nexec /usr/bin/python3 "$@"\n' > "$BT/install/bin/py-sb2.sh"
+  chmod +x "$BT/install/bin/py-sb2.sh"
+  # il wrapper si (ri)scrive se manca o e' di una versione senza ponte
+  if head -c2 "$g" 2>/dev/null | grep -q '#!' && grep -q py-sb2 "$g"; then
+    echo "  = wrapper gn gia' installato"
+    return 0
+  fi
+  head -c2 "$g" 2>/dev/null | grep -q '#!' || mv -f "$g" "$g.real"
+  cat > "$g" <<WRAP
+#!/bin/sh
+# Wrapper RooTitanium: gn ($ARCH) col qemu 10 dell host (quello del target
+# abortisce) e con il ponte py-sb2.sh come interprete degli script.
+B="\$(dirname "\$0")/py-sb2.sh"
+for a; do shift; case "\$a" in
+  --script-executable=*) set -- "\$@" "--script-executable=\$B" ;;
+  *) set -- "\$@" "\$a" ;;
+esac; done
+exec $QEMU10 -L /srv/mer/targets/$TARGET "\$(dirname "\$0")/gn.real" "\$@"
+WRAP
+  chmod +x "$g"
+  echo "  + wrapper qemu-10 per gn installato (con ponte python)"
+}
+
+# ── 4c) node con il qemu dell'host (Chromium 140, 10 ott 2026) ───────────────
+# Il frontend DevTools di 140 usa rollup in WebAssembly. Il node del target gira
+# sotto il qemu di sb2, che e' un eseguibile a 32 bit (~4 GB di indirizzi): V8
+# non riesce a riservare le regioni di guardia del wasm ("Cannot allocate Wasm
+# memory"), e --disable-wasm-trap-handler li' fa morire node col signal 5.
+# Sotto il qemu 10 a 64 bit dell'host funziona (verificato). Si punta
+# NODEJS_EXECUTABLE (build.ninja + cache) a un wrapper accanto a gn.
+fix_nodeqemu() {
+  [ -x "$QEMU10" ] || die "manca $QEMU10"
+  local w=$BT/install/bin/node-qemu10.sh
+  printf '#!/bin/sh\n# node (%s) col qemu 10 dell host: wasm di rollup sotto il qemu a 32 bit di sb2 va in OOM\nexec %s -L /srv/mer/targets/%s /srv/mer/targets/%s/usr/bin/node "$@"\n' \
+    "$ARCH" "$QEMU10" "$TARGET" "$TARGET" > "$w"
+  chmod +x "$w"
+  sed -i "s#NODEJS_EXECUTABLE=/usr/bin/node#NODEJS_EXECUTABLE=$w#g" "$BT/build.ninja"
+  sed -i "s#^Nodejs_EXECUTABLE:FILEPATH=.*#Nodejs_EXECUTABLE:FILEPATH=$w#" "$BT/CMakeCache.txt"
+  echo "  + node via qemu-10: $(grep -c "NODEJS_EXECUTABLE=$w" "$BT/build.ninja") punti in build.ninja"
+}
+
 # ── 4) v8_context_snapshot_generator con il qemu dell'host ───────────────────
 # Il qemu 5.1 del target lo fa trappare (signal 5); il qemu 10.x dell'host lo
 # esegue senza problemi.
@@ -193,6 +248,8 @@ case "${1:-all}" in
   gn)       echo "== args.gn (V8)";        fix_gn ;;
   ninja)    echo "== toolchain.ninja";     fix_rsp; echo "== build.ninja (link)"; fix_link ;;
   snapshot) echo "== v8_context_snapshot"; fix_snapshot ;;
+  gnqemu)   echo "== gn col qemu dell host"; fix_gnqemu ;;
+  nodeqemu) echo "== node col qemu dell host"; fix_nodeqemu ;;
   qmlcache) echo "== permessi qmlcachegen"; fix_qmlcache ;;
   all)      echo "== args.gn (V8)";        fix_gn
             echo "== toolchain.ninja";     fix_rsp

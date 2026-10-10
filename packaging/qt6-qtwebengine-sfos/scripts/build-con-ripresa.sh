@@ -57,7 +57,7 @@ for giro in $(seq 1 "$MAX_GIRI"); do
     # argomenti gn contiene stringhe come "use_v8_context_snapshot=true" che
     # facevano scattare il rimedio sbagliato (visto il 14 ago 2026: un
     # "-- GN FAILED" veniva letto come crash dello snapshot V8).
-    coda=$(grep -E "^FAILED:|^ninja: |fatal error:|CMake Error|GN FAILED|error:" "$BUILDLOG" 2>/dev/null | tail -30)
+    coda=$(grep -E "^FAILED:|^ninja: |fatal error:|CMake Error|GN FAILED|error:|uncaught target signal|terminate called|init_fs_encoding|Cannot allocate Wasm memory" "$BUILDLOG" 2>/dev/null | tail -30)
     avanz=$(grep -oE '\[[0-9]+/[0-9]+\]' "$BUILDLOG" 2>/dev/null | tail -1)
 
     case "$coda" in
@@ -79,6 +79,13 @@ for giro in $(seq 1 "$MAX_GIRI"); do
         # stampa "FAILED: .../QtWebEngineCore.stamp .../v8_context_snapshot.stamp"
         # e il pattern largo scambiava un errore di compilazione (zlib crc32)
         # per lo snapshot: 5 giri a vuoto. Si guarda il nome del .bin.
+        # Chromium 140: gn stesso abortisce sotto il qemu del target. Va PRIMA
+        # del caso snapshot, che guarda anche "uncaught target signal".
+        *"GN FAILED"*"uncaught target signal"*|*"GN FAILED"*"terminate called"*|*"init_fs_encoding"*)
+            rimedio=gnqemu ;;
+        # node del target sotto il qemu a 32 bit: il wasm di rollup va in OOM
+        *"Cannot allocate Wasm memory"*)
+            rimedio=nodeqemu ;;
         *"FAILED: v8_context_snapshot.bin"*|*"uncaught target signal"*)
             rimedio=snapshot ;;
         *)
