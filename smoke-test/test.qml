@@ -424,12 +424,54 @@ Window {
         if (cfgDlDir === "downloads" && typeof rtNative !== "undefined") return rtNative.downloadsPath()
         return (dlDirs[cfgDlDir] || dlDirs.downloads).p
     }
-    readonly property var searchEngines: ({
-        duckduckgo: { n: "DuckDuckGo", q: "https://lite.duckduckgo.com/lite/?q=" },
-        google:     { n: "Google",     q: "https://www.google.com/search?q=" },
-        bing:       { n: "Bing",       q: "https://www.bing.com/search?q=" },
-        startpage:  { n: "Startpage",  q: "https://www.startpage.com/sp/search?query=" }
+    // Motori di ricerca (task 2.5 #1). q = URL con %s al posto del termine.
+    // builtinEngineOrder = ordine in Impostazioni; customEngines = quelli
+    // aggiunti dall'utente, in kv "set_customsearch" come [{id, n, q}].
+    readonly property var builtinEngines: ({
+        duckduckgo: { n: "DuckDuckGo",   q: "https://lite.duckduckgo.com/lite/?q=%s" },
+        google:     { n: "Google",       q: "https://www.google.com/search?q=%s" },
+        bing:       { n: "Bing",         q: "https://www.bing.com/search?q=%s" },
+        startpage:  { n: "Startpage",    q: "https://www.startpage.com/sp/search?query=%s" },
+        yandex:     { n: "Yandex",       q: "https://yandex.com/search/?text=%s" },
+        ecosia:     { n: "Ecosia",       q: "https://www.ecosia.org/search?q=%s" },
+        brave:      { n: "Brave Search", q: "https://search.brave.com/search?q=%s" },
+        qwant:      { n: "Qwant",        q: "https://www.qwant.com/?q=%s" }
     })
+    readonly property var builtinEngineOrder: ["duckduckgo", "google", "bing", "startpage", "yandex", "ecosia", "brave", "qwant"]
+    property var customEngines: []
+    function engineFor(k) {
+        if (builtinEngines[k]) return builtinEngines[k]
+        for (var i = 0; i < customEngines.length; i++) if (customEngines[i].id === k) return customEngines[i]
+        return null
+    }
+    function searchUrl(text) {
+        var e = engineFor(cfgSearch) || builtinEngines.duckduckgo
+        var enc = encodeURIComponent(text)
+        // senza %s (URL incollato a metà) il termine va in coda
+        return e.q.indexOf("%s") >= 0 ? e.q.split("%s").join(enc) : e.q + enc
+    }
+    function saveCustomEngines() { kvSet("set_customsearch", JSON.stringify(customEngines)) }
+    // false + motivo nel toast se non va: nome vuoto, URL non http(s), troppi
+    function addCustomEngine(name, url) {
+        name = ("" + name).trim().slice(0, 40); url = ("" + url).trim()
+        if (url.length && !/^[a-z]+:\/\//i.test(url)) url = "https://" + url
+        if (!name.length || !/^https?:\/\/[^\/\s]+/i.test(url)) {
+            toast.show(win.t("Servono un nome e un indirizzo http(s)", "A name and an http(s) address are needed")); return false }
+        if (customEngines.length >= 12) {
+            toast.show(win.t("Massimo 12 motori personalizzati", "At most 12 custom engines")); return false }
+        var list = customEngines.slice()
+        var id = "c" + Date.now().toString(36)
+        list.push({ id: id, n: name, q: url })
+        customEngines = list; saveCustomEngines()
+        cfgSearch = id; kvSet("set_search", id)
+        toast.show(win.t("Motore aggiunto e scelto", "Engine added and selected"))
+        return true
+    }
+    function removeCustomEngine(id) {
+        customEngines = customEngines.filter(function(e) { return e.id !== id })
+        saveCustomEngines()
+        if (cfgSearch === id) { cfgSearch = "duckduckgo"; kvSet("set_search", cfgSearch) }
+    }
     function kvEnsure(tx) { tx.executeSql("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)") }
     function kvGet(k, def) {
         var v = def
@@ -461,8 +503,9 @@ Window {
         cfgFirstRunSeen = kvGet("first_run_seen", "0") === "1"
         cfgUiTheme      = kvGet("set_uitheme", "dark") === "light" ? "light" : "dark"
         cfgHome         = kvGet("set_homepage", "")
+        try { customEngines = JSON.parse(kvGet("set_customsearch", "[]")) || [] } catch(e) { customEngines = [] }
         cfgSearch       = kvGet("set_search", "duckduckgo")
-        if (!searchEngines[cfgSearch]) cfgSearch = "duckduckgo"
+        if (!engineFor(cfgSearch)) cfgSearch = "duckduckgo"
         cfgDlDir        = kvGet("set_dldir", "downloads")
         if (!dlDirs[cfgDlDir]) cfgDlDir = "downloads"
         cfgReaderPx     = parseInt(kvGet("set_readerpx", "19")) || 19
@@ -486,7 +529,7 @@ Window {
             if (v.length && !/^[a-z]+:\/\//i.test(v)) v = "https://" + v
             cfgHome = v; kvSet("set_homepage", cfgHome); return
         }
-        if (k === "search")        { if (searchEngines[v]) { cfgSearch = v; kvSet("set_search", v) } return }
+        if (k === "search")        { if (engineFor(v)) { cfgSearch = v; kvSet("set_search", v) } return }
         if (k === "dldir")         { if (dlDirs[v]) { cfgDlDir = v; kvSet("set_dldir", v) } return }
         var on = v === "1"
         if (k === "js")            { cfgJs = on;        kvSet("set_js", v) }
@@ -870,7 +913,7 @@ Window {
         if (t === "probe") { loadInternal(currentView, "probe", probeHtml(), "https://probe.local/"); return }   // pagina diagnostica
         if (/^[a-z]+:\/\//i.test(t)) currentView.url = t
         else if (/^[^ ]+\.[^ ]+$/.test(t)) currentView.url = "https://" + t
-        else currentView.url = searchEngines[cfgSearch].q + encodeURIComponent(t)
+        else currentView.url = searchUrl(t)
     }
 
     function colorizeUrl(u) {
@@ -1570,11 +1613,22 @@ ${body}
         return ""
     }
     function settingsHtml() {
-        var engines = ["duckduckgo", "google", "bing", "startpage"].map(function(k) {
+        var engines = builtinEngineOrder.map(function(k) {
             var on = cfgSearch === k
             return '<a class="srow" id="rad_search_' + k + '" href="https://settings.local/set?k=search&v=' + k + '">'
                  + '<span class="rad rg_search' + (on ? ' on' : '') + '"></span>'
-                 + '<span class="sbody"><span class="st">' + searchEngines[k].n + '</span></span></a>'
+                 + '<span class="sbody"><span class="st">' + builtinEngines[k].n + '</span></span></a>'
+        }).join("")
+        // personalizzati: radio + ✕ per toglierlo (un <div> che contiene due link,
+        // perché un <a> dentro un <a> non è HTML valido)
+        engines += customEngines.map(function(e) {
+            var on = cfgSearch === e.id
+            return '<div class="srow" style="padding:0">'
+                 + '<a class="srow" style="flex:1;border:0;min-width:0" id="rad_search_' + e.id + '" href="https://settings.local/set?k=search&v=' + e.id + '">'
+                 + '<span class="rad rg_search' + (on ? ' on' : '') + '"></span>'
+                 + '<span class="sbody"><span class="st">' + htmlEsc(e.n) + '</span>'
+                 + '<span class="sd" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + htmlEsc(e.q) + '</span></span></a>'
+                 + '<a class="act red" href="https://settings.local/delsearch?id=' + e.id + '">✕</a></div>'
         }).join("")
         var dldirs = ["downloads", "documents", "pictures", "videos", "music"].map(function(k) {
             var on = cfgDlDir === k
@@ -1623,6 +1677,12 @@ button{flex:none;background:var(--accent);border:0;border-radius:8px;color:#fff;
 </form>
 <h2>${win.t("Motore di ricerca", "Search engine")}</h2>
 ${engines}
+<form action="https://settings.local/addsearch" method="get" style="flex-wrap:wrap">
+<input name="n" placeholder="${win.t("Nome (es. Wikipedia)", "Name (e.g. Wikipedia)")}" autocapitalize="off" autocorrect="off" style="flex:1 1 100%">
+<input name="u" placeholder="${win.t("Indirizzo con %s al posto della ricerca", "Address with %s in place of the query")}" inputmode="url" autocapitalize="off" autocorrect="off">
+<button>${win.t("Aggiungi", "Add")}</button>
+</form>
+<div class="sd" style="padding:8px 2px 0">${win.t("Esempio: https://it.wikipedia.org/w/index.php?search=%s", "Example: https://en.wikipedia.org/w/index.php?search=%s")}</div>
 <h2>Privacy</h2>
 ${sToggle("closetabs", cfgCloseTabs, win.t("Chiudi tutte le schede all'uscita", "Close all tabs on exit"), win.t("Spento: al riavvio ritrovi le schede aperte", "Off: your open tabs are restored on restart"))}
 ${sToggle("startprivate", cfgStartPrivate, win.t("Avvia in navigazione privata", "Start in private browsing"), "")}
@@ -2901,6 +2961,10 @@ ${histCss}
                             // veniva ignorata IN SILENZIO — trovato al collaudo del 21 lug
                             var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
                             var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
+                            // motori personalizzati (task 2.5 #1): form GET name+url, ✕ per id
+                            var mAddS  = u.match(/^https:\/\/settings\.local\/addsearch\?n=([^&]*)&u=(.*)$/)
+                            var mDelS  = u.match(/^https:\/\/settings\.local\/delsearch\?id=(c[a-z0-9]+)$/)
+                            var formDec = function(x) { try { return decodeURIComponent(x.replace(/\+/g, "%20")) } catch(e) { return "" } }
                             win.settingsClearArm = (u === "https://settings.local/cleardata")
                             if (mSet) {
                                 win.applySetting(mSet[1], mSet[2])
@@ -2913,6 +2977,8 @@ ${histCss}
                                 win.applySetting("homepage", decodeURIComponent(mSHome[1].replace(/\+/g, "%20")))
                                 toast.show(win.cfgHome.length ? "Pagina iniziale salvata" : "Pagina iniziale: HOME di RooTitanium")
                             }
+                            else if (mAddS) win.addCustomEngine(formDec(mAddS[1]), formDec(mAddS[2]))
+                            else if (mDelS) win.removeCustomEngine(mDelS[1])
                             else if (u === "https://settings.local/cleardata2") win.clearBrowsingData()
                             win.loadInternal(this, "settings", win.settingsHtml(), "https://settings.local/")
                         } else if (u.indexOf("https://permissions.local/") === 0) {
