@@ -1,0 +1,9 @@
+{
+    "Keys": ["rtgeoclue1"],
+    "Provider": "rtgeoclue1",
+    "Position": true,
+    "Satellite": false,
+    "Monitor": false,
+    "Priority": 1000,
+    "Testable": false
+}
