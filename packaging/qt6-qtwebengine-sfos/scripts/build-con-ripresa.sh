@@ -26,6 +26,7 @@ case "$ARCH" in
   armv7hl) LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/build-armv7hl ;;
   *) echo "ERRORE: ARCH sconosciuta: $ARCH"; exit 1 ;;
 esac
+LOGDIR=${LOGDIR_OVR:-$LOGDIR}
 BUILDLOG=$LOGDIR/build.log
 LOG=$LOGDIR/build-ripresa.log
 MAX_GIRI=${MAX_GIRI:-15}

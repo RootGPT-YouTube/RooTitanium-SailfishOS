@@ -25,7 +25,8 @@ case "$ARCH" in
   armv7hl) TOPDIR=build-armv7hl ;;
   *) echo "ERRORE: ARCH sconosciuta: $ARCH" >&2; exit 1 ;;
 esac
-BT=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
+# BT sovrascrivibile: per Chromium 140 l'albero vive altrove (task 2.5 #6)
+BT=${BT:-$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream}
 SRC=$REPO/packaging/qt6-qtwebengine-sfos/droidmedia
 CR=$BT/src/3rdparty/chromium
 
@@ -46,6 +47,18 @@ fi
 
 # ── 1) i sorgenti nel tree ───────────────────────────────────────────────────
 cp "$SRC/droid_video_decoder.cc" "$SRC/droid_video_decoder.h" "$CR/media/filters/"
+# Chromium >= 140 ha rinominato tre API usate dal decoder (verificato il 10 ott
+# 2026 su 140.0.7339.264): DecoderBuffer::data_size() -> size(),
+# VideoFrame::kYPlane/kUPlane/kVPlane -> kY/kU/kV. Il sorgente canonico resta
+# quello per 122: le rinomine si applicano alla copia nel tree.
+CR_MAJOR=$(sed -n 's/^MAJOR=//p' "$CR/chrome/VERSION")
+if [ "${CR_MAJOR:-0}" -ge 140 ]; then
+    sed -i -e 's/->data_size()/->size()/g' \
+           -e 's/VideoFrame::kYPlane/VideoFrame::kY/g' \
+           -e 's/VideoFrame::kUPlane/VideoFrame::kU/g' \
+           -e 's/VideoFrame::kVPlane/VideoFrame::kV/g' \
+        "$CR/media/filters/droid_video_decoder.cc" "$CR/media/filters/droid_video_decoder.h"
+fi
 echo "→ sorgenti copiati in media/filters/"
 
 # ── 2) media/filters/BUILD.gn: pkg_config + sorgenti ─────────────────────────

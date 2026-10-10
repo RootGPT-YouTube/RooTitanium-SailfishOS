@@ -37,8 +37,10 @@ case "$ARCH" in
   armv7hl) TOPDIR=build-armv7hl ;;
   *) echo "ERRORE: ARCH sconosciuta: $ARCH"; exit 1 ;;
 esac
-BUILDDIR=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
-TARGET=SailfishOS-5.1.0.11-$ARCH
+# Chromium 140 (task 2.5 #6): BUILDDIR_OVR/TARGET_OVR/LOGDIR_OVR puntano alla
+# build fuori dai sorgenti nel target …-qt612
+BUILDDIR=${BUILDDIR_OVR:-$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream}
+TARGET=${TARGET_OVR:-SailfishOS-5.1.0.11-$ARCH}
 ENGINE=sailfish-sdk-build-engine_RootGPT
 CHIP=it8689-isa-0a40
 
@@ -59,7 +61,7 @@ STALL_FINESTRA=${STALL_FINESTRA:-900} # secondi (15 min) tra i controlli anti-st
 # piatti sui 73-77°C. Alzare la soglia oltre ~90 non serve a niente di utile:
 # a J=16 bastano 88-90 per non throttlare mai.
 
-LOGDIR=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR   # log separati per arch
+LOGDIR=${LOGDIR_OVR:-$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR}   # log separati per arch
 BUILDLOG=${BUILDLOG:-$LOGDIR/build.log}
 GUARDLOG=$LOGDIR/guardia-vrm.log
 

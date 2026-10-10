@@ -31,7 +31,14 @@ case "$ARCH" in
            TARGET=SailfishOS-5.1.0.11-armv7hl;         QEMUBIN=qemu-arm-10 ;;
   *) echo "ERRORE: ARCH sconosciuta: $ARCH" >&2; exit 1 ;;
 esac
-BT=$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream
+# Chromium 140 (task 2.5 #6): target sb2 clonati con Qt 6.12 e build Release
+# per entrambe le arch → GNSUB_OVR=Release/aarch64 TARGET_OVR=...-qt612
+GNSUB=${GNSUB_OVR:-$GNSUB}; TARGET=${TARGET_OVR:-$TARGET}
+# BT = cartella di BUILD; SRCT = sorgenti (per la 6.8.x coincidono: build
+# in-place). Per Chromium 140 (task 2.5 #6) la build e' fuori dai sorgenti, una
+# cartella per arch: BT=.../build-aarch64/qtwebengine SRCT=.../qtwebengine-6.140
+BT=${BT:-$REPO/packaging/qt6-qtwebengine-sfos/$TOPDIR/BUILD/qt6-qtwebengine-$VER/upstream}
+SRCT=${SRCT:-$BT}
 GNDIR=$BT/src/core/$GNSUB
 ENGINE=sailfish-sdk-build-engine_RootGPT
 # qemu-<arch>-static 10.x dell'HOST, copiato nella home (dev'essere sotto /home:
@@ -72,7 +79,7 @@ fix_gn() {
     fi
   done
   # CMakeLists piu' vecchio della cache = niente rigenerazione
-  touch -d '2026-07-06 12:00' "$BT/CMakeLists.txt"
+  touch -d '2026-07-06 12:00' "$SRCT/CMakeLists.txt"
   echo "  = CMakeLists.txt retrodatato (blocca il reconfigure)"
   [ $added -eq 1 ] && echo "  ! verifica: ninja build.ninja && grep sandbox $GNDIR/gen/v8/v8_features.json"
   return 0
