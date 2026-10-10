@@ -137,3 +137,44 @@ un ciclo di build completo.
 
 Cfr. [[rootitanium-chromium-update]], [[rootitanium-packaging-plan]],
 [[vrm-thermal-build-limit]], [[cross-nativo-vs-emulato]].
+
+## Aggiornamento 10 ottobre 2026: obiettivo Qt 6.12 + QtWebEngine 6.140
+
+Il 9 ottobre l'obiettivo è passato da 6.11.1 a **Qt 6.12 (LTS) + QtWebEngine
+6.140**: da 6.12 QtWebEngine ha una numerazione sua (6.140 = Chromium 140).
+Verificato oggi su code.qt.io:
+
+- **qtbase `v6.12.0`** finale è pubblico (l'embargo LTS riguarda le patch
+  release successive, non la .0).
+- **QtWebEngine**: tag `v6.140.0-rc`, ramo di rilascio `6.140.0` (nessun tag
+  finale `v6.140.0` al 10 ott). `CHROMIUM_VERSION` del ramo:
+  **Chromium 140.0.7339.264, patch di sicurezza fino a 154.0.8037.93**
+  (6.11.1 arrivava a 148). Esiste già il ramo Chromium `146-based` (il salto
+  successivo).
+- Requisiti di `configure.cmake` (6.140.0) contro il target sb2 SFOS 5.1:
+  gcc ≥ 10 con C++20 → **13.4** ✓; Node.js ≥ 20 a 64 bit → **22** ✓;
+  Python 3.11 ✓; cmake 3.31 ✓; ninja, gperf, bison come oggi.
+  **Rust è facoltativo** (feature `webengine-rust-build` solo se trova
+  rustc+bindgen+libclang): si compila senza, come oggi.
+- chum: nessun ramo 6.12/6.140. Le patch SFOS più recenti restano quelle di
+  Rinigus nel ramo `qt6-lts-6.11.1` (giugno 2026, mai compilato):
+  SIOCGSTAMP, link-pipewire, aarch64-new-stat, fix-build, aarch64-hwcap2-bti,
+  GL-includes, egl-validating-command-decoder, shared-gl-texture-compositor.
+  `qt6-qtbase`/`qt6-qtdeclarative` di chum sono a 6.8.4: le patch qtbase vanno
+  portate a 6.12 da noi.
+
+### Cosa va portato oltre al motore
+- Le nostre patch `0300-0306` e gli script `apply-build-fixes.sh` /
+  `apply-droidmedia.sh` (l'innesto del decoder droidmedia usa le API media di
+  Chromium: da adattare 122 → 140).
+- Tutto lo stack Qt del bundle a 6.12: qtbase, qtdeclarative, qtshadertools
+  (build), qtsvg, qtwayland, qtvirtualkeyboard, qtpositioning, qtwebchannel,
+  qtwebsockets, più il plugin Maliit Qt6 (oggi da chum:testing, compilato
+  contro 6.8) e i nostri `webengine-smoke`, launcher e plugin di posizione.
+- Il tutto due volte: aarch64 e armv7hl.
+
+### Approccio proposto per lo stack Qt
+Clonare il target sb2 (`SailfishOS-5.1.0.11-aarch64-qt612`), costruire gli RPM
+dei moduli 6.12 partendo dagli spec chum (6.8.4) con le loro patch portate, e
+installarli nel target clonato al posto del Qt 6.8.3 di piggz. Il target
+attuale resta intatto per la 2.x.

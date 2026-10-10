@@ -1,0 +1,16 @@
+--- a/src/3rdparty/chromium/content/browser/browser_interface_binders.cc
++++ b/src/3rdparty/chromium/content/browser/browser_interface_binders.cc
+@@ -2,6 +2,13 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++// RooTitanium (8 lug 2026): questo TU e' enorme e a -O2 supera il tetto ~4 GB
++// di spazio indirizzi per-processo di qemu-aarch64 5.1 (cross-build), cc1plus
++// muore con "virtual memory exhausted" anche da solo (host con 22 GB liberi).
++// Abbassiamo l'ottimizzazione SOLO per questo file: riduce molto il picco di
++// memoria del compilatore. Reversibile.
++#pragma GCC optimize("O1")
++
+ #include "content/browser/browser_interface_binders.h"
+ 
+ #include "base/check_op.h"

@@ -1,0 +1,20 @@
+--- a/src/3rdparty/chromium/third_party/devtools-frontend/src/scripts/build/compress_files.js	2026-10-10 18:43:28.503750115 +0200
++++ b/src/3rdparty/chromium/third_party/devtools-frontend/src/scripts/build/compress_files.js	2026-10-10 18:43:28.513926729 +0200
+@@ -80,7 +80,16 @@
+   const fileList = argv[fileListPosition + 1];
+   const fileListContents = await readTextFile(fileList);
+   const files = fileListContents.split(' ');
+-  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
++  // RooTitanium (8 lug 2026, riportata su 6.140): sotto qemu-user, comprimere
++  // tutti i file in parallelo (Promise.all su centinaia di brotli concorrenti)
++  // fa segfaultare node (SIGSEGV). Compressione SEQUENZIALE: piu' lenta ma
++  // stabile. (L'altra meta' della vecchia 0304, ricomprimere se manca
++  // l'output, e' stata accolta a monte.)
++  for (const filename of files.map(f => f.trim())) {
++    if (filename) {
++      await compressFile(filename);
++    }
++  }
+ }
+ 
+ main(process.argv).catch(err => {
