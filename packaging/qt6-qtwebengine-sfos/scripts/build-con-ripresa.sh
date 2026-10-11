@@ -86,6 +86,10 @@ for giro in $(seq 1 "$MAX_GIRI"); do
         # node del target sotto il qemu a 32 bit: il wasm di rollup va in OOM
         *"Cannot allocate Wasm memory"*)
             rimedio=nodeqemu ;;
+        # mksnapshot col sandbox V8 sotto il qemu a 32 bit (11 ott): PRIMA del
+        # caso snapshot, che altrimenti lo prende per "uncaught target signal"
+        *"reserve the virtual address space for the V8 sandbox"*|*"FAILED: gen/v8/embedded.S"*)
+            rimedio=mksnapshot ;;
         *"FAILED: v8_context_snapshot.bin"*|*"uncaught target signal"*)
             rimedio=snapshot ;;
         *)

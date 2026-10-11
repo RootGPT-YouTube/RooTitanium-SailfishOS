@@ -183,6 +183,41 @@ fix_nodeqemu() {
   echo "  + node via qemu-10: $(grep -c "NODEJS_EXECUTABLE=$w" "$BT/build.ninja") punti in build.ninja"
 }
 
+# ── 4d) mksnapshot col qemu dell'host (Chromium 140, 11 ott 2026) ─────────────
+# Con args.gn senza i flag V8 (vedi fix_gn: il regen di gn puo' averli tolti)
+# mksnapshot vuole riservare lo spazio del sandbox V8 e sotto il qemu a 32 bit
+# di sb2 muore: "Failed to reserve the virtual address space for the V8
+# sandbox" + signal 5. Sotto il qemu 10 a 64 bit dell'host funziona. Stesso
+# schema dello snapshot: wrapper al posto del binario, il .real accanto.
+fix_mksnapshot() {
+  [ -x "$QEMU10" ] || die "manca $QEMU10"
+  local m=$GNDIR/mksnapshot
+  [ -f "$m" ] || die "mksnapshot non trovato: $m"
+  if head -c2 "$m" 2>/dev/null | grep -q '#!'; then
+    echo "  = wrapper mksnapshot gia' installato"
+  else
+    mv -f "$m" "$m.real"
+    printf '#!/bin/sh\n# Wrapper RooTitanium: mksnapshot (%s) col qemu 10 dell host (sandbox V8 > 4 GB di indirizzi)\nexec %s -L /srv/mer/targets/%s "$(dirname "$0")/mksnapshot.real" "$@"\n' \
+      "$ARCH" "$QEMU10" "$TARGET" > "$m"
+    chmod +x "$m"
+    echo "  + wrapper qemu-10 per mksnapshot (originale: mksnapshot.real)"
+  fi
+}
+
+# ── 4e) generatore dei binding di Blink col python NATIVO (11 ott 2026) ──────
+# generate_bindings.py lancia un pool multiprocessing (~32 processi): sotto il
+# python aarch64 emulato da sb2 il pool si BLOCCA (processi vivi a 0% CPU,
+# nessun file scritto, per ore: e' cio' che ha portato all'OOM del 10 ott).
+# Lo script e' puro Python e l'output non dipende dall'arch: si usa il python
+# x86 del tooling SDK (3.11 come quello del target), che sotto sb2 gira nativo.
+fix_pynativo() {
+  local w=$BT/install/bin/py-nativo.sh f=$GNDIR/toolchain.ninja
+  printf '#!/bin/sh\n# python x86 del tooling SDK (nativo, niente qemu) per generate_bindings.py\nexec /srv/mer/toolings/SailfishOS-5.1.0.11/usr/bin/python3 "$@"\n' > "$w"
+  chmod +x "$w"
+  sed -i '/generate_bindings\.py/s#install/bin/py-sb2\.sh #install/bin/py-nativo.sh #' "$f"
+  echo "  + generate_bindings col python nativo: $(grep -c py-nativo.sh "$f") regole"
+}
+
 # ── 4) v8_context_snapshot_generator con il qemu dell'host ───────────────────
 # Il qemu 5.1 del target lo fa trappare (signal 5); il qemu 10.x dell'host lo
 # esegue senza problemi.
@@ -250,6 +285,8 @@ case "${1:-all}" in
   snapshot) echo "== v8_context_snapshot"; fix_snapshot ;;
   gnqemu)   echo "== gn col qemu dell host"; fix_gnqemu ;;
   nodeqemu) echo "== node col qemu dell host"; fix_nodeqemu ;;
+  mksnapshot) echo "== mksnapshot col qemu dell host"; fix_mksnapshot ;;
+  pynativo) echo "== binding Blink col python nativo"; fix_pynativo ;;
   qmlcache) echo "== permessi qmlcachegen"; fix_qmlcache ;;
   all)      echo "== args.gn (V8)";        fix_gn
             echo "== toolchain.ninja";     fix_rsp

@@ -38,7 +38,7 @@ echo "=== $(date '+%F %T') build $M"
 SORV=$!; trap 'kill $SORV 2>/dev/null' EXIT
 for tentativo in $(seq 1 30); do
   inizio=$(wc -l < $LOG)
-  if $E bash -c "cd $BLD && sb2 -t $T cmake --build $BLD -j12 -- -k 0"; then break; fi
+  if $E bash -c "cd $BLD && sb2 -t $T cmake --build $BLD -j${J:-12} -- -k 0"; then break; fi
   n=$(find $BLD -type f -perm 000 | wc -l)
   # errori di questo giro che NON sono di permesso = errore vero → stop
   veri=$(tail -n +$((inizio+1)) $LOG | grep -E "error:|Error copying|Unable to open" | grep -vcE "Permission denied|Error copying|Unable to open" || true)
