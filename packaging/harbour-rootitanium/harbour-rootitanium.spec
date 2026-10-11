@@ -27,6 +27,17 @@ Group:      Applications/Internet
 # aarch64 e armv7hl (dall'8 ott 2026): l'arch la decide il target sb2 di rpmbuild
 ExclusiveArch: aarch64 armv7hl
 AutoReqProv: no
+# Librerie di sistema che dal salto a Qt 6.12 / Chromium 140 il bundle non porta
+# con se': libgbm (WebEngineCore 6.140) e OpenSSL 3 (QtNetwork 6.12, openssl
+# linkato). Per soname, cosi' vale qualunque pacchetto le fornisca
+# (sul POCO: mesa-llvmpipe-libgbm, openssl-libs).
+%ifarch aarch64
+Requires: libgbm.so.1()(64bit)
+Requires: libssl.so.3()(64bit)
+%else
+Requires: libgbm.so.1
+Requires: libssl.so.3
+%endif
 
 %description
 Browser sperimentale basato su Qt6 WebEngine (Chromium 122) accelerato via

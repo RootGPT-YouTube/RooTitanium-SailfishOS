@@ -4,6 +4,7 @@
 # Uso: ./build-con-guardia.sh                  (regime di serie: J=12, soglia 85°C)
 #      J=16 SOGLIA_STOP=90 ./build-con-guardia.sh   (giro piu' spinto, presidiato)
 #
+# TARGETS_OVR="A B": costruisce solo quei target (es. senza QtPdf, che il bundle non usa).
 # - Lancia `cmake --build . -j$J` nel target 5.1 aarch64 via sfdk (build dir
 #   già configurata, vedi configure-only.sh se serve ripartire da zero).
 # - Ogni INTERVALLO s legge la temperatura VRM (sensors it8689-isa-0a40).
@@ -94,7 +95,7 @@ nota "=== Avvio build $ARCH -j${J} via sb2 (cross-gcc NATIVO) con guardia VRM (r
 # emulati (leggeri); i compile vanno nativi. Eseguito come utente mersdk (owner
 # dei target sb2). J = concorrenza allineata ai core concessi (RAM piu sicura coi
 # compile nativi che possono usare fino a ~4 GB ciascuno).
-docker exec -u mersdk "$ENGINE" bash -lc "cd $BUILDDIR && sb2 -t $TARGET cmake --build . -j$J --verbose" \
+docker exec -u mersdk "$ENGINE" bash -lc "cd $BUILDDIR && sb2 -t $TARGET cmake --build . -j$J --verbose ${TARGETS_OVR:+--target $TARGETS_OVR}" \
     >"$BUILDLOG" 2>&1 &
 BUILD_PID=$!
 

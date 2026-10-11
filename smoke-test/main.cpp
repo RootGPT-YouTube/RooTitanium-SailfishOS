@@ -712,6 +712,18 @@ int main(int argc, char **argv)
     // launcher item. Insieme evitano la cover-segnaposto fantasma all'avvio.
     prctl(PR_SET_NAME, (unsigned long)"harbour-rootitanium", 0, 0, 0);
 
+    // Ripiego rendering software: se accanto al binario esiste il file NOGPU,
+    // Chromium non usa la GPU. Serve col motore 6.140 sui driver senza
+    // EGL_EXT_image_dma_buf_import (Mali/libhybris): la pagina via GPU esce
+    // nera finche' il passaggio texture Chromium->Qt non e' risolto.
+    if (QFile::exists(QFileInfo(QStringLiteral("/proc/self/exe")).canonicalPath()
+                      + QStringLiteral("/NOGPU"))) {
+        QByteArray flags = qgetenv("QTWEBENGINE_CHROMIUM_FLAGS");
+        flags += " --disable-gpu --disable-gpu-compositing";
+        qputenv("QTWEBENGINE_CHROMIUM_FLAGS", flags);
+        qInfo("[rt] NOGPU presente: rendering software");
+    }
+
     // task 1.3 §E, terzo toggle: "Isola lo storage di terze parti" è un flag di
     // Chromium e i flag si leggono solo all'avvio. Qui si fonde nella variabile
     // che il launcher ha già composto, PRIMA di initialize(). Fusione e non
@@ -761,6 +773,10 @@ int main(int argc, char **argv)
         }
     }
 
+    // Da Qt 6.12 initialize() e' vuota (deprecata): non accende piu' i contesti
+    // GL condivisi. Senza, la texture che Chromium disegna non e' visibile dal
+    // contesto di Qt e la pagina esce NERA (Mali senza dma_buf import, POCO).
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
     QtWebEngineQuick::initialize();
     QGuiApplication app(argc, argv);
     // app_id Wayland = basename del .desktop INSTALLATO (harbour-rootitanium.desktop):

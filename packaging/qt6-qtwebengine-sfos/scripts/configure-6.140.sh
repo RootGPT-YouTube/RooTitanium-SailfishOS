@@ -6,6 +6,8 @@
 # una cartella per arch, nel target sb2 clonato con Qt 6.12 (…-qt612).
 # NINJAFLAGS (default -j10) finisce in build.ninja e limita il ninja INTERNO di
 # Chromium: senza, usa nproc dell host +2 (=34) e satura i 31 GB (OOM 10 ott).
+# QtPdf spento di default (QTPDF=ON per riaccenderlo): il bundle non lo usa e
+# il suo albero Chromium separato sono ~45.000 oggetti in piu (11 ott).
 # Stesse feature della 6.8.4 (configure-only.sh); Rust spento esplicitamente.
 # Dopo il configure: BT=<build> SRCT=<sorgenti> GNSUB_OVR=Release/<cpu>
 #   TARGET_OVR=<target> ./apply-build-fixes.sh gn
@@ -31,7 +33,7 @@ docker exec -u mersdk sailfish-sdk-build-engine_RootGPT bash -c "cd $BLD && NINJ
   -DINSTALL_PLUGINSDIR=/usr/$L/qt6/plugins -DINSTALL_QMLDIR=/usr/$L/qt6/qml \
   -DINSTALL_SYSCONFDIR=/etc/xdg -DINSTALL_TRANSLATIONSDIR=/usr/share/qt6/translations \
   -DQT_GENERATE_SBOM=OFF -DQT_DISABLE_RPATH=TRUE \
-  -DFEATURE_qtpdf_build=ON -DFEATURE_webengine_developer_build=OFF \
+  -DFEATURE_qtpdf_build=${QTPDF:-OFF} -DFEATURE_webengine_developer_build=OFF \
   -DFEATURE_webengine_embedded_build=OFF -DFEATURE_webengine_extensions=ON \
   -DFEATURE_webengine_kerberos=OFF -DFEATURE_webengine_native_spellchecker=OFF \
   -DFEATURE_webengine_printing_and_pdf=ON -DFEATURE_webengine_proprietary_codecs=ON \

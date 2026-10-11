@@ -142,7 +142,15 @@ fix_gnqemu() {
   # ("init_fs_encoding"). Uno script NATIVO fuori dal sysroot rientra invece
   # nella mappatura di sb2 (LD_PRELOAD sopravvive al passaggio) e trova il
   # python giusto e i pkg-config del target (verificato: Qt6Core 6.12.0).
-  printf '#!/bin/sh\nexec /usr/bin/python3 "$@"\n' > "$BT/install/bin/py-sb2.sh"
+  # generate_bindings.py va col python NATIVO del tooling: sotto quello emulato
+  # il suo pool multiprocessing si blocca senza errori (vedi fix_pynativo).
+  cat > "$BT/install/bin/py-sb2.sh" <<'PYSB2'
+#!/bin/sh
+case "$1" in
+  */generate_bindings.py) exec /srv/mer/toolings/SailfishOS-5.1.0.11/usr/bin/python3 "$@" ;;
+esac
+exec /usr/bin/python3 "$@"
+PYSB2
   chmod +x "$BT/install/bin/py-sb2.sh"
   # il wrapper si (ri)scrive se manca o e' di una versione senza ponte
   if head -c2 "$g" 2>/dev/null | grep -q '#!' && grep -q py-sb2 "$g"; then
@@ -282,6 +290,10 @@ fix_qmlcache() {
 case "${1:-all}" in
   gn)       echo "== args.gn (V8)";        fix_gn ;;
   ninja)    echo "== toolchain.ninja";     fix_rsp; echo "== build.ninja (link)"; fix_link ;;
+  # ⚠️ 11 ott: su una build GIA' avviata usare SOLO "link". fix_rsp cambia la
+  # riga di comando delle azioni con rspfile → ninja le rifa' e a cascata
+  # ricompila ~11.000 passi (successo sul motore aarch64 6.140).
+  link)     echo "== build.ninja (link)";  fix_link ;;
   snapshot) echo "== v8_context_snapshot"; fix_snapshot ;;
   gnqemu)   echo "== gn col qemu dell host"; fix_gnqemu ;;
   nodeqemu) echo "== node col qemu dell host"; fix_nodeqemu ;;
