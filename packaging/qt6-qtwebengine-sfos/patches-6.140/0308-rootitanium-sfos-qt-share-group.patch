@@ -1,13 +1,29 @@
 RooTitanium/SFOS: contesti GL di Chromium nello share group di Qt (come la 6.8)
 
-Proposta di Fable (11 ott). Chromium 140 non ha piu' GetInProcessGpuShareGroup:
+Proposta di Fable (11 ott), completata e COLLAUDATA sul POCO (Mali-G57, libhybris):
 GLOzoneEGLQt::CreateGLContext aggancia al GLShareGroup un contesto finto con
 l'handle EGL del contesto globale Qt (da gl_share_context_qt della 6.8.4).
-Nessuna estensione richiesta. Attivo solo con RT_SHAREGROUP=1 (collaudo).
+Ai contesti del gruppo agganciato si tolgono robust_buffer_access e
+lose_context_on_reset: EGL vuole la STESSA strategia di reset tra contesti
+condivisi, altrimenti EGL_BAD_MATCH (quello di Qt non la chiede).
+I gruppi agganciati si tracciano per puntatore (GetHandle() puo' dare
+l'handle di un contesto Chromium: WebGL finiva in EGL_BAD_MATCH).
+Attiva di default; RT_NOSHAREGROUP=1 la spegne. Se il driver rifiuta il
+contesto condiviso si sgancia Qt e l'output device ripiega sull'EGLImage (0307).
+Nessuna estensione richiesta: vale per Adreno/Mali/PowerVR.
 
 --- a/src/core/ozone/gl_ozone_qt.h
 +++ b/src/core/ozone/gl_ozone_qt.h
-@@ -63,6 +63,11 @@
+@@ -59,10 +59,20 @@
+     bool LoadGLES2Bindings(const gl::GLImplementationParts &implementation) override;
+ };
+ 
++// RooTitanium/SFOS (patch 0308): true se i contesti GL di Chromium sono nello
++// share group del contesto globale di Qt (l'output device usa allora l'ID nudo
++// della texture invece dell'EGLImage)
++bool sfosQtShareGroupActive();
++
+ class GLOzoneEGLQt : public GLOzoneQt
  {
  public:
      void ShutdownGL(gl::GLDisplay *display) override;
@@ -21,13 +37,15 @@ Nessuna estensione richiesta. Attivo solo con RT_SHAREGROUP=1 (collaudo).
      bool LoadGLES2Bindings(const gl::GLImplementationParts &implementation) override;
 --- a/src/core/ozone/gl_ozone_qt.cpp
 +++ b/src/core/ozone/gl_ozone_qt.cpp
-@@ -13,9 +13,16 @@
+@@ -13,9 +13,18 @@
  #include <QtCore/private/qconfig_p.h>
  #include <QtGui/qguiapplication.h>
  #include <QtGui/qopenglcontext.h>
 +#if QT_CONFIG(egl)
 +#include <QtGui/qopenglcontext_platform.h>
 +#endif
++#include <atomic>
++#include <set>
 +#include <vector>
  
  #include "ui/base/ozone_buildflags.h"
@@ -38,10 +56,19 @@ Nessuna estensione richiesta. Attivo solo con RT_SHAREGROUP=1 (collaudo).
  #include "ui/gl/gl_display.h"
  #include "ui/gl/gl_surface.h"
  #include "ui/gl/gl_utils.h"
-@@ -158,6 +165,62 @@
+@@ -158,6 +167,100 @@
      return true;
  }
  
++namespace {
++std::atomic<bool> s_sfosShareActive{ false };
++} // namespace
++
++bool sfosQtShareGroupActive()
++{
++    return s_sfosShareActive.load();
++}
++
 +namespace {
 +// RooTitanium/SFOS (patch 0308, da gl_share_context_qt della 6.8.4): contesto
 +// "finto" che porta nel GLShareGroup di Chromium l'handle EGL del contesto
@@ -78,21 +105,50 @@ Nessuna estensione richiesta. Attivo solo con RT_SHAREGROUP=1 (collaudo).
 +                                                          const gl::GLContextAttribs &attribs)
 +{
 +#if QT_CONFIG(opengl) && QT_CONFIG(egl)
-+    static const bool enabled = qEnvironmentVariableIsSet("RT_SHAREGROUP");
++    // attivo di default; RT_NOSHAREGROUP=1 lo spegne (diagnosi)
++    static const bool enabled = !qEnvironmentVariableIsSet("RT_NOSHAREGROUP");
++    static void *qtHandle = nullptr;
++    static std::vector<scoped_refptr<gl::GLContext>> keepAlive;
++    // gruppi agganciati a Qt: GetHandle() puo' restituire l'handle di un
++    // contesto Chromium gia' condiviso, quindi non si confrontano gli handle
++    static std::set<gl::GLShareGroup *> hooked;
 +    if (enabled && share_group && !share_group->GetHandle()) {
 +        QOpenGLContext *qtContext = QOpenGLContext::globalShareContext();
 +        auto *egl = qtContext ? qtContext->nativeInterface<QNativeInterface::QEGLContext>()
 +                              : nullptr;
 +        if (egl && egl->nativeContext()) {
 +            // tenuto vivo quanto il processo: il gruppo ne guarda solo l'handle
-+            static std::vector<scoped_refptr<gl::GLContext>> keepAlive;
-+            keepAlive.push_back(base::MakeRefCounted<QtShareGLContext>(
-+                    share_group, static_cast<void *>(egl->nativeContext())));
++            qtHandle = static_cast<void *>(egl->nativeContext());
++            hooked.insert(share_group);
++            keepAlive.push_back(base::MakeRefCounted<QtShareGLContext>(share_group, qtHandle));
 +            qWarning("SFOS: share group di Chromium agganciato al contesto Qt (%p)",
 +                     static_cast<void *>(egl->nativeContext()));
 +        } else {
 +            qWarning("SFOS: RT_SHAREGROUP senza contesto globale Qt EGL: niente aggancio");
 +        }
++    }
++    if (enabled && share_group && hooked.count(share_group)) {
++        // EGL: due contesti condivisi devono avere la STESSA strategia di
++        // reset, altrimenti eglCreateContext da' EGL_BAD_MATCH (provato sul
++        // POCO). Il contesto di Qt non chiede robustezza: la si toglie anche
++        // a quelli di Chromium del gruppo condiviso.
++        gl::GLContextAttribs shared = attribs;
++        shared.lose_context_on_reset = false;
++        shared.robust_buffer_access = false;
++        scoped_refptr<gl::GLContext> ctx =
++                GLOzoneEGL::CreateGLContext(share_group, compatible_surface, shared);
++        if (ctx) {
++            s_sfosShareActive = true;
++            return ctx;
++        }
++        // il driver rifiuta la condivisione col contesto di Qt: si sgancia Qt
++        // dal gruppo (il distruttore lo toglie) e si torna al contesto isolato;
++        // l'output device ripiega sull'EGLImage
++        qWarning("SFOS: contesto condiviso con Qt rifiutato dal driver, ripiego senza");
++        s_sfosShareActive = false;
++        qtHandle = nullptr;
++        hooked.clear();
++        keepAlive.clear();
 +    }
 +#endif
 +    return GLOzoneEGL::CreateGLContext(share_group, compatible_surface, attribs);
