@@ -1926,12 +1926,27 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
         if (t === T.Notifications)          return cfgPermNotif
         return true   // altri tipi non coperti dai master → flusso normale
     }
+    property var permBlockedToastAt: ({})   // ultimo avviso "bloccato" per tipo di permesso
     function showPermission(p) {
         // Interruttore generale spento: si nega SENZA salvare la decisione per il
         // sito (reset subito dopo il deny). Prima il rifiuto restava nei «Permessi
         // siti» come se l'avesse scelto l'utente, e riaccendendo l'interruttore il
         // sito restava bloccato finché non si faceva «Revoca» a mano.
-        if (!permMasterAllows(p.permissionType)) { try { p.deny(); p.reset() } catch(e) {} return }
+        if (!permMasterAllows(p.permissionType)) {
+            try { p.deny(); p.reset() } catch(e) {}
+            // Il rifiuto era muto: il sito (es. ChatGPT voce) richiedeva di nuovo e
+            // all'utente sembrava un loop della richiesta. Ora si dice cosa e' spento
+            // e dove riattivarlo (al massimo una volta ogni 10 s per tipo).
+            var now = Date.now(), k = "" + p.permissionType
+            if (!(permBlockedToastAt[k] > now - 10000)) {
+                permBlockedToastAt[k] = now
+                toast.show(win.t("Bloccato da RooTitanium: ", "Blocked by RooTitanium: ")
+                           + permLabel(p.permissionType).toLowerCase()
+                           + win.t(". Attivalo in Impostazioni › Permessi App",
+                                   ". Enable it in Settings › App Permissions"))
+            }
+            return
+        }
         permPending = p
         permDlg.host = permHost(p)
         permDlg.msg = permLabel(p.permissionType)
@@ -3877,13 +3892,19 @@ ${histCss}
     Rectangle {
         id: toast
         property string msg: ""
-        function show(m) { msg = m; opacity = 1; toastTimer.restart() }
+        // messaggi lunghi: si va a capo (prima il testo usciva dai bordi) e
+        // restano a schermo in proporzione alla lunghezza
+        function show(m) { msg = m; opacity = 1; toastTimer.interval = Math.max(1900, m.length * 55); toastTimer.restart() }
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom; anchors.bottomMargin: 44 * win.u
-        width: tt.paintedWidth + 44 * win.u; height: 60 * win.u; radius: 30 * win.u
+        width: Math.min(tt.implicitWidth, parent.width - 76 * win.u) + 44 * win.u
+        height: Math.max(60 * win.u, tt.paintedHeight + 28 * win.u)
+        radius: Math.min(30 * win.u, height / 2)
         color: "#e6000000"; opacity: 0; visible: opacity > 0; z: 200
         Behavior on opacity { NumberAnimation { duration: 250 } }
-        Text { id: tt; anchors.centerIn: parent; text: toast.msg; color: "white"; font.pixelSize: 18 * win.u }
+        Text { id: tt; anchors.centerIn: parent; width: toast.width - 44 * win.u
+               text: toast.msg; color: "white"; font.pixelSize: 18 * win.u
+               wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
         Timer { id: toastTimer; interval: 1900; onTriggered: toast.opacity = 0 }
     }
 
