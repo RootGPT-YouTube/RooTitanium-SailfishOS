@@ -928,6 +928,99 @@ Window {
     // carica una pagina interna su una view marcandola (localPage): loadHtml
     // non tocca la proprietà url, quindi timer/refresh Download e guardia
     // Condividi devono basarsi su questo, non su view.url
+    // link sentinella delle pagine interne (*.local), chiamata da onNavigationRequested
+    // DOPO il reject(): vedi il commento la'.
+    function internalNav(view, u) {
+        if (!view) return
+        if (u.indexOf("https://history.local/") === 0) {
+            if (u === "https://history.local/clear") win.histClear()
+            win.loadInternal(view, "history", win.historyHtml(), "https://history.local/")
+        } else if (u.indexOf("https://bookmarks.local/") === 0) {
+            // delhome = togli dalla HOME (il segnalibro resta);
+            // del = cancella dalla raccolta (solo pagina Segnalibri);
+            // home?v= = toggle presenza in HOME dalla pagina Segnalibri
+            var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
+            var mHome = u.match(/^https:\/\/bookmarks\.local\/home\?v=([01])&u=(.*)$/)
+            var mMove = u.match(/^https:\/\/bookmarks\.local\/move\?d=(up|dn)&u=(.*)$/)
+            if (mDel && mDel[1] === "delhome") {
+                win.bmSetHome(decodeURIComponent(mDel[2]), 0)
+                win.loadInternal(view, "home", win.homeHtml(), "about:blank")
+            } else {
+                if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
+                else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
+                else if (mMove) win.bmMove(decodeURIComponent(mMove[2]), mMove[1] === "up")
+                win.loadInternal(view, "bookmarks", win.bookmarksHtml(), "https://bookmarks.local/")
+            }
+        } else if (u.indexOf("https://downloads.local/") === 0) {
+            var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
+            var mCanc = u.match(/^https:\/\/downloads\.local\/cancel\?id=(.*)$/)
+            if (mOpen) {
+                // niente reload: l'app handler si apre sopra la pagina
+                var de = win.dlFind(mOpen[1])
+                if (!(de && typeof rtNative !== "undefined" && rtNative.openFile(de.path)))
+                    toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
+            } else {
+                if (mCanc) win.dlCancel(mCanc[1])
+                else if (u === "https://downloads.local/clear") win.dlClear()
+                win.loadInternal(view, "downloads", win.downloadsHtml(), "https://downloads.local/")
+            }
+        } else if (u.indexOf("https://settings.local/") === 0) {
+            // set?k=&v= dai toggle/radio; sethome?u= dal form GET
+            // (spazi codificati come +); cleardata → conferma
+            // inline → cleardata2 esegue
+            // [a-z0-9]+ e non [a-z]+: le chiavi dei toggle privacy contengono cifre
+            // (cookies3p, storage3p) e con la vecchia regex l'impostazione
+            // veniva ignorata IN SILENZIO — trovato al collaudo del 21 lug
+            var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
+            var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
+            // motori personalizzati (task 2.5 #1): form GET name+url, ✕ per id
+            var mAddS  = u.match(/^https:\/\/settings\.local\/addsearch\?n=([^&]*)&u=(.*)$/)
+            var mDelS  = u.match(/^https:\/\/settings\.local\/delsearch\?id=(c[a-z0-9]+)$/)
+            var formDec = function(x) { try { return decodeURIComponent(x.replace(/\+/g, "%20")) } catch(e) { return "" } }
+            win.settingsClearArm = (u === "https://settings.local/cleardata")
+            if (mSet) {
+                win.applySetting(mSet[1], mSet[2])
+                // task 1.4: se la riga sa aggiornarsi da sola, niente
+                // reload → la vista resta ferma sull'impostazione toccata
+                var liveJs = win.settingsLiveJs(mSet[1], mSet[2])
+                if (liveJs.length) { view.runJavaScript(liveJs); return }
+            }
+            else if (mSHome) {
+                win.applySetting("homepage", decodeURIComponent(mSHome[1].replace(/\+/g, "%20")))
+                toast.show(win.cfgHome.length ? "Pagina iniziale salvata" : "Pagina iniziale: HOME di RooTitanium")
+            }
+            else if (mAddS) win.addCustomEngine(formDec(mAddS[1]), formDec(mAddS[2]))
+            else if (mDelS) win.removeCustomEngine(mDelS[1])
+            else if (u === "https://settings.local/cleardata2") win.clearBrowsingData()
+            win.loadInternal(view, "settings", win.settingsHtml(), "https://settings.local/")
+        } else if (u.indexOf("https://permissions.local/") === 0) {
+            // reset?o=<origin>&t=<type>: revoca (reset → il sito richiederà)
+            var mPerm = u.match(/^https:\/\/permissions\.local\/reset\?o=([^&]*)&t=(\d+)$/)
+            if (mPerm) win.permReset(decodeURIComponent(mPerm[1]), parseInt(mPerm[2]))
+            win.loadInternal(view, "permissions", win.permissionsHtml(), "https://permissions.local/")
+        } else if (u.indexOf("https://reader.local/") === 0) {
+            // font?d= cambia il corpo LIVE (niente reload: history pulita
+            // e scroll intatto) e lo persiste; close torna all'articolo
+            var mFont = u.match(/^https:\/\/reader\.local\/font\?d=(up|dn)$/)
+            if (view.localPage !== "reader") {
+                // sentinelle valide solo DENTRO il reader: un sito
+                // esterno che navigasse qui non deve toccare nulla
+            } else if (mFont) {
+                win.cfgReaderPx = Math.max(15, Math.min(27, win.cfgReaderPx + (mFont[1] === "up" ? 2 : -2)))
+                win.kvSet("set_readerpx", "" + win.cfgReaderPx)
+                view.runJavaScript("document.documentElement.style.fontSize='" + win.cfgReaderPx + "px'")
+            } else if (u === "https://reader.local/close") {
+                view.goBack()
+            }
+        } else if (u.indexOf("https://permsapp.local/") === 0) {
+            var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
+            if (mAp) win.applySetting(mAp[1], mAp[2])
+            win.loadInternal(view, "permsapp", win.permsAppHtml(), "https://permsapp.local/")
+        } else if (u.indexOf("https://about.local/") === 0) {
+            win.loadInternal(view, "about", win.aboutHtml(), "https://about.local/")
+        }
+    }
+
     function loadInternal(view, kind, html, base) {
         if (!view) return
         view.localPage = kind
@@ -2968,101 +3061,15 @@ ${histCss}
                     }
                     // link interni cronologia (la HOME/vista sono loadHtml: host fittizio .local)
                     onNavigationRequested: function(request) {
+                        // Chromium 140 (QtWebEngine 6.140): agire sulla vista DENTRO il
+                        // gestore fa fallire un controllo interno (SIGTRAP, crash degli
+                        // interruttori in Impostazioni). Qui solo reject(); il lavoro
+                        // si fa dopo, a richiesta chiusa (Qt.callLater).
                         var u = "" + request.url
-                        if (u.indexOf("https://history.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            if (u === "https://history.local/clear") win.histClear()
-                            win.loadInternal(this, "history", win.historyHtml(), "https://history.local/")
-                        } else if (u.indexOf("https://bookmarks.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            // delhome = togli dalla HOME (il segnalibro resta);
-                            // del = cancella dalla raccolta (solo pagina Segnalibri);
-                            // home?v= = toggle presenza in HOME dalla pagina Segnalibri
-                            var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
-                            var mHome = u.match(/^https:\/\/bookmarks\.local\/home\?v=([01])&u=(.*)$/)
-                            var mMove = u.match(/^https:\/\/bookmarks\.local\/move\?d=(up|dn)&u=(.*)$/)
-                            if (mDel && mDel[1] === "delhome") {
-                                win.bmSetHome(decodeURIComponent(mDel[2]), 0)
-                                win.loadInternal(this, "home", win.homeHtml(), "about:blank")
-                            } else {
-                                if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
-                                else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
-                                else if (mMove) win.bmMove(decodeURIComponent(mMove[2]), mMove[1] === "up")
-                                win.loadInternal(this, "bookmarks", win.bookmarksHtml(), "https://bookmarks.local/")
-                            }
-                        } else if (u.indexOf("https://downloads.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
-                            var mCanc = u.match(/^https:\/\/downloads\.local\/cancel\?id=(.*)$/)
-                            if (mOpen) {
-                                // niente reload: l'app handler si apre sopra la pagina
-                                var de = win.dlFind(mOpen[1])
-                                if (!(de && typeof rtNative !== "undefined" && rtNative.openFile(de.path)))
-                                    toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
-                            } else {
-                                if (mCanc) win.dlCancel(mCanc[1])
-                                else if (u === "https://downloads.local/clear") win.dlClear()
-                                win.loadInternal(this, "downloads", win.downloadsHtml(), "https://downloads.local/")
-                            }
-                        } else if (u.indexOf("https://settings.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            // set?k=&v= dai toggle/radio; sethome?u= dal form GET
-                            // (spazi codificati come +); cleardata → conferma
-                            // inline → cleardata2 esegue
-                            // [a-z0-9]+ e non [a-z]+: le chiavi dei toggle privacy contengono cifre
-                            // (cookies3p, storage3p) e con la vecchia regex l'impostazione
-                            // veniva ignorata IN SILENZIO — trovato al collaudo del 21 lug
-                            var mSet   = u.match(/^https:\/\/settings\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
-                            var mSHome = u.match(/^https:\/\/settings\.local\/sethome\?u=(.*)$/)
-                            // motori personalizzati (task 2.5 #1): form GET name+url, ✕ per id
-                            var mAddS  = u.match(/^https:\/\/settings\.local\/addsearch\?n=([^&]*)&u=(.*)$/)
-                            var mDelS  = u.match(/^https:\/\/settings\.local\/delsearch\?id=(c[a-z0-9]+)$/)
-                            var formDec = function(x) { try { return decodeURIComponent(x.replace(/\+/g, "%20")) } catch(e) { return "" } }
-                            win.settingsClearArm = (u === "https://settings.local/cleardata")
-                            if (mSet) {
-                                win.applySetting(mSet[1], mSet[2])
-                                // task 1.4: se la riga sa aggiornarsi da sola, niente
-                                // reload → la vista resta ferma sull'impostazione toccata
-                                var liveJs = win.settingsLiveJs(mSet[1], mSet[2])
-                                if (liveJs.length) { this.runJavaScript(liveJs); return }
-                            }
-                            else if (mSHome) {
-                                win.applySetting("homepage", decodeURIComponent(mSHome[1].replace(/\+/g, "%20")))
-                                toast.show(win.cfgHome.length ? "Pagina iniziale salvata" : "Pagina iniziale: HOME di RooTitanium")
-                            }
-                            else if (mAddS) win.addCustomEngine(formDec(mAddS[1]), formDec(mAddS[2]))
-                            else if (mDelS) win.removeCustomEngine(mDelS[1])
-                            else if (u === "https://settings.local/cleardata2") win.clearBrowsingData()
-                            win.loadInternal(this, "settings", win.settingsHtml(), "https://settings.local/")
-                        } else if (u.indexOf("https://permissions.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            // reset?o=<origin>&t=<type>: revoca (reset → il sito richiederà)
-                            var mPerm = u.match(/^https:\/\/permissions\.local\/reset\?o=([^&]*)&t=(\d+)$/)
-                            if (mPerm) win.permReset(decodeURIComponent(mPerm[1]), parseInt(mPerm[2]))
-                            win.loadInternal(this, "permissions", win.permissionsHtml(), "https://permissions.local/")
-                        } else if (u.indexOf("https://reader.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            // font?d= cambia il corpo LIVE (niente reload: history pulita
-                            // e scroll intatto) e lo persiste; close torna all'articolo
-                            var mFont = u.match(/^https:\/\/reader\.local\/font\?d=(up|dn)$/)
-                            if (this.localPage !== "reader") {
-                                // sentinelle valide solo DENTRO il reader: un sito
-                                // esterno che navigasse qui non deve toccare nulla
-                            } else if (mFont) {
-                                win.cfgReaderPx = Math.max(15, Math.min(27, win.cfgReaderPx + (mFont[1] === "up" ? 2 : -2)))
-                                win.kvSet("set_readerpx", "" + win.cfgReaderPx)
-                                this.runJavaScript("document.documentElement.style.fontSize='" + win.cfgReaderPx + "px'")
-                            } else if (u === "https://reader.local/close") {
-                                this.goBack()
-                            }
-                        } else if (u.indexOf("https://permsapp.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            var mAp = u.match(/^https:\/\/permsapp\.local\/set\?k=([a-z0-9]+)&v=([a-z0-9]*)$/)
-                            if (mAp) win.applySetting(mAp[1], mAp[2])
-                            win.loadInternal(this, "permsapp", win.permsAppHtml(), "https://permsapp.local/")
-                        } else if (u.indexOf("https://about.local/") === 0) {
-                            request.action = WebEngineNavigationRequest.IgnoreRequest
-                            win.loadInternal(this, "about", win.aboutHtml(), "https://about.local/")
+                        if (/^https:\/\/(history|bookmarks|downloads|settings|permissions|reader|permsapp|about)\.local\//.test(u)) {
+                            request.reject()
+                            var view = this
+                            Qt.callLater(function() { win.internalNav(view, u) })
                         }
                     }
                     // richiesta permesso di un sito (geoloc/notifiche/camera/mic/…):
