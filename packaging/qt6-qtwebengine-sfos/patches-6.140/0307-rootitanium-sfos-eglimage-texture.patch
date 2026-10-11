@@ -1,6 +1,9 @@
 RooTitanium/SFOS: consegna del frame Chromium->Qt senza dma_buf
 
-Lato output device. Thread GPU: MakeCurrent del contesto di Skia + glFinish.
+Lato output device. Thread GPU: MakeCurrent del contesto di Skia; con lo share
+group un fence EGL (eglCreateSyncKHR) che Qt aspetta con eglWaitSyncKHR (ripiego
+client wait; senza fence glFinish; RT_GLFINISH=1 forza glFinish). Misurato: CPU
+uguale, frame persi uguali o meno.
 Se lo share group con Qt e' attivo (0308) Qt usa l'ID nudo della texture
 (patch shared-gl-texture di Rinigus) con sampler LINEAR/CLAMP; altrimenti
 ripiego: EGLImage (EGL_KHR_gl_texture_2D_image) ricreata a ogni frame
