@@ -1,27 +1,30 @@
-RooTitanium/SFOS: frame di Chromium a Qt via EGLImage (EGL_KHR_gl_texture_2D_image)
+RooTitanium/SFOS: consegna del frame Chromium->Qt senza dma_buf
 
-Sui driver Android via libhybris (Mali-G57 del POCO M4 Pro) manca
-EGL_EXT_image_dma_buf_import e da Chromium 140 non esiste piu' il share group
-in-process con Qt (GetInProcessGpuShareGroup): la texture del frame vive in
-un contesto GL che Qt non vede e la pagina esce nera. Sul thread GPU la si
-esporta come EGLImage (+ glFinish), lato Qt la si lega a una texture propria.
-Va sopra qtwebengine-sfos-shared-gl-texture-compositor.patch (Rinigus).
-
-STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagina sempre nera).
-
+Lato output device. Thread GPU: MakeCurrent del contesto di Skia; con lo share group
+fence EGL (eglCreateSyncKHR) che Qt aspetta con eglWaitSyncKHR (ripiego: client wait;
+senza fence: glFinish; RT_GLFINISH=1 forza glFinish). Misurato: CPU uguale, frame persi
+uguali o meno.
+Se lo share group con Qt e' attivo (0308) Qt usa l'ID nudo della texture
+(patch shared-gl-texture di Rinigus) con sampler LINEAR/CLAMP; altrimenti
+ripiego: EGLImage (EGL_KHR_gl_texture_2D_image) ricreata a ogni frame
+(RT_EGLIMG_REUSE=1 = riuso). Sonde pixel RT_GLPROBE=1 (righe RTPROBE).
+Sul POCO il ripiego EGLImage da' NERO: serve la 0308.
 --- a/src/core/compositor/native_skia_output_device.h
 +++ b/src/core/compositor/native_skia_output_device.h
-@@ -117,6 +117,9 @@
+@@ -117,6 +117,12 @@
          sk_sp<SkImage> skImage();
  #if BUILDFLAG(IS_OZONE)
          scoped_refptr<gfx::NativePixmap> nativePixmap();
 +        // RooTitanium/SFOS: EGLImage della texture GL del frame, creata sul
 +        // thread GPU, per i driver senza dma_buf import (vedi patch 0307).
 +        void *eglImage() const;
++        // fence EGL del frame (share group): lo prende Qt, lo aspetta e lo
++        // distrugge; nullptr = niente fence (si e' gia' fatto glFinish)
++        void *takeEglSync(void **display);
  #elif defined(Q_OS_WIN)
          std::optional<gl::DCLayerOverlayImage> overlayImage() const;
  #elif defined(Q_OS_MACOS)
-@@ -152,6 +155,11 @@
+@@ -152,6 +158,13 @@
  
          mutable QMutex m_skImageMutex;
          sk_sp<SkImage> m_cachedSkImage;
@@ -29,6 +32,8 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +        void *m_eglImage = nullptr;     // EGLImageKHR (protetta da m_skImageMutex)
 +        void *m_eglDisplay = nullptr;   // EGLDisplay con cui e' stata creata
 +        unsigned m_eglImageTexture = 0; // texture GL di origine
++        void *m_eglSync = nullptr;      // EGLSyncKHR del frame (share group)
++        void *m_eglSyncDisplay = nullptr;
 +#endif
      };
  
@@ -47,7 +52,7 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
  
  #if BUILDFLAG(ENABLE_VULKAN)
  #include "ui/base/ozone_buildflags.h"
-@@ -254,6 +259,13 @@
+@@ -254,6 +259,16 @@
      if (m_scopedSkiaWriteAccess)
          endWriteSkia(false);
  
@@ -56,12 +61,15 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +    if (m_eglImage)
 +        eglDestroyImageKHR(static_cast<EGLDisplay>(m_eglDisplay),
 +                           static_cast<EGLImageKHR>(m_eglImage));
++    if (m_eglSync)
++        eglDestroySyncKHR(static_cast<EGLDisplay>(m_eglSyncDisplay),
++                          static_cast<EGLSyncKHR>(m_eglSync));
 +#endif
 +
  #if BUILDFLAG(ENABLE_VULKAN)
      if (m_vkFence != VK_NULL_HANDLE) {
          auto *vkfp = gpu::GetVulkanFunctionPointers();
-@@ -391,6 +403,46 @@
+@@ -391,6 +406,98 @@
      }
  
      m_cachedSkImage = m_scopedSkiaReadAccess->CreateSkImage(m_parent->m_contextState.get());
@@ -76,9 +84,20 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +        && m_parent->m_contextState->gr_context_type() == gpu::GrContextType::kGL) {
 +        GrBackendTexture backendTexture;
 +        GrGLTextureInfo glInfo;
-+        if (SkImages::GetBackendTextureFromImage(m_cachedSkImage, &backendTexture, false)
++        // l'ID della texture vale nel contesto di Skia: va reso corrente QUELLO,
++        // non uno qualsiasi dei contesti che Chromium alterna su questo thread
++        if (m_parent->m_contextState->MakeCurrent(nullptr, /*needs_gl=*/true)
++            && SkImages::GetBackendTextureFromImage(m_cachedSkImage, &backendTexture, false)
 +            && GrBackendTextures::GetGLTextureInfo(backendTexture, &glInfo)) {
-+            if (!m_eglImage || m_eglImageTexture != glInfo.fID) {
++            // A1 (analisi Sonnet): alcuni driver Android trattano l'EGLImage da
++            // texture come istantanea o la staccano quando Skia riscrive la
++            // texture: la si ricrea a OGNI frame. RT_EGLIMG_REUSE=1 = riuso.
++            static const bool reuse = qEnvironmentVariableIsSet("RT_EGLIMG_REUSE");
++            // 0308: con lo share group (RT_SHAREGROUP) l'ID vale gia' lato Qt:
++            // niente EGLImage, resta solo la sincronizzazione (glFinish sotto)
++            if (ui::sfosQtShareGroupActive()) {
++                // nessuna EGLImage
++            } else if (!m_eglImage || m_eglImageTexture != glInfo.fID || !reuse) {
 +                EGLDisplay display = eglGetCurrentDisplay();
 +                if (m_eglImage)
 +                    eglDestroyImageKHR(static_cast<EGLDisplay>(m_eglDisplay),
@@ -101,14 +120,55 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +                    m_eglImageTexture = glInfo.fID;
 +                }
 +            }
-+            glFinish();
++            // share group: fence EGL al posto di glFinish (il thread GPU non
++            // aspetta la GPU; aspetta Qt, lato GPU con eglWaitSyncKHR).
++            // RT_GLFINISH=1 = vecchio comportamento, per confronto.
++            static const bool forceFinish = qEnvironmentVariableIsSet("RT_GLFINISH");
++            bool fenced = false;
++            if (ui::sfosQtShareGroupActive() && !forceFinish) {
++                EGLDisplay display = eglGetCurrentDisplay();
++                if (m_eglSync)
++                    eglDestroySyncKHR(static_cast<EGLDisplay>(m_eglSyncDisplay),
++                                      static_cast<EGLSyncKHR>(m_eglSync));
++                EGLSyncKHR sync = eglCreateSyncKHR(display, EGL_SYNC_FENCE_KHR, nullptr);
++                if (sync != EGL_NO_SYNC_KHR) {
++                    glFlush();   // il fence deve arrivare alla GPU
++                    m_eglSync = sync;
++                    m_eglSyncDisplay = display;
++                    fenced = true;
++                } else {
++                    m_eglSync = nullptr;
++                }
++            }
++            if (!fenced)
++                glFinish();
++            // sonda diagnostica (RT_GLPROBE=1): pixel centrale letto dal lato
++            // Chromium, per capire se il frame nasce gia' nero
++            static const bool probe = qEnvironmentVariableIsSet("RT_GLPROBE");
++            if (probe) {
++                GLuint fbo = 0;
++                GLint prevFbo = 0;
++                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
++                glGenFramebuffersEXT(1, &fbo);
++                glBindFramebufferEXT(GL_FRAMEBUFFER, fbo);
++                glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                                          glInfo.fID, 0);
++                GLenum st = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER);
++                unsigned char px[4] = { 0, 0, 0, 0 };
++                glReadPixels(m_shape.imageInfo.width() / 2, m_shape.imageInfo.height() / 2, 1, 1,
++                             GL_RGBA, GL_UNSIGNED_BYTE, px);
++                qWarning("RTPROBE chromium tex=%u target=0x%x fbo=0x%x err=0x%x px=%d,%d,%d,%d",
++                         glInfo.fID, glInfo.fTarget, st, glGetError(), px[0], px[1], px[2], px[3]);
++                glBindFramebufferEXT(GL_FRAMEBUFFER, prevFbo);
++                glDeleteFramebuffersEXT(1, &fbo);
++            }
 +        }
 +    }
 +#endif
      m_skImageMutex.unlock();
      if (!m_cachedSkImage)
          qWarning("SKIA: Failed to create SkImage.");
-@@ -536,6 +588,12 @@
+@@ -536,6 +643,19 @@
      return m_cachedSkImage;
  }
  #if BUILDFLAG(IS_OZONE)
@@ -118,12 +178,19 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +    return m_eglImage;
 +}
 +
++void *NativeSkiaOutputDevice::Buffer::takeEglSync(void **display)
++{
++    QMutexLocker locker(&m_skImageMutex);
++    *display = m_eglSyncDisplay;
++    return std::exchange(m_eglSync, nullptr);
++}
++
  scoped_refptr<gfx::NativePixmap> NativeSkiaOutputDevice::Buffer::nativePixmap()
  {
      DCHECK(m_presentCount);
 --- a/src/core/compositor/native_skia_output_device_opengl.cpp
 +++ b/src/core/compositor/native_skia_output_device_opengl.cpp
-@@ -370,7 +370,30 @@
+@@ -370,7 +370,97 @@
                  return nullptr;
              }
  
@@ -143,6 +210,27 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 +                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 +                glFun->glBindTexture(GL_TEXTURE_2D, 0);
++                static const bool probe = qEnvironmentVariableIsSet("RT_GLPROBE");
++                if (probe) {
++                    // sonda (RT_GLPROBE=1): stesso pixel letto dal lato Qt
++                    GLenum imgErr = glFun->glGetError();
++                    GLuint fbo = 0;
++                    GLint prevFbo = 0;
++                    glFun->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
++                    glFun->glGenFramebuffers(1, &fbo);
++                    glFun->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
++                    glFun->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                                                  GL_TEXTURE_2D, glTexture, 0);
++                    GLenum st = glFun->glCheckFramebufferStatus(GL_FRAMEBUFFER);
++                    unsigned char px[4] = { 0, 0, 0, 0 };
++                    glFun->glReadPixels(size().width() / 2, size().height() / 2, 1, 1, GL_RGBA,
++                                        GL_UNSIGNED_BYTE, px);
++                    qWarning("RTPROBE qt tex=%u imgErr=0x%x fbo=0x%x err=0x%x px=%d,%d,%d,%d",
++                             glTexture, imgErr, st, glFun->glGetError(), px[0], px[1], px[2],
++                             px[3]);
++                    glFun->glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
++                    glFun->glDeleteFramebuffers(1, &fbo);
++                }
 +
 +                QSurface *createSurface = glContext->surface();
 +                m_frontBuffer->textureCleanupCallback = [glContext, createSurface, glTexture]() {
@@ -151,6 +239,52 @@ STATO 11 ott 15:35: IN CORSO, NON risolve ancora (EGLImage create e legate, pagi
 +                };
 +            } else {
 +                glTexture = glTextureInfo.fID;
++                // fence del thread GPU di Chromium: attesa lato GPU
++                // (EGL_KHR_wait_sync) o, se manca, lato CPU; poi si distrugge
++                void *syncDisplay = nullptr;
++                if (void *sync = m_frontBuffer->takeEglSync(&syncDisplay)) {
++                    using WaitSync = EGLint (*)(EGLDisplay, EGLSyncKHR, EGLint);
++                    using ClientWait = EGLint (*)(EGLDisplay, EGLSyncKHR, EGLint, EGLTimeKHR);
++                    using DestroySync = EGLBoolean (*)(EGLDisplay, EGLSyncKHR);
++                    static auto waitSync =
++                            reinterpret_cast<WaitSync>(glContext->getProcAddress("eglWaitSyncKHR"));
++                    static auto clientWait = reinterpret_cast<ClientWait>(
++                            glContext->getProcAddress("eglClientWaitSyncKHR"));
++                    static auto destroySync = reinterpret_cast<DestroySync>(
++                            glContext->getProcAddress("eglDestroySyncKHR"));
++                    auto dpy = static_cast<EGLDisplay>(syncDisplay);
++                    auto s = static_cast<EGLSyncKHR>(sync);
++                    if (!(waitSync && waitSync(dpy, s, 0) == EGL_TRUE) && clientWait)
++                        clientWait(dpy, s, EGL_SYNC_FLUSH_COMMANDS_BIT_KHR, 100000000);
++                    if (destroySync)
++                        destroySync(dpy, s);
++                }
++                // 0308 (share group): texture di Chromium usata direttamente;
++                // il campionamento di Qt non deve dipendere dai suoi parametri
++                glFun->glBindTexture(GL_TEXTURE_2D, glTexture);
++                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++                glFun->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++                glFun->glBindTexture(GL_TEXTURE_2D, 0);
++                static const bool probe = qEnvironmentVariableIsSet("RT_GLPROBE");
++                if (probe) {
++                    GLuint fbo = 0;
++                    GLint prevFbo = 0;
++                    glFun->glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
++                    glFun->glGenFramebuffers(1, &fbo);
++                    glFun->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
++                    glFun->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
++                                                  GL_TEXTURE_2D, glTexture, 0);
++                    GLenum st = glFun->glCheckFramebufferStatus(GL_FRAMEBUFFER);
++                    unsigned char px[4] = { 0, 0, 0, 0 };
++                    glFun->glReadPixels(size().width() / 2, size().height() / 2, 1, 1, GL_RGBA,
++                                        GL_UNSIGNED_BYTE, px);
++                    qWarning("RTPROBE qt-share tex=%u fbo=0x%x err=0x%x px=%d,%d,%d,%d", glTexture,
++                             st, glFun->glGetError(), px[0], px[1], px[2], px[3]);
++                    glFun->glBindFramebuffer(GL_FRAMEBUFFER, prevFbo);
++                    glFun->glDeleteFramebuffers(1, &fbo);
++                }
 +            }
          } else {
  #if BUILDFLAG(ENABLE_VULKAN)
