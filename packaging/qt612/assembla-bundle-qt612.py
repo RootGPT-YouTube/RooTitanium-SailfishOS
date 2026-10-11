@@ -140,6 +140,19 @@ for f in os.listdir(f"{SRC}/locales"):   # stesse lingue del bundle 2.x
         mancanti.append(f"locales/{f}")
 
 # ── 2) chiusura sui NEEDED: libQt6* nuove richieste dalla 6.12 ───────────────
+def copia_lib_soname(soname):
+    """libicu*: la versione con cui e' linkata Qt 6.12 (su armv7hl il bundle 2.x
+    portava ICU 70, Qt 6.12 vuole la 73). File vero + link col soname."""
+    lib = f"{TGT}/usr/{L}"
+    reale = os.path.realpath(f"{lib}/{soname}")
+    if not os.path.isfile(reale):
+        return False
+    shutil.copy2(reale, f"{DST}/lib/{os.path.basename(reale)}")
+    if os.path.basename(reale) != soname and not os.path.lexists(f"{DST}/lib/{soname}"):
+        os.symlink(os.path.basename(reale), f"{DST}/lib/{soname}")
+    return True
+
+
 for giro in range(5):
     names = set(os.listdir(f"{DST}/lib"))
     nuove = set()
@@ -150,6 +163,11 @@ for giro in range(5):
                 for n in needed(p):
                     if n.startswith("libQt6") and n not in names:
                         nuove.add(n.split(".so")[0])
+                    elif n.startswith("libicu") and n not in names:
+                        print("   + ICU dal target:", n)
+                        if not copia_lib_soname(n):
+                            mancanti.append(f"lib/{n} (ICU assente nel target)")
+                        names.add(n)
     if not nuove:
         break
     for st in sorted(nuove):

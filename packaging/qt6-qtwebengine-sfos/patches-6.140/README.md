@@ -14,6 +14,7 @@ Serie riportata dalla 6.8.4 (`../patches/`) il 10 ott 2026, verificata con
 | 0305 zlib-crc32-gcc-arm32 | **tolta**: corretta a monte (`-march=armv8-a+crc` per arm a 32 bit) |
 | 0306 arm32-gcc-no-tree-vectorize | applica invariata (da ricontrollare al collaudo: il SIGBUS si vede solo su pagine con CSS vero) |
 | 0307 sfos-eglimage-texture | NUOVA (11 ott): frame Chromium->Qt via EGLImage da texture GL; senza, con la GPU la pagina e' nera su Mali/libhybris (niente dma_buf import, niente share group in Chromium 140). Va dopo la shared-gl-texture di Rinigus |
+| 0308 sfos-qt-share-group | NUOVA (11 ott, proposta Fable): contesti GL di Chromium nello share group di Qt via GLOzoneEGLQt::CreateGLContext; dietro RT_SHAREGROUP=1 finche' non e' collaudata |
 
 Patch SFOS di Rinigus (chum `qt6-lts-6.11.1`) sullo stesso albero: tutte
 applicano (hwcap2-bti con offset di 3 righe, dalla cartella `chromium/`),
