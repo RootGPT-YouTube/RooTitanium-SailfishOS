@@ -23,8 +23,8 @@ QtWebEngine shared objects are bundled (not linked against system libraries) and
 are LGPL-3.0. They are distributed as separable `.so` files under
 `/home/rootitanium/lib/` and `/home/rootitanium/libexec/`, so they can be replaced
 by the user (LGPL §4 relinking). Their corresponding source is the upstream
-project at the version listed below, built with the recipe from
-`sailfishos-chum/qt6-qtwebengine`. The upstream source tree (`qt6-qtwebengine/`)
+project at the version listed below, built with the scripts and patches in
+this repository (derived from `sailfishos-chum/qt6-qtwebengine`). The upstream source tree (`qt6-qtwebengine/`)
 and the build trees are **not** kept in this repository (see `.gitignore`) to keep
 it lean.
 
@@ -52,34 +52,37 @@ it lean.
   file enters the bundle; the binary itself is not kept in this repository)
 - © The Maliit team and the sailfishos-open contributors
 
-**Qt 6 / Qt WebEngine** (`qt6-qtwebengine` 6.8.4)
+**Qt 6 / Qt WebEngine** (Qt 6.12.0, Qt WebEngine 6.140.0)
 - Role: the browser engine (QtWebEngine + Chromium) and its Qt 6 runtime
   (QtCore/Gui/Qml/Quick/WebEngineQuick/WebEngineCore, QtVirtualKeyboard, plugins)
-- Version: 6.8.4 (built from the `v6.8.4-lts-lgpl` tag)
+- Version: Qt 6.12.0 (`v6.12.0` tags of qtbase, qtdeclarative and the other
+  modules) and Qt WebEngine from the `6.140.0` branch (commit `b711289`)
 - License: LGPL-3.0-only (with parts under GPL-2.0-or-later / GPL-3.0-only)
 - Distribution: **bundled** in the RPM under `/home/rootitanium/lib/`,
   `/home/rootitanium/libexec/`, `/home/rootitanium/qml/`, `/home/rootitanium/plugins/`;
   loaded via the launcher's `LD_LIBRARY_PATH` / `QML2_IMPORT_PATH`
-- Source / corresponding source: https://www.qt.io/ (6.8.4) built via
-  https://github.com/sailfishos-chum/qt6-qtwebengine
+- Source / corresponding source: https://code.qt.io/ (qtbase etc. at `v6.12.0`,
+  qtwebengine at branch `6.140.0`); the build scripts are in
+  `packaging/qt612/` and `packaging/qt6-qtwebengine-sfos/` of this repository
 - © The Qt Company Ltd. and contributors — https://www.qt.io/licensing/
-- The Sailfish OS packaging and patches used to build it (EGL/GL fixes, aarch64
-  fixes, system openh264, …) come from `sailfishos-chum/qt6-qtwebengine`,
-  authored mainly by **Rinigus**, with contributions from **Adam Pigg (piggz)**
-  and **Peter G. (nephros)**. RooTitanium only overlays small packaging changes
-  on top (see `packaging/qt6-qtwebengine-sfos/NOTE.md`).
+- The Sailfish OS patches used to build it (EGL/GL fixes, aarch64 fixes, …) come
+  from `sailfishos-chum/qt6-qtwebengine` and the chum Qt 6 packaging,
+  authored mainly by **Rinigus** and **Adam Pigg (piggz)**, with contributions
+  from **Peter G. (nephros)**. RooTitanium adds its own patches on top
+  (`packaging/qt6-qtwebengine-sfos/patches-6.140/`, e.g. sharing the GPU
+  context with Qt, which Chromium 140 no longer does by itself).
 
 **Chromium** (included inside Qt WebEngine as `src/3rdparty`)
-- Role: the web rendering/JS engine (Chromium 122 base) inside QtWebEngine,
-  carrying the security fixes backported up to Chromium 138.0.7204.96 — that
-  backporting work is done by the Chromium project and by The Qt Company, which
-  maintains it for the 6.8 branch
+- Role: the web rendering/JS engine (Chromium 140.0.7339.264) inside
+  QtWebEngine, carrying the security fixes backported up to Chromium
+  154.0.8037.93 (per the `CHROMIUM_VERSION` file of the source tree) — that
+  backporting work is done by the Chromium project and by The Qt Company
 - License: BSD-3-Clause, plus the licenses of its own `third_party` components
 - Distribution: compiled into `libQt6WebEngineCore.so` and `QtWebEngineProcess`,
   with `icudtl.dat`, the `.pak` resources and `v8_context_snapshot.bin`, all
   bundled in the RPM
 - Source: https://chromium.googlesource.com/chromium/src/ and the
-  QtWebEngine 6.8.4 snapshot
+  QtWebEngine 6.140.0 snapshot (`qtwebengine-chromium`)
 - © The Chromium Authors
 
 **Readability.js** (mozilla/readability 0.6.0)

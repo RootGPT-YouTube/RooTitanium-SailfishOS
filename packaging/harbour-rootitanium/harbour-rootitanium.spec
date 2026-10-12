@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.2
+Version:    2.5
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -27,20 +27,51 @@ Group:      Applications/Internet
 # aarch64 e armv7hl (dall'8 ott 2026): l'arch la decide il target sb2 di rpmbuild
 ExclusiveArch: aarch64 armv7hl
 AutoReqProv: no
-# Librerie di sistema che dal salto a Qt 6.12 / Chromium 140 il bundle non porta
-# con se': libgbm (WebEngineCore 6.140) e OpenSSL 3 (QtNetwork 6.12, openssl
-# linkato). Per soname, cosi' vale qualunque pacchetto le fornisca
-# (sul POCO: mesa-llvmpipe-libgbm, openssl-libs).
+# Librerie di SISTEMA che il bundle non porta con se' (AutoReqProv e' spento,
+# quindi vanno dichiarate a mano). Elenco ricavato il 12 ott 2026 leggendo i
+# NEEDED di ogni ELF del bundle meno i soname che il bundle contiene (glibc
+# esclusa). Per soname, cosi' vale qualunque pacchetto le fornisca. Sono tutte
+# di serie su Sailfish OS 5.1 tranne libgbm: sull'X10 III mancava, arriva da
+# mesa-llvmpipe-libgbm (Chromium 140 la vuole); openssl 3 serve a QtNetwork 6.12.
+# libopenjp2 solo su armv7hl: li' il motore si linka all'openjpeg di sistema.
 %ifarch aarch64
 Requires: libgbm.so.1()(64bit)
 Requires: libssl.so.3()(64bit)
+Requires: libEGL.so.1()(64bit)
+Requires: libGLESv2.so.2()(64bit)
+Requires: libdrm.so.2()(64bit)
+Requires: libwayland-client.so.0()(64bit)
+Requires: libwayland-cursor.so.0()(64bit)
+Requires: libwayland-egl.so.1()(64bit)
+Requires: libmtdev.so.1()(64bit)
+Requires: libudev.so.1()(64bit)
+Requires: libsystemd.so.0()(64bit)
+Requires: libsqlite3.so.0()(64bit)
+Requires: libasound.so.2()(64bit)
+Requires: libstdc++.so.6()(64bit)
+Requires: libgcc_s.so.1()(64bit)
 %else
 Requires: libgbm.so.1
 Requires: libssl.so.3
+Requires: libEGL.so.1
+Requires: libGLESv2.so.2
+Requires: libdrm.so.2
+Requires: libwayland-client.so.0
+Requires: libwayland-cursor.so.0
+Requires: libwayland-egl.so.1
+Requires: libmtdev.so.1
+Requires: libudev.so.1
+Requires: libsystemd.so.0
+Requires: libsqlite3.so.0
+Requires: libasound.so.2
+Requires: libstdc++.so.6
+Requires: libgcc_s.so.1
+Requires: libopenjp2.so.7
 %endif
 
 %description
-Browser sperimentale basato su Qt6 WebEngine (Chromium 122) accelerato via
+Browser sperimentale basato su Qt 6.12 e Qt WebEngine 6.140 (Chromium 140)
+accelerato via
 libhybris/EGL su SailfishOS 5.1 (aarch64 e armv7hl). Bundle self-contained in /home/rootitanium;
 nessuna dipendenza Qt6 di sistema richiesta. Studio di fattibilita'.
 
@@ -102,6 +133,27 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Mon Oct 12 2026 RootGPT <emagiampa@gmail.com> - 2.5-1
+- Nuovo motore: Chromium 140 (Qt WebEngine 6.140 su Qt 6.12), con le
+  correzioni di sicurezza fino a Chromium 154. Prima era Chromium 122.
+  Lo stack Qt e' compilato da noi e viaggia dentro l'app come prima.
+- Accelerazione grafica: con Chromium 140 la pagina restava nera,
+  perche' il motore non condivide piu' da solo la GPU con Qt. Ora la
+  condivisione la fa l'app: provato su Mali (POCO M4 Pro) e Adreno
+  (Xperia 10 III), con WebGL. Circa il 14%% di CPU in meno della 2.2
+  sullo stesso video.
+- Video con il decoder del telefono: niente piu' immagine a strisce
+  diagonali. Alcuni chip dichiarano una larghezza di riga diversa da
+  quella vera (sull'Xperia 10 III i WebM, su altri telefoni gli .mp4);
+  ora la larghezza giusta si ricava dai pixel.
+- Permessi: se l'interruttore generale «Permessi App» e' spento e un
+  sito chiede il microfono o la posizione, un avviso lo dice invece di
+  rifiutare in silenzio.
+- Le Impostazioni non chiudono piu' l'app quando si tocca un
+  interruttore.
+- Nuove dipendenze dichiarate: libgbm (mesa-llvmpipe-libgbm) e le altre
+  librerie di sistema che il pacchetto usa; vengono installate da sole.
+
 * Sat Oct 10 2026 RootGPT <emagiampa@gmail.com> - 2.2-1
 - Link da altre app: con RooTitanium in background il link si apre in
   una scheda nuova e l'app torna in primo piano. Le schede gia' aperte

@@ -165,7 +165,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.1"
+    readonly property string appVersion: "2.5"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -1873,11 +1873,11 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
 <div class="lic">${win.t("Rilasciato sotto licenza GNU GPLv3", "Released under the GNU GPLv3")}</div>
 <div class="by">${win.t("Qt e Chromium inclusi sono sotto LGPLv3 e BSD (vedi NOTICE.md nel repository).", "Bundled Qt and Chromium are under LGPLv3 and BSD (see NOTICE.md in the repository).")}</div>
 <h2>${win.t("Crediti", "Credits")}</h2>
-<div class="cr">${win.t("RooTitanium è costruito su Qt 6.8 e Qt WebEngine. Lo stack Qt 6 per Sailfish OS, contro cui l'app è compilata, è di Adam Pigg (piggz). Grazie per averlo reso disponibile sotto LGPLv3!", "RooTitanium is built on Qt 6.8 and Qt WebEngine. The Qt 6 stack for Sailfish OS, which the app is built against, is by Adam Pigg (piggz). Thanks for making it available under the LGPLv3!")}</div>
+<div class="cr">${win.t("RooTitanium è costruito su Qt 6.12 e Qt WebEngine 6.140. Lo stack Qt lo compiliamo noi e viaggia dentro l'app, partendo dal packaging Qt 6 per Sailfish OS di Adam Pigg (piggz) e dalle sue patch. Grazie per averlo reso disponibile sotto LGPLv3!", "RooTitanium is built on Qt 6.12 and Qt WebEngine 6.140. We build the Qt stack ourselves and ship it inside the app, starting from the Qt 6 packaging for Sailfish OS by Adam Pigg (piggz) and his patches. Thanks for making it available under the LGPLv3!")}</div>
 <a class="crlnk" href="https://doc.qt.io/qt-6/qtwebengine-index.html">${win.t("Apri Qt WebEngine", "Open Qt WebEngine")}</a>
 <div class="cr">${win.t("Il motore che disegna le pagine è Chromium. Copyright The Chromium Authors, disponibile secondo la licenza BSD.", "The engine that draws the pages is Chromium. Copyright The Chromium Authors, available under the BSD license.")}</div>
 <a class="crlnk" href="https://www.chromium.org/">${win.t("Apri il sito di Chromium", "Open the Chromium website")}</a>
-<div class="cr">${win.t("Questa versione monta Qt WebEngine 6.8.4: la base resta Chromium 122, ma porta le correzioni di sicurezza retroportate fino alla 138.0.7204.96. Quel lavoro di backport è del progetto Chromium e di The Qt Company, che lo mantiene per il ramo 6.8. Grazie a chi tiene al sicuro un motore che nessuno di noi potrebbe presidiare da solo.", "This release ships Qt WebEngine 6.8.4: the base is still Chromium 122, but it carries the security fixes backported up to 138.0.7204.96. That backporting work is done by the Chromium project and by The Qt Company, which maintains it for the 6.8 branch. Thanks to those who keep an engine secure that none of us could watch over alone.")}</div>
+<div class="cr">${win.t("Questa versione monta Qt WebEngine 6.140: il motore è Chromium 140, con le correzioni di sicurezza retroportate fino alla 154.0.8037.93. Quel lavoro di backport è del progetto Chromium e di The Qt Company. Grazie a chi tiene al sicuro un motore che nessuno di noi potrebbe presidiare da solo.", "This release ships Qt WebEngine 6.140: the engine is Chromium 140, carrying the security fixes backported up to 154.0.8037.93. That backporting work is done by the Chromium project and by The Qt Company. Thanks to those who keep an engine secure that none of us could watch over alone.")}</div>
 <a class="crlnk" href="https://chromereleases.googleblog.com/">${win.t("Apri gli annunci di sicurezza di Chrome", "Open the Chrome security releases")}</a>
 <div class="cr">${win.t("Le correzioni che fanno funzionare il motore su Sailfish OS — EGL, compositor a texture condivise, aarch64 — sono di Rinigus, che cura il packaging del motore per la community, con i contributi di Adam Pigg (piggz) e Peter G. (nephros). Senza il loro lavoro questo browser non esisterebbe.", "The fixes that make the engine work on Sailfish OS — EGL, shared GL texture compositor, aarch64 — are by Rinigus, who maintains the engine packaging for the community, with contributions from Adam Pigg (piggz) and Peter G. (nephros). Without their work this browser would not exist.")}</div>
 <a class="crlnk" href="https://github.com/sailfishos-chum/qt6-qtwebengine">${win.t("Apri il packaging del motore", "Open the engine packaging")}</a>
