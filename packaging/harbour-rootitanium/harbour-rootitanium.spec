@@ -151,6 +151,14 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
   rifiutare in silenzio.
 - Le Impostazioni non chiudono piu' l'app quando si tocca un
   interruttore.
+- Cronologia: ora si puo' cancellare una voce sola (la X accanto a ogni
+  riga), tutto un sito, o un periodo (ultima ora, oggi, ultimi 7 giorni,
+  tutto). Ogni cancellazione di gruppo chiede conferma e dice quante voci
+  spariranno. Con le voci se ne va anche il ricordo dei link visitati
+  (il colore dei link gia' aperti).
+- Barra degli indirizzi: sulle pagine interne (Cronologia, Segnalibri,
+  Impostazioni...) mostrava ancora l'indirizzo del sito precedente; ora
+  mostra quello della pagina aperta.
 - Nuove dipendenze dichiarate: libgbm (mesa-llvmpipe-libgbm) e le altre
   librerie di sistema che il pacchetto usa; vengono installate da sole.
 

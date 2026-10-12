@@ -43,6 +43,42 @@
 #include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 
+// ⚠️ Link visitati (cancellazione selettiva della cronologia, 12 ott 2026).
+// Chromium tiene la sua lista dei link visitati (il colore :visited) e Qt la
+// espone SOLO su QWebEngineProfile C++ (clearVisitedLinks); il profilo QML non
+// ha nulla di equivalente (verificato nei qmltypes e negli header 6.140).
+// Ci arriviamo dagli interni: QQuickWebEngineProfile::d_ptr ->
+// QQuickWebEngineProfilePrivate::m_profileAdapter -> ProfileAdapter::
+// visitedLinksManager(). Le due classi del core sono esportate dalla libreria,
+// solo i due membri sono privati: li leggiamo con il trucco standard e legale
+// dell'istanza esplicita di template (l'accesso non viene controllato negli
+// argomenti di un'istanza esplicita), senza toccare la memoria a mano.
+// E' accettabile SOLO perche' portiamo con noi questo Qt esatto: la struttura
+// non puo' cambiare sotto i piedi. Senza gli header (es. Qt 6.8) il blocco non
+// si compila e le funzioni rispondono false: il QML resta com'era.
+#if __has_include(<QtWebEngineQuick/private/qquickwebengineprofile_p.h>) && __has_include("profile_adapter.h") && __has_include("visited_links_manager_qt.h")
+#define RT_VISITED_LINKS 1
+#include <QtWebEngineQuick/private/qquickwebengineprofile_p.h>
+#include "profile_adapter.h"
+#include "visited_links_manager_qt.h"
+namespace rtpriv {
+template <typename Tag, typename Tag::type M>
+struct Ruba { friend typename Tag::type prendi(Tag) { return M; } };
+struct ProfiloD { using type = QScopedPointer<QQuickWebEngineProfilePrivate> QQuickWebEngineProfile::*; friend type prendi(ProfiloD); };
+struct ProfiloAdapter { using type = QPointer<QtWebEngineCore::ProfileAdapter> QQuickWebEngineProfilePrivate::*; friend type prendi(ProfiloAdapter); };
+template struct Ruba<ProfiloD, &QQuickWebEngineProfile::d_ptr>;
+template struct Ruba<ProfiloAdapter, &QQuickWebEngineProfilePrivate::m_profileAdapter>;
+static QtWebEngineCore::VisitedLinksManagerQt *visitati(QQuickWebEngineProfile *p)
+{
+    if (!p) return nullptr;
+    QQuickWebEngineProfilePrivate *d = (p->*prendi(ProfiloD())).data();
+    if (!d) return nullptr;
+    QtWebEngineCore::ProfileAdapter *a = (d->*prendi(ProfiloAdapter())).data();
+    return a ? a->visitedLinksManager() : nullptr;
+}
+} // namespace rtpriv
+#endif
+
 // Interceptor header HTTP: riscrive il terzetto Sec-CH-UA low-entropy che Qt
 // NON espone al QML (WebEngineClientHints tocca solo la parte high-entropy JS).
 // Brand "Google Chrome" invece di "Chromium" (gli anti-bot diffidano di
@@ -510,6 +546,37 @@ public:
         p->cookieStore()->setCookieFilter([](const QWebEngineCookieStore::FilterRequest &r) {
             return !(g_privacy.block3pCookies.load(std::memory_order_relaxed) && r.thirdParty);
         });
+    }
+
+    // Link visitati di Chromium: vedi il blocco RT_VISITED_LINKS in cima.
+    // urls vuota = tutti. Ritorna false se qui non si puo' (header assenti al
+    // build): il QML tratta false come «niente da fare», non come errore.
+    Q_INVOKABLE bool clearVisitedLinks(QObject *profileObj, const QStringList &urls)
+    {
+#ifdef RT_VISITED_LINKS
+        auto *m = rtpriv::visitati(qobject_cast<QQuickWebEngineProfile *>(profileObj));
+        if (!m) return false;
+        if (urls.isEmpty()) { m->deleteAllVisitedLinkData(); return true; }
+        QList<QUrl> l;
+        for (const QString &u : urls) l.append(QUrl(u));
+        m->deleteVisitedLinkDataForUrls(l);
+        return true;
+#else
+        Q_UNUSED(profileObj); Q_UNUSED(urls);
+        return false;
+#endif
+    }
+    // Solo per il collaudo (il colore :visited non e' leggibile da JS, per scelta
+    // di Chromium): dice se Chromium ricorda l'URL come visitato.
+    Q_INVOKABLE bool visitedLinkKnown(QObject *profileObj, const QString &url)
+    {
+#ifdef RT_VISITED_LINKS
+        auto *m = rtpriv::visitati(qobject_cast<QQuickWebEngineProfile *>(profileObj));
+        return m && m->containsUrl(QUrl(url));
+#else
+        Q_UNUSED(profileObj); Q_UNUSED(url);
+        return false;
+#endif
     }
 
     // --- task 1.3 §E: i tre toggle, letti da interceptor e cookie filter ---

@@ -2159,15 +2159,24 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
         } catch(e) { _histErr = "" + e; console.warn("cronologia read: " + e) }
         return out
     }
-    function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} }
+    // lista vuota = TUTTI i link visitati: «Svuota cronologia» e «Pulisci dati
+    // di navigazione» passano di qui, e ora lasciano davvero tutto pulito
+    function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} histForgetVisited([]) }
 
     // Cancellazione SELETTIVA (richiesta utenti, 12 ott): una voce, un sito o un
-    // periodo. ⚠️ La traccia dei «link visitati» di Chromium (colore dei link)
-    // NON si tocca: clearVisitedLinks esiste solo su QWebEngineProfile C++, il
-    // profilo QML non la espone (verificato nei qmltypes e negli header 6.140).
-    // E' solo estetica: i siti non possono leggerla. Come «Svuota cronologia».
+    // periodo. Insieme alla nostra tabella si toglie anche la traccia dei «link
+    // visitati» di Chromium (il colore dei link), che il profilo QML non espone:
+    // la tocca rtNative.clearVisitedLinks in main.cpp. Su un binario vecchio la
+    // funzione manca e si cancella solo la cronologia, come prima.
+    function histForgetVisited(urls) {
+        try {
+            if (typeof rtNative !== "undefined" && rtNative.clearVisitedLinks)
+                rtNative.clearVisitedLinks(normalProfile, urls)
+        } catch(e) { console.warn("link visitati: " + e) }
+    }
     function histRemove(url) {
         try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history WHERE url=?", ["" + url]) }) } catch(e) {}
+        histForgetVisited(["" + url])
     }
     // URL del sito `host` (stesso confronto di histHost: www. tolto), in JS e
     // non con un LIKE, cosi' «tube.com» non si porta via «youtube.com»
@@ -2187,6 +2196,7 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     function histRemoveHost(host) {
         var urls = histHostUrls(host)
         try { histDb().transaction(function(tx) { for (var i = 0; i < urls.length; i++) tx.executeSql("DELETE FROM history WHERE url=?", [urls[i]]) }) } catch(e) {}
+        if (urls.length) histForgetVisited(urls)
     }
     // periodi: 1h = ultima ora, today = da mezzanotte, 7d = ultimi 7 giorni, all = tutto
     function histSince(r) {
@@ -2202,7 +2212,15 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     }
     function histRemoveRange(r) {
         if (r === "all") { histClear(); return }
-        try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history WHERE ts>=?", [histSince(r)]) }) } catch(e) {}
+        var urls = []
+        try {
+            histDb().transaction(function(tx) {
+                var rs = tx.executeSql("SELECT url FROM history WHERE ts>=?", [histSince(r)])
+                for (var i = 0; i < rs.rows.length; i++) urls.push(rs.rows.item(i).url)
+                tx.executeSql("DELETE FROM history WHERE ts>=?", [histSince(r)])
+            })
+        } catch(e) {}
+        if (urls.length) histForgetVisited(urls)
     }
     function histRangeLabel(r) {
         if (r === "1h") return win.t("dell'ultima ora", "from the last hour")
@@ -2979,7 +2997,7 @@ ${histCss}
                     visible: !urlbar.activeFocus
                     text: {
                         if (!win.currentView) return ""
-                        var u = "" + win.currentView.url
+                        var u = "" + win.currentView.shownUrl
                         if (u === "" || u === "about:blank") return '<span style="color:' + win.pal.faint + '">' + win.t("Cerca o inserisci un indirizzo", "Search or type a URL") + '</span>'
                         return win.colorizeUrl(u)
                     }
@@ -3174,6 +3192,7 @@ ${histCss}
                     }
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
+                        shownUrl = "" + url
                         if (li.status === WebEngineView.LoadSucceededStatus) {
                             if (win.orient !== 0)
                                 runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
@@ -3197,7 +3216,12 @@ ${histCss}
                     // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
                     onPermissionRequested: function(permission) { win.showPermission(permission) }
-                    onUrlChanged: { localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
+                    // Testo della barra. Con Chromium 140 una pagina interna (loadHtml)
+                    // CAMBIA url ma Qt NON emette urlChanged (misurato il 12/10): la
+                    // barra, legata a url, restava sul sito precedente. Lo rileggiamo
+                    // anche a ogni caricamento, quando il valore e' gia' quello giusto.
+                    property string shownUrl: ""
+                    onUrlChanged: { shownUrl = "" + url; localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
