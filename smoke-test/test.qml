@@ -933,8 +933,25 @@ Window {
     function internalNav(view, u) {
         if (!view) return
         if (u.indexOf("https://history.local/") === 0) {
+            // del?u= = togli una voce (poi si offre il resto del sito);
+            // delhost?h= = tutto il sito; ask?r= = chiede conferma per un
+            // periodo, delrange?r= lo cancella. clear resta per compatibilita'.
+            var hDel = u.match(/^https:\/\/history\.local\/del\?u=(.*)$/)
+            var hHost = u.match(/^https:\/\/history\.local\/delhost\?h=(.*)$/)
+            var hAsk = u.match(/^https:\/\/history\.local\/ask\?r=(1h|today|7d|all)$/)
+            var hRange = u.match(/^https:\/\/history\.local\/delrange\?r=(1h|today|7d|all)$/)
+            var avviso = null
             if (u === "https://history.local/clear") win.histClear()
-            win.loadInternal(view, "history", win.historyHtml(), "https://history.local/")
+            else if (hDel) {
+                var gone = decodeURIComponent(hDel[1])
+                win.histRemove(gone)
+                var host = win.histHost(gone)
+                var resto = win.histHostUrls(host).length
+                if (resto > 0) avviso = { kind: "host", host: host, n: resto }
+            } else if (hHost) win.histRemoveHost(decodeURIComponent(hHost[1]))
+            else if (hAsk) avviso = { kind: "range", r: hAsk[1], n: win.histRangeCount(hAsk[1]) }
+            else if (hRange) win.histRemoveRange(hRange[1])
+            win.loadInternal(view, "history", win.historyHtml(avviso), "https://history.local/")
         } else if (u.indexOf("https://bookmarks.local/") === 0) {
             // delhome = togli dalla HOME (il segnalibro resta);
             // del = cancella dalla raccolta (solo pagina Segnalibri);
@@ -2144,6 +2161,56 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     }
     function histClear() { try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history") }) } catch(e) {} }
 
+    // Cancellazione SELETTIVA (richiesta utenti, 12 ott): una voce, un sito o un
+    // periodo. ⚠️ La traccia dei «link visitati» di Chromium (colore dei link)
+    // NON si tocca: clearVisitedLinks esiste solo su QWebEngineProfile C++, il
+    // profilo QML non la espone (verificato nei qmltypes e negli header 6.140).
+    // E' solo estetica: i siti non possono leggerla. Come «Svuota cronologia».
+    function histRemove(url) {
+        try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history WHERE url=?", ["" + url]) }) } catch(e) {}
+    }
+    // URL del sito `host` (stesso confronto di histHost: www. tolto), in JS e
+    // non con un LIKE, cosi' «tube.com» non si porta via «youtube.com»
+    function histHostUrls(host) {
+        var out = []
+        try {
+            histDb().transaction(function(tx) {
+                var rs = tx.executeSql("SELECT url FROM history")
+                for (var i = 0; i < rs.rows.length; i++) {
+                    var u = rs.rows.item(i).url
+                    if (win.histHost(u) === host) out.push(u)
+                }
+            })
+        } catch(e) {}
+        return out
+    }
+    function histRemoveHost(host) {
+        var urls = histHostUrls(host)
+        try { histDb().transaction(function(tx) { for (var i = 0; i < urls.length; i++) tx.executeSql("DELETE FROM history WHERE url=?", [urls[i]]) }) } catch(e) {}
+    }
+    // periodi: 1h = ultima ora, today = da mezzanotte, 7d = ultimi 7 giorni, all = tutto
+    function histSince(r) {
+        if (r === "1h") return Date.now() - 3600 * 1000
+        if (r === "today") { var d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime() }
+        if (r === "7d") return Date.now() - 7 * 24 * 3600 * 1000
+        return 0
+    }
+    function histRangeCount(r) {
+        var n = 0
+        try { histDb().transaction(function(tx) { n = tx.executeSql("SELECT COUNT(*) AS n FROM history WHERE ts>=?", [histSince(r)]).rows.item(0).n }) } catch(e) {}
+        return n
+    }
+    function histRemoveRange(r) {
+        if (r === "all") { histClear(); return }
+        try { histDb().transaction(function(tx) { tx.executeSql("DELETE FROM history WHERE ts>=?", [histSince(r)]) }) } catch(e) {}
+    }
+    function histRangeLabel(r) {
+        if (r === "1h") return win.t("dell'ultima ora", "from the last hour")
+        if (r === "today") return win.t("di oggi", "from today")
+        if (r === "7d") return win.t("degli ultimi 7 giorni", "from the last 7 days")
+        return win.t("di tutta la cronologia", "of the whole history")
+    }
+
     // ===================== SEGNALIBRI (stessa SQLite della cronologia) =====================
     // DUE concetti separati (scelta utente 12 lug): la tabella bookmarks è la
     // RACCOLTA (si cancella solo dalla pagina Segnalibri, ✕); la colonna home=1
@@ -2271,12 +2338,17 @@ ${body}
     function histHost(u) { var m = ("" + u).match(/^[a-z]+:\/\/([^\/]+)/i); return m ? m[1].replace(/^www\./, "") : u }
 
     // righe cronologia condivise da HOME e vista completa
-    function histRowsHtml(items, withTime) {
+    // withDel: solo nella vista completa, la ✕ accanto alla riga (la HOME resta
+    // pulita). La ✕ e' un link a parte, fuori dalla riga, per non cancellare
+    // toccando la pagina.
+    function histRowsHtml(items, withTime, withDel) {
         return items.map(function(h) {
             var host = win.histHost(h.url)
             var t = win.htmlEsc(h.title && ("" + h.title).length ? h.title : host)
             var when = withTime ? '<span class="hw">' + Qt.formatDateTime(new Date(h.ts), "dd/MM hh:mm") + '</span>' : ''
-            return '<a class="hrow" href="' + win.htmlEsc(h.url) + '"><span class="hfav">' + win.htmlEsc(host.charAt(0).toUpperCase()) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span>' + when + '</a>'
+            var row = '<a class="hrow" href="' + win.htmlEsc(h.url) + '"><span class="hfav">' + win.htmlEsc(host.charAt(0).toUpperCase()) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span>' + when + '</a>'
+            if (!withDel) return row
+            return '<div class="hline">' + row + '<a class="hx" title="' + win.t("Elimina", "Delete") + '" href="https://history.local/del?u=' + encodeURIComponent(h.url) + '">✕</a></div>'
         }).join("")
     }
     readonly property string histCss: `
@@ -2286,26 +2358,60 @@ ${body}
 .ht{color:var(--fg);font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hu{color:var(--muted2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hw{flex:none;color:var(--faint);font-size:12px;margin-left:8px}
-.hmore{display:block;text-align:right;color:var(--link);font-size:14px;text-decoration:none;padding:12px 2px}`
+.hmore{display:block;text-align:right;color:var(--link);font-size:14px;text-decoration:none;padding:12px 2px}
+.hline{display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.hline .hrow{flex:1;min-width:0;border-bottom:0}
+.hx{flex:none;width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted2);font-size:18px;text-decoration:none}`
 
     // vista completa (menù ⋮ → Cronologia, o link dalla HOME); "svuota" =
     // link sentinella https://history.local/clear intercettato in onNavigationRequested
-    function historyHtml() {
+    // avviso: null, {kind:"host",host,n} dopo aver tolto una voce (offre il
+    // resto del sito) o {kind:"range",r,n} = conferma prima di cancellare un
+    // periodo. Le conferme sono link interni: niente dialoghi JS.
+    function historyHtml(avviso) {
         var items = histRecent(200)
         var body = items.length
-            ? histRowsHtml(items, true)
+            ? histRowsHtml(items, true, true)
             : '<div class="empty">' + win.t("La cronologia è vuota.", "History is empty.") + '</div>'
-        var clear = items.length
-            ? '<a class="clear" href="https://history.local/clear">' + win.t("Svuota cronologia", "Clear history") + '</a>'
+        var periodi = items.length
+            ? '<div class="per"><span class="pl">' + win.t("Elimina:", "Delete:") + '</span>'
+              + '<a href="https://history.local/ask?r=1h">' + win.t("ultima ora", "last hour") + '</a>'
+              + '<a href="https://history.local/ask?r=today">' + win.t("oggi", "today") + '</a>'
+              + '<a href="https://history.local/ask?r=7d">' + win.t("ultimi 7 giorni", "last 7 days") + '</a>'
+              + '<a class="all" href="https://history.local/ask?r=all">' + win.t("tutto", "everything") + '</a></div>'
             : ''
+        var box = ''
+        if (avviso && avviso.kind === "host") {
+            var chi = '<b>' + win.htmlEsc(avviso.host) + '</b>'
+            box = '<div class="ask">' + (avviso.n === 1
+                    ? win.t("Voce eliminata. C'è un'altra voce di ", "Entry deleted. There is 1 more entry from ") + chi + '.'
+                    : win.t("Voce eliminata. Ci sono altre ", "Entry deleted. There are ") + avviso.n + win.t(" voci di ", " more entries from ") + chi + '.')
+                + '<div class="askb"><a class="bdanger" href="https://history.local/delhost?h=' + encodeURIComponent(avviso.host) + '">' + win.t("Elimina tutto il sito", "Delete the whole site") + '</a>'
+                + '<a class="bplain" href="https://history.local/">' + win.t("Lascia", "Keep") + '</a></div></div>'
+        } else if (avviso && avviso.kind === "range") {
+            box = '<div class="ask">' + (avviso.n > 0
+                    ? (avviso.n === 1 ? win.t("Eliminare 1 voce ", "Delete 1 entry ") : win.t("Eliminare ", "Delete ") + avviso.n + win.t(" voci ", " entries ")) + win.histRangeLabel(avviso.r) + '?'
+                      + '<div class="askb"><a class="bdanger" href="https://history.local/delrange?r=' + avviso.r + '">' + win.t("Elimina", "Delete") + '</a>'
+                      + '<a class="bplain" href="https://history.local/">' + win.t("Annulla", "Cancel") + '</a></div>'
+                    : win.t("Nessuna voce ", "No entries ") + win.histRangeLabel(avviso.r) + '.')
+                + '</div>'
+        }
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Cronologia", "History")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 4px}
 .empty{color:var(--faint);font-size:14px;padding:14px 2px}
-.clear{display:inline-block;color:var(--danger);font-size:14px;text-decoration:none;margin:6px 0 10px}
+.per{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:14px;margin:8px 0 10px}
+.per .pl{color:var(--muted)}
+.per a{color:var(--link);text-decoration:none}
+.per a.all{color:var(--danger)}
+.ask{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:6px 0 12px;font-size:14px;line-height:1.45}
+.askb{display:flex;gap:10px;margin-top:12px}
+.askb a{flex:1;text-align:center;text-decoration:none;border-radius:20px;padding:9px 6px;font-size:14px}
+.bdanger{background:var(--danger);color:#fff}
+.bplain{background:var(--pill);color:var(--fg)}
 ${histCss}
 </style></head><body>
-<h1>${win.t("Cronologia", "History")}</h1>${clear}
+<h1>${win.t("Cronologia", "History")}</h1>${periodi}${box}
 ${body}
 </body></html>`
     }
