@@ -109,6 +109,69 @@ PlaneLayout LayoutFor(int color_format) {
   return PlaneLayout::kUnsupported;
 }
 
+// 🔴 La larghezza che il vendor dichiara NON e' sempre lo stride (12/10).
+// Misurato con una sonda sull'X10 III (Qualcomm), VP9 854x480: dichiara
+// buffer=856x480, ma le righe sono lunghe 864 byte; letto a 856 ogni riga
+// scivola di 8 pixel e il video esce a strisce diagonali. Sullo stesso chip
+// l'H.264 dichiara invece 864 (giusto), sul POCO (MediaTek) i buffer sono
+// compatti: ogni vendor fa a modo suo. droidmedia esporra' lo stride vero solo
+// dalla versione di agosto 2026 (commit 81db5a7b), che sui device non c'e', e
+// gst-droid indovina con allineamenti fissi (128 per l'NV12 Qualcomm: qui
+// darebbe 896, sbagliato anche quello).
+// Quindi lo chiediamo ai pixel: fra gli stride possibili (il dichiarato e la
+// larghezza allineata a 16..256, purche' ci stiano nel buffer) vince quello che
+// rende piu' simili le righe adiacenti. Uno stride sbagliato fa scorrere ogni
+// riga di qualche pixel rispetto alla precedente e la differenza esplode
+// (misurato: 0,8 contro 8,3 di media). L'altezza dichiarata invece e' giusta:
+// il colore comincia proprio a stride x altezza (verificato a 606/608 righe).
+struct StimaStride {
+  int stride;
+  bool decisa;  // falsa su un fotogramma piatto (nero): si riprova al prossimo
+};
+
+StimaStride StimaStrideLuma(const uint8_t* y, size_t size, int dichiarato,
+                            int slice_height, int w, int h) {
+  int candidati[6] = {dichiarato};
+  int n = 1;
+  for (int a : {16, 32, 64, 128, 256}) {
+    const int s = (w + a - 1) / a * a;
+    if (std::find(candidati, candidati + n, s) == candidati + n) {
+      candidati[n++] = s;
+    }
+  }
+  const int passo = std::max(1, w / 256);
+  float migliore = -1, secondo = -1;
+  int scelto = dichiarato;
+  for (int i = 0; i < n; ++i) {
+    const int s = candidati[i];
+    if (s < w || static_cast<size_t>(s) * slice_height * 3 / 2 > size) {
+      continue;
+    }
+    int64_t somma = 0;
+    int campioni = 0;
+    for (int k = 0; k < 48; ++k) {
+      const size_t r = static_cast<size_t>(k) * (h - 2) / 47;
+      const uint8_t* a = y + r * s;
+      const uint8_t* b = a + s;
+      for (int c = 0; c < w; c += passo, ++campioni) {
+        somma += std::abs(a[c] - b[c]);
+      }
+    }
+    const float punteggio = static_cast<float>(somma) / std::max(1, campioni);
+    // A parita' resta il dichiarato (e' il primo dei candidati).
+    if (migliore < 0 || punteggio < migliore) {
+      secondo = migliore;
+      migliore = punteggio;
+      scelto = s;
+    } else if (secondo < 0 || punteggio < secondo) {
+      secondo = punteggio;
+    }
+  }
+  const bool decisa =
+      secondo < 0 || (secondo > migliore * 1.5f && secondo - migliore > 2.0f);
+  return {scelto, decisa};
+}
+
 }  // namespace
 
 // static
@@ -478,10 +541,11 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
   memset(&crop, 0, sizeof(crop));
   droid_media_codec_get_output_info(self->codec_, &info, &crop);
 
-  // info.width/height sono le dimensioni del BUFFER (gia' allineate dal
-  // vendor): valgono quindi da stride e da altezza di slice. crop e' la parte
-  // davvero visibile, che e' cio' che consegniamo a Chromium.
-  const int stride = static_cast<int>(info.width);
+  // info.width/height sono le dimensioni del BUFFER dichiarate dal vendor:
+  // l'altezza vale da altezza di slice, la larghezza solo come primo candidato
+  // per lo stride (vedi StimaStrideLuma). crop e' la parte davvero visibile,
+  // che e' cio' che consegniamo a Chromium.
+  int stride = static_cast<int>(info.width);
   const int slice_height = static_cast<int>(info.height);
   const gfx::Size visible(crop.right - crop.left, crop.bottom - crop.top);
   if (stride <= 0 || slice_height <= 0 || visible.IsEmpty()) {
@@ -507,6 +571,29 @@ void DroidVideoDecoder::OnDataAvailable(void* data, void* encoded_raw) {
                << " non convertibile con libyuv, ripiego sul software";
     self->broken_.store(true, std::memory_order_relaxed);
     return;
+  }
+
+  // Lo stride si stima dai pixel finche' un fotogramma non da' un verdetto
+  // netto, poi resta fisso per quella geometria (rifatto se cambia).
+  const gfx::Size geometria(info.width, info.height);
+  if (self->stride_per_ != geometria) {
+    self->stride_per_ = geometria;
+    self->stride_deciso_ = 0;
+  }
+  if (self->stride_deciso_ > 0) {
+    stride = self->stride_deciso_;
+  } else {
+    const StimaStride stima = StimaStrideLuma(
+        static_cast<const uint8_t*>(encoded->data.data),
+        static_cast<size_t>(encoded->data.size), stride, slice_height,
+        crop.right, crop.bottom);
+    stride = stima.stride;
+    if (stima.decisa) {
+      self->stride_deciso_ = stride;
+      LOG(INFO) << "droidmedia: stride " << stride << " (dichiarato "
+                << info.width << ", buffer di " << encoded->data.size
+                << " byte)";
+    }
   }
 
   // Il vendor deve averci dato almeno un 4:2:0 intero: senza questo controllo

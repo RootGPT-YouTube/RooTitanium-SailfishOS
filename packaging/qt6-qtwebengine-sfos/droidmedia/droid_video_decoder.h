@@ -145,6 +145,13 @@ class MEDIA_EXPORT DroidVideoDecoder : public VideoDecoder {
   // prossimo Reset deve ricrearlo, non limitarsi al flush.
   std::atomic<bool> drained_{false};
 
+  // Stride VERO del buffer di uscita, stimato dai pixel (vedi StimaStride nel
+  // .cc): la larghezza che il vendor dichiara non e' affidabile. 0 = non
+  // ancora deciso per la geometria `stride_per_`. Li tocca solo il thread del
+  // vendor, dentro il lock del Ponte.
+  int stride_deciso_ = 0;
+  gfx::Size stride_per_;
+
   VideoDecoderConfig config_;
   OutputCB output_cb_;
   bool needs_bitstream_conversion_ = false;
