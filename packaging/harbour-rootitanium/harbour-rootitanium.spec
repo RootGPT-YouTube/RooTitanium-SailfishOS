@@ -18,7 +18,7 @@
 
 Name:       harbour-rootitanium
 Version:    2.7
-Release:    1
+Release:    2
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -133,6 +133,13 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.7-2
+- Yandex Maps: "Let's go" → "Open" lasciava una scheda bianca (il sito
+  prova ad aprire l'app Android). Ora la scheda vuota si chiude e compare
+  un avviso: la navigazione guidata richiede l'app Android, usare Pure Maps.
+- Ignorati in silenzio i link ad app Android aperti da un sito senza tocco
+  dell'utente (Yandex Maps li tenta al caricamento del percorso).
+
 * Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.7-1
 - Notifiche dei siti: arrivano come notifiche di Sailfish (titolo, testo,
   icona e nome del sito, suono e vibrazione). Toccandole si torna alla

@@ -615,12 +615,38 @@ Window {
     // (link Android). Come Chrome quando l'app non c'è: prima l'URL di riserva,
     // poi, se l'intent punta a una pagina web, la stessa pagina in https.
     // avviso al posto del Play Store: la funzione chiesta esiste solo nell'app
-    function androidAppOnly(u) {
-        if (/[?&]id=com\.google\.android\.apps\.maps(&|$)/.test(u))
+    // u = URL del Play Store (id=…) o pacchetto Android nudo; view = scheda da
+    // chiudere se è rimasta vuota (popup aperto solo per raggiungere l'app)
+    function androidAppOnly(u, view) {
+        dropEmptyTab(view)
+        if (/(^|[?&]id=)com\.google\.android\.apps\.maps(&|$)/.test(u))
             toast.show(win.t("La navigazione guidata richiede l'app Google Maps per Android. Per guidare usa Pure Maps.",
                              "Turn-by-turn navigation needs the Google Maps Android app. Use Pure Maps to drive."))
+        else if (/(^|[?&]id=)ru\.yandex\.(yandexmaps|yandexnavi)(&|$)/.test(u))
+            toast.show(win.t("La navigazione guidata richiede l'app Yandex Maps per Android. Per guidare usa Pure Maps.",
+                             "Turn-by-turn navigation needs the Yandex Maps Android app. Use Pure Maps to drive."))
         else
             toast.show(win.t("Questa funzione richiede un'app Android", "This feature needs an Android app"))
+    }
+
+    // «Let's go» di Yandex Maps apre una scheda NUOVA che passa da un redirect
+    // (appmetrica) a intent:// senza URL di riserva: rifiutato l'intent, la
+    // scheda restava bianca e sembrava che il pulsante non facesse nulla.
+    // Se la scheda non ha mai mostrato una pagina la chiudiamo e torniamo
+    // a quella che l'ha aperta.
+    property int popupOpener: -1
+    function dropEmptyTab(view) {
+        if (!view || view.canGoBack || view.localPage !== "" || tabsModel.count < 2) return
+        for (var i = 0; i < tabsModel.count; i++) {
+            if (tabsRepeater.itemAt(i) !== view) continue
+            var cur = "" + view.url
+            if (cur !== "" && cur !== "about:blank" && cur !== "" + tabsModel.get(i).start) return
+            var back = popupOpener
+            popupOpener = -1
+            closeTab(i)
+            if (back >= 0 && back < tabsModel.count) switchTab(back)
+            return
+        }
     }
 
     property string intentLastWeb: ""
@@ -629,13 +655,14 @@ Window {
         if (!view) return
         var hash = u.indexOf("#Intent;")
         var extra = hash >= 0 ? u.substring(hash + 8).split(";") : []
-        var fallback = "", scheme = ""
+        var fallback = "", scheme = "", pkg = ""
         for (var i = 0; i < extra.length; i++) {
             if (extra[i].indexOf("S.browser_fallback_url=") === 0) {
                 try { fallback = decodeURIComponent(extra[i].substring(23)) } catch(e) { fallback = extra[i].substring(23) }
             } else if (extra[i].indexOf("scheme=") === 0) scheme = extra[i].substring(7).toLowerCase()
+            else if (extra[i].indexOf("package=") === 0) pkg = extra[i].substring(8)
         }
-        if (/^https:\/\/play\.google\.com\/store\/apps\//i.test(fallback)) { androidAppOnly(fallback); return }
+        if (/^https:\/\/play\.google\.com\/store\/apps\//i.test(fallback)) { androidAppOnly(fallback, view); return }
         if (/^https?:\/\//i.test(fallback)) { view.url = fallback; return }
         if (scheme === "https" || scheme === "http") {
             var web = scheme + "://" + u.substring(u.indexOf("://") + 3, hash >= 0 ? hash : u.length)
@@ -646,6 +673,8 @@ Window {
                 return
             }
         }
+        if (pkg !== "") { androidAppOnly(pkg, view); return }
+        dropEmptyTab(view)
         toast.show(win.t("Questo link apre un'app Android", "This link opens an Android app"))
     }
 
@@ -3306,7 +3335,7 @@ ${histCss}
                     onNewWindowRequested: function(request) {
                         var u = "" + request.requestedUrl
                         if (u === "" || u === "about:blank") return
-                        if (win.cfgPopups) win.newTabUrl(priv, u)
+                        if (win.cfgPopups) { win.popupOpener = index; win.newTabUrl(priv, u) }
                         else if (request.userInitiated) url = u
                         else toast.show(win.t("Popup bloccato: ", "Popup blocked: ") + win.histHost(u))
                     }
@@ -3340,7 +3369,8 @@ ${histCss}
                             // dall'utente): app Android che qui non si installano.
                             // Caso tipico: «Avvia» di Google Maps (task 2.6 #4)
                             request.reject()
-                            Qt.callLater(function() { win.androidAppOnly(u) })
+                            var pv = this
+                            Qt.callLater(function() { win.androidAppOnly(u, pv) })
                         } else if (!/^(https?|about|data|blob|file|qrc|chrome|view-source|javascript):/i.test(u)
                                    && !/^intent:/i.test(u) && request.userInitiated !== true) {
                             // schema esterno (tel:, mailto:, …) senza tocco dell'utente:
@@ -3351,6 +3381,11 @@ ${histCss}
                             // Google Maps reindirizza a intent://): Chromium non lo
                             // apre → si fa come Chrome senza l'app, URL di riserva
                             request.reject()
+                            // Yandex Maps tenta un intent:// da solo al caricamento del
+                            // percorso (né pacchetto né URL di riserva): senza tocco si
+                            // scarta muto. NB: un intent arrivato per redirect qui NON
+                            // risulta RedirectNavigation, non si può filtrare su quello
+                            if (request.userInitiated !== true && !/;(package|S\.browser_fallback_url)=/.test(u)) return
                             var iv = this
                             Qt.callLater(function() { win.openIntent(iv, u) })
                         }
