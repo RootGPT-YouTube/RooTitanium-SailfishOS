@@ -40,6 +40,7 @@
 // espone setUrlRequestInterceptor come metodo C++ pubblico, verificato in 6.8.3)
 #include <QtWebEngineCore/QWebEngineUrlRequestInterceptor>
 #include <QtWebEngineCore/QWebEngineUrlRequestInfo>
+#include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 
@@ -103,9 +104,14 @@ public:
     using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
     void interceptRequest(QWebEngineUrlRequestInfo &info) override
     {
-        // engine reale = Chromium 122 (Qt 6.8.3): versione coerente
-        info.setHttpHeader("sec-ch-ua",
-            "\"Google Chrome\";v=\"122\", \"Chromium\";v=\"122\", \"Not:A-Brand\";v=\"24\"");
+        // versione letta dal motore (task 2.6 #3): con la 122 scritta a mano
+        // il passaggio a Chromium 140 lasciava l'header indietro
+        static const QByteArray secChUa = [] {
+            const QByteArray major = QByteArray(qWebEngineChromiumVersion()).split('.').value(0);
+            return QByteArray("\"Google Chrome\";v=\"") + major + "\", \"Chromium\";v=\"" + major
+                   + "\", \"Not:A-Brand\";v=\"24\"";
+        }();
+        info.setHttpHeader("sec-ch-ua", secChUa);
         info.setHttpHeader("sec-ch-ua-mobile", "?1");
         info.setHttpHeader("sec-ch-ua-platform", "\"Android\"");
 
@@ -506,6 +512,10 @@ public:
 
     // Cartella download: ~/Downloads (o localizzata, xdg-user-dirs), creata
     // se manca — così ogni download PARTE già con destinazione valida
+    // versione completa del Chromium del motore (es. "140.0.7339.264"):
+    // UA e Client Hints la prendono da qui (task 2.6 #3)
+    Q_INVOKABLE QString chromiumVersion() { return QString::fromLatin1(qWebEngineChromiumVersion()); }
+
     Q_INVOKABLE QString downloadsPath()
     {
         QString dir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);

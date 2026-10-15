@@ -13,7 +13,7 @@ build di `qt6-qtwebengine-sfos/`) in un RPM installabile via Storeman/pkcon.
 - **`/usr/share/applications/harbour-rootitanium.desktop`** — con sezione
   `[X-Sailjail] Sandboxing=Disabled`: l'app gira FUORI dal sandbox firejail
   (le servono `/home/rootitanium`, le lib hybris di sistema e Chromium `--no-sandbox`).
-- **`/usr/share/icons/hicolor/{86,108,128,172}/apps/harbour-rootitanium.png`**.
+- **`/usr/share/icons/hicolor/{86,108,128,172,256}/apps/harbour-rootitanium.png`**.
 
 ## Perché queste scelte (SFOS sailjail)
 Lipstick lancia le app via `invoker --type=<T> -- sailjail -p <profile> -- <bin>`.

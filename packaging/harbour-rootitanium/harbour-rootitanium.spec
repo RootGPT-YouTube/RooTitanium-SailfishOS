@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.5
+Version:    2.6
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -110,7 +110,7 @@ install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}
 mkdir -p %{buildroot}%{_datadir}/dbus-1/services
 install -m0644 %{stagingdir}/com.github.RootGPT_YouTube.rootitanium.service %{buildroot}%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
 # 3) icone -> hicolor (le taglie disponibili nello staging)
-for s in 86 108 128 172; do
+for s in 86 108 128 172 256; do
   if [ -f %{stagingdir}/icons/${s}.png ]; then
     mkdir -p %{buildroot}%{_datadir}/icons/hicolor/${s}x${s}/apps
     install -m0644 %{stagingdir}/icons/${s}.png %{buildroot}%{_datadir}/icons/hicolor/${s}x${s}/apps/harbour-rootitanium.png
@@ -133,6 +133,18 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.6-1
+- Pulsante Ricarica nella barra, fra Indietro e l'indirizzo.
+- Opzione: il pulsante HOME apre la pagina iniziale in una nuova scheda.
+- User agent e Client Hints dicono la versione vera del motore
+  (Chrome 140, prima 122), letta dal motore stesso.
+- Google Maps: Indicazioni funziona (i link intent:// delle app Android
+  aprono l'indirizzo di riserva, come fa Chrome); «Avvia» mostra un avviso
+  invece di finire sul Play Store.
+- Barra nascosta scorrendo: ricompare su ogni pagina nuova e sulle pagine
+  interne (prima da Permessi siti non si tornava indietro).
+- Nuova icona in stile acciaio.
+
 * Mon Oct 12 2026 RootGPT <emagiampa@gmail.com> - 2.5-1
 - Nuovo motore: Chromium 140 (Qt WebEngine 6.140 su Qt 6.12), con le
   correzioni di sicurezza fino a Chromium 154. Prima era Chromium 122.

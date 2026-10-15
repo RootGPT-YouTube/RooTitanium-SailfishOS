@@ -313,9 +313,14 @@ Window {
     // "Chromium 122 su Android, mobile" — UA nel formato RIDOTTO ufficiale di
     // Chrome Android (piattaforma congelata "Android 10; K", solo major
     // version) + Client Hints allineati in applyClientHints()
+    // Versione dal motore (task 2.6 #3): la 122 scritta a mano era rimasta
+    // anche col passaggio a Chromium 140. Lo UA ridotto porta solo la major
+    // ("140.0.0.0"), come Chrome vero; la completa va nei Client Hints.
     property bool desktopMode: false
-    readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
-    readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    readonly property string chromeFull: (typeof rtNative !== "undefined" && rtNative.chromiumVersion) ? rtNative.chromiumVersion() : "140.0.0.0"
+    readonly property string chromeMajor: chromeFull.split(".")[0]
+    readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Mobile Safari/537.36"
+    readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Safari/537.36"
     function setDesktop(on) { desktopMode = on; applyClientHints(); if (currentView) currentView.reload() }
 
     // ESPERIMENTO login X (#7) — ESITO NEGATIVO, toggle lasciato SPENTO.
@@ -359,7 +364,7 @@ Window {
                 ch.bitness = m ? "" : "64"
                 ch.wow64 = false
                 // Brand list allineata all'header sec-ch-ua dell'interceptor C++
-                // (main.cpp): il low-entropy dice "Google Chrome";v="122", il JS
+                // (main.cpp): il low-entropy dice "Google Chrome";v="<major>", il JS
                 // diceva solo "Chromium" → mismatch fra i due canali, segnale di
                 // browser manipolato per gli anti-bot che li confrontano. Questo
                 // setter alimenta l'header Sec-CH-UA-Full-Version-List e il campo
@@ -370,8 +375,8 @@ Window {
                 // senza getHighEntropyValues) resta "Chromium" — Qt espone solo
                 // brand_full_version_list, non brand_version_list
                 ch.fullVersionList = {
-                    "Google Chrome": "122.0.0.0",
-                    "Chromium": "122.0.0.0",
+                    "Google Chrome": win.chromeFull,
+                    "Chromium": win.chromeFull,
                     "Not:A-Brand": "24.0.0.0"
                 }
             } catch(e) { console.warn("clientHints non disponibili: " + e) }
@@ -408,6 +413,7 @@ Window {
     property bool cfgPermDownload: true     // download/salvataggio file
     property bool cfgFirstRunSeen: false    // pop-up una-tantum "primo avvio" già mostrato
     property string cfgHome: ""             // vuoto = HOME interna RooTitanium
+    property bool cfgHomeNewTab: false      // ⌂ apre la HOME in una scheda nuova (task 2.6 #2)
     property string cfgSearch: "duckduckgo"
     // Barra degli indirizzi in basso + nascondi scorrendo (task 2.5 #2).
     // L'auto-hide vale solo con la barra in basso (scelta utente).
@@ -531,6 +537,7 @@ Window {
         try { customEngines = JSON.parse(kvGet("set_customsearch", "[]")) || [] } catch(e) { customEngines = [] }
         cfgBarBottom    = kvGet("set_barbottom", "0") === "1"
         cfgBarAutoHide  = kvGet("set_barautohide", "0") === "1"
+        cfgHomeNewTab   = kvGet("set_homenewtab", "0") === "1"
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!engineFor(cfgSearch)) cfgSearch = "duckduckgo"
         cfgDlDir        = kvGet("set_dldir", "downloads")
@@ -563,6 +570,7 @@ Window {
         else if (k === "cookies")  { cfgCookies = on;   kvSet("set_cookies", v) }
         else if (k === "barbottom"){ cfgBarBottom = on; kvSet("set_barbottom", v); barShow() }
         else if (k === "barautohide"){ cfgBarAutoHide = on; kvSet("set_barautohide", v); barShow() }
+        else if (k === "homenewtab"){ cfgHomeNewTab = on; kvSet("set_homenewtab", v) }
         else if (k === "popups")   { cfgPopups = on;    kvSet("set_popups", v) }
         else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs(); syncPrivacy() }
         else if (k === "cookies3p"){ cfg3pCookies = on; kvSet("set_3pcookies", v); syncPrivacy() }
@@ -599,6 +607,44 @@ Window {
             if (!t.priv && /^https?:\/\//i.test(t.murl) && !/^https?:\/\/[^\/]*\.local(\/|$)/i.test(t.murl)) urls.push("" + t.murl)
         }
         kvSet("session_tabs", JSON.stringify(urls))
+    }
+
+    // intent://HOST/PATH#Intent;scheme=https;S.browser_fallback_url=…;end
+    // (link Android). Come Chrome quando l'app non c'è: prima l'URL di riserva,
+    // poi, se l'intent punta a una pagina web, la stessa pagina in https.
+    // avviso al posto del Play Store: la funzione chiesta esiste solo nell'app
+    function androidAppOnly(u) {
+        if (/[?&]id=com\.google\.android\.apps\.maps(&|$)/.test(u))
+            toast.show(win.t("La navigazione guidata richiede l'app Google Maps per Android. Per guidare usa Pure Maps.",
+                             "Turn-by-turn navigation needs the Google Maps Android app. Use Pure Maps to drive."))
+        else
+            toast.show(win.t("Questa funzione richiede un'app Android", "This feature needs an Android app"))
+    }
+
+    property string intentLastWeb: ""
+    property real intentLastAt: 0
+    function openIntent(view, u) {
+        if (!view) return
+        var hash = u.indexOf("#Intent;")
+        var extra = hash >= 0 ? u.substring(hash + 8).split(";") : []
+        var fallback = "", scheme = ""
+        for (var i = 0; i < extra.length; i++) {
+            if (extra[i].indexOf("S.browser_fallback_url=") === 0) {
+                try { fallback = decodeURIComponent(extra[i].substring(23)) } catch(e) { fallback = extra[i].substring(23) }
+            } else if (extra[i].indexOf("scheme=") === 0) scheme = extra[i].substring(7).toLowerCase()
+        }
+        if (/^https:\/\/play\.google\.com\/store\/apps\//i.test(fallback)) { androidAppOnly(fallback); return }
+        if (/^https?:\/\//i.test(fallback)) { view.url = fallback; return }
+        if (scheme === "https" || scheme === "http") {
+            var web = scheme + "://" + u.substring(u.indexOf("://") + 3, hash >= 0 ? hash : u.length)
+            // anti-loop: se quella pagina rimanda di nuovo a intent:// ci si ferma
+            if (web !== intentLastWeb || Date.now() - intentLastAt > 5000) {
+                intentLastWeb = web; intentLastAt = Date.now()
+                view.url = web
+                return
+            }
+        }
+        toast.show(win.t("Questo link apre un'app Android", "This link opens an Android app"))
     }
 
     // HOME della scheda: pagina interna, o l'URL scelto in Impostazioni
@@ -1043,6 +1089,10 @@ Window {
         view.localPage = kind
         // le pagine interne (già a tema nostro) NON vanno force-darkate da Chromium
         try { view.settings.forceDarkMode = false } catch(e) {}
+        // auto-hide (task 2.6 #5): loadHtml non emette urlChanged, quindi la
+        // barra nascosta restava giù; e le pagine interne corte non scorrono,
+        // l'unico modo di farla tornare → senza Indietro né menù
+        if (view === currentView) barShow()
         view.loadHtml(html, base)
     }
 
@@ -1743,7 +1793,7 @@ ${body}
                  + "if(a){var d=a.querySelector('.rad');if(d)d.classList.add('on');}})();"
         }
         var bools = ["js","cookies","popups","dnt","cookies3p","noreferrer",
-                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide"]
+                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide","homenewtab"]
         if (bools.indexOf(k) >= 0) {           // toggle: commuta .on e inverte l'href
             var on = v === "1"
             return "(function(){var a=document.getElementById('r_" + k + "');if(!a)return;"
@@ -1815,6 +1865,7 @@ button{flex:none;background:var(--accent);border:0;border-radius:8px;color:#fff;
 <input name="u" value="${htmlEsc(cfgHome)}" placeholder="${win.t("HOME di RooTitanium", "RooTitanium HOME")}" inputmode="url" autocapitalize="off" autocorrect="off">
 <button>${win.t("Salva", "Save")}</button>
 </form>
+${sToggle("homenewtab", cfgHomeNewTab, win.t("⌂ apre una nuova scheda", "⌂ opens a new tab"), win.t("Il pulsante HOME apre la pagina iniziale in una scheda nuova invece di sostituire quella attuale", "The HOME button opens the home page in a new tab instead of replacing the current one"))}
 <h2>${win.t("Motore di ricerca", "Search engine")}</h2>
 ${engines}
 <form action="https://settings.local/addsearch" method="get" style="flex-wrap:wrap">
@@ -2895,7 +2946,7 @@ ${histCss}
                 width: 48 * win.u; height: parent.height
                 Text { anchors.centerIn: parent; text: "⌂"; color: win.pal.fg; font.pixelSize: 30 * win.u }
                 Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: hma.pressed ? 0.10 : 0 }
-                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; win.goHome(win.currentView) } }
+                MouseArea { id: hma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.cfgHomeNewTab) win.newTab(win.currentPrivate); else win.goHome(win.currentView) } }
             }
 
             // back button; durante il caricamento diventa cerchio con ✕ (stop)
@@ -2937,6 +2988,33 @@ ${histCss}
                 }
             }
 
+            // Ricarica (task 2.6 #1): fra Indietro e la barra, richiesto dagli utenti
+            Item {
+                id: reloadBtn
+                anchors.left: backBtn.right; anchors.verticalCenter: parent.verticalCenter
+                width: 44 * win.u; height: parent.height
+                opacity: win.currentView ? 1.0 : 0.35
+                Canvas {
+                    anchors.centerIn: parent
+                    width: 28 * win.u; height: 28 * win.u
+                    property color fgc: win.pal.fg      // tema chiaro/scuro → ridisegna
+                    onFgcChanged: requestPaint()
+                    Component.onCompleted: requestPaint()
+                    onPaint: {
+                        var c = getContext("2d"); c.reset()
+                        var s = width, r = s*0.36
+                        c.strokeStyle = win.pal.fg; c.fillStyle = win.pal.fg
+                        c.lineWidth = Math.max(1, s*0.09); c.lineCap = "round"
+                        // arco aperto in alto a destra + punta di freccia
+                        c.beginPath(); c.arc(s/2, s/2, r, -Math.PI*0.30, Math.PI*1.55); c.stroke()
+                        var a = -Math.PI*0.30, x = s/2 + r*Math.cos(a), y = s/2 + r*Math.sin(a)
+                        c.beginPath(); c.moveTo(x + s*0.13, y - s*0.13); c.lineTo(x + s*0.05, y + s*0.13); c.lineTo(x - s*0.17, y - s*0.02); c.closePath(); c.fill()
+                    }
+                }
+                Rectangle { anchors.fill: parent; radius: width/2; color: "#ffffff"; opacity: rma.pressed ? 0.10 : 0 }
+                MouseArea { id: rma; anchors.fill: parent; onClicked: { urlbar.focus = false; if (win.currentView) win.currentView.reload() } }
+            }
+
             Item {
                 id: menuBtn
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 6 * win.u
@@ -2964,7 +3042,7 @@ ${histCss}
 
             Rectangle {
                 id: pill
-                anchors.left: backBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
+                anchors.left: reloadBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 4 * win.u; anchors.rightMargin: 4 * win.u
                 height: 54 * win.u; radius: height / 2; clip: true
                 color: urlbar.activeFocus ? win.pal.card : (win.currentPrivate ? "#352b44" : win.pal.surface)
@@ -3142,6 +3220,10 @@ ${histCss}
                     }
                     settings.fullScreenSupportEnabled: true
                     settings.javascriptEnabled: win.cfgJs
+                    // task 2.6 #4: col default (solo da tocco) gli intent:// arrivati
+                    // per redirect morivano dentro Chromium senza passare da
+                    // onNavigationRequested. Ora passano tutti e il filtro è là.
+                    settings.unknownUrlSchemePolicy: WebEngineSettings.AllowAllUnknownUrlSchemes
                     Component.onCompleted: {
                         userScripts.collection = win.buildScripts()
                         // REVISION(6,7): guardia come in applyViewPrefs
@@ -3193,6 +3275,9 @@ ${histCss}
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
                         shownUrl = "" + url
+                        // ogni pagina nuova parte con la barra visibile (task 2.6 #5):
+                        // su una pagina che non scorre non tornerebbe più
+                        if (li.status !== WebEngineView.LoadStartedStatus && index === win.currentTab) win.barShow()
                         if (li.status === WebEngineView.LoadSucceededStatus) {
                             if (win.orient !== 0)
                                 runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
@@ -3210,6 +3295,26 @@ ${histCss}
                             request.reject()
                             var view = this
                             Qt.callLater(function() { win.internalNav(view, u) })
+                        } else if (/^https:\/\/play\.google\.com\/store\/apps\/details/i.test(u)
+                                   && (request.navigationType === WebEngineNavigationRequest.RedirectNavigation
+                                       || (request.navigationType !== WebEngineNavigationRequest.TypedNavigation && request.userInitiated !== true))) {
+                            // un sito che ci SPINGE sul Play Store (non un link toccato
+                            // dall'utente): app Android che qui non si installano.
+                            // Caso tipico: «Avvia» di Google Maps (task 2.6 #4)
+                            request.reject()
+                            Qt.callLater(function() { win.androidAppOnly(u) })
+                        } else if (!/^(https?|about|data|blob|file|qrc|chrome|view-source|javascript):/i.test(u)
+                                   && !/^intent:/i.test(u) && request.userInitiated !== true) {
+                            // schema esterno (tel:, mailto:, …) senza tocco dell'utente:
+                            // bloccato come faceva la policy di default
+                            request.reject()
+                        } else if (/^intent:/i.test(u)) {
+                            // link per un'app Android (task 2.6 #4: Indicazioni di
+                            // Google Maps reindirizza a intent://): Chromium non lo
+                            // apre → si fa come Chrome senza l'app, URL di riserva
+                            request.reject()
+                            var iv = this
+                            Qt.callLater(function() { win.openIntent(iv, u) })
                         }
                     }
                     // richiesta permesso di un sito (geoloc/notifiche/camera/mic/…):
