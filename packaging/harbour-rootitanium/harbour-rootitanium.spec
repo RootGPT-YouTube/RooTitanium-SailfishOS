@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.6
+Version:    2.7
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -133,6 +133,17 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.7-1
+- Notifiche dei siti: arrivano come notifiche di Sailfish (titolo, testo,
+  icona e nome del sito, suono e vibrazione). Toccandole si torna alla
+  scheda del sito; ad app chiusa RooTitanium si riapre sul sito.
+- Le schede dei siti autorizzati alle notifiche restano attive in
+  background (prima venivano congelate e non avrebbero potuto notificare).
+- In incognito le notifiche sono negate, come in Chrome.
+- L'interruttore Permessi App > Notifiche spento zittisce anche i siti
+  gia' autorizzati.
+- About: versione corretta (diceva ancora 2.5).
+
 * Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.6-1
 - Pulsante Ricarica nella barra, fra Indietro e l'indirizzo.
 - Opzione: il pulsante HOME apre la pagina iniziale in una nuova scheda.
