@@ -43,6 +43,13 @@
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
+#include <QtWebEngineCore/QWebEngineNotification>
+#include <QQmlEngine>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QDataStream>
+#include <QImage>
+#include <QPointer>
 
 // ⚠️ Link visitati (cancellazione selettiva della cronologia, 12 ott 2026).
 // Chromium tiene la sua lista dei link visitati (il colore :visited) e Qt la
@@ -298,6 +305,204 @@ private:
 // anche il vecchio inoltro: un secondo processo lanciato con un URL trova il
 // nome occupato e lo passa qui prima di uscire (main()). Interfaccia standard
 // org.freedesktop.Application, come in RooTheater.
+// ===================== notifiche dei siti (task 2.7 #1) =====================
+// Senza un ricevitore di presentNotification il permesso «Notifiche» si
+// concedeva ma non compariva nulla. Qui ogni notifica del motore diventa una
+// notifica di sistema (org.freedesktop.Notifications di lipstick).
+// Tocco sulla notifica: lipstick chiama il nostro rtNotificationClicked (hint
+// x-nemo-remote-action-default) → click() verso il sito + primo piano. Con
+// l'app chiusa il .service di attivazione DBus la riavvia e si apre l'origine.
+class RtNotifier : public QObject
+{
+    Q_OBJECT
+public:
+    RtNotifier(const QString &busName, const QString &objPath)
+        : m_busName(busName), m_objPath(objPath)
+    {
+        QDBusConnection::sessionBus().connect(
+            QString(), QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("NotificationClosed"),
+            this, SLOT(onSystemClosed(uint,uint)));
+    }
+
+    std::atomic<bool> enabled{true};   // interruttore «Permessi App › Notifiche»
+
+    void attach(QQuickWebEngineProfile *p)
+    {
+        connect(p, &QQuickWebEngineProfile::presentNotification, this, &RtNotifier::present);
+    }
+
+    // true = notifica ancora nostra: click() inoltrato al sito
+    bool activate(const QString &key)
+    {
+        auto it = m_items.find(key);
+        const bool ours = it != m_items.end() && it->n;
+        qWarning("[rt] notifica %s toccata: %s", qPrintable(key), ours ? "click al sito" : "non piu' nostra");
+        if (!ours) return false;
+        it->n->click();
+        return true;
+    }
+
+private slots:
+    void present(QWebEngineNotification *n)
+    {
+        if (!n) return;
+        // il profilo QML la consegna con proprieta' JavaScript: nessun handler
+        // QML la tiene, quindi la gestiamo noi (la cancelliamo noi alla chiusura)
+        QQmlEngine::setObjectOwnership(n, QQmlEngine::CppOwnership);
+        // incognito: niente notifiche (il QML nega gia' il permesso, come
+        // Chrome; questo e' il paracadute). Si guarda qui e non all'attach
+        // perche' il profilo normale nasce off-the-record e cambia dopo
+        auto *prof = qobject_cast<QQuickWebEngineProfile *>(sender());
+        if (!enabled.load() || (prof && prof->isOffTheRecord())) { n->deleteLater(); return; }
+
+        // stesso tag dello stesso sito = sostituisce la precedente (come Chrome).
+        // Senza tag mai: matches() confronta solo tag e origine, e due notifiche
+        // senza tag dello stesso sito si sarebbero cancellate a vicenda
+        uint replaces = 0;
+        for (auto it = m_items.begin(); !n->tag().isEmpty() && it != m_items.end(); ++it) {
+            if (it->n && it->n->matches(n)) {
+                replaces = it->id;
+                it->n->deleteLater();
+                m_items.erase(it);
+                break;
+            }
+        }
+        const QString key = QString::number(++m_seq);
+        const QString origin = n->origin().toString();
+        const QString host = n->origin().host();
+
+        QVariantMap hints;
+        hints.insert(QStringLiteral("x-nemo-preview-summary"), n->title());
+        hints.insert(QStringLiteral("x-nemo-preview-body"), n->message());
+        hints.insert(QStringLiteral("x-nemo-feedback"), QStringLiteral("chat_exists"));
+        hints.insert(QStringLiteral("x-nemo-priority"), 120);
+        hints.insert(QStringLiteral("urgency"), QVariant::fromValue<uchar>(1));
+        hints.insert(QStringLiteral("x-nemo-remote-action-default"),
+                     m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtNotificationClicked ")
+                     + arg(key) + ' ' + arg(origin));
+        const QString icon = saveIcon(n->icon(), host);
+        if (!icon.isEmpty()) hints.insert(QStringLiteral("image-path"), icon);
+
+        // il corpo dice anche DA DOVE arriva: titolo e testo li sceglie il sito
+        QString body = n->message();
+        if (!host.isEmpty()) body = body.isEmpty() ? host : body + QStringLiteral("\n") + host;
+
+        QDBusMessage m = QDBusMessage::createMethodCall(
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("Notify"));
+        m.setArguments({ QStringLiteral("RooTitanium"), replaces, appIcon(), n->title(), body,
+                         QStringList{ QStringLiteral("default"), QString() }, hints, -1 });
+
+        Item item; item.n = n; item.origin = origin;
+        m_items.insert(key, item);
+        connect(n, &QWebEngineNotification::closed, this, [this, key]() { closedBySite(key); });
+
+        auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(m), this);
+        connect(w, &QDBusPendingCallWatcher::finished, this, [this, key](QDBusPendingCallWatcher *w) {
+            QDBusPendingReply<uint> r = *w;
+            w->deleteLater();
+            auto it = m_items.find(key);
+            if (r.isError()) {
+                qWarning() << "[rt] notifica non consegnata:" << r.error().message();
+                if (it != m_items.end()) { if (it->n) it->n->deleteLater(); m_items.erase(it); }
+                return;
+            }
+            if (it == m_items.end()) {          // il sito l'ha gia' chiusa
+                closeSystem(r.value());
+                return;
+            }
+            it->id = r.value();
+            qWarning("[rt] notifica %s mostrata (id %u)", qPrintable(key), it->id);
+            if (it->n) it->n->show();           // evento «show» verso il sito
+        });
+    }
+
+    // chiusa da lipstick (scorrimento, «cancella tutto» o dopo il tocco)
+    void onSystemClosed(uint id, uint reason)
+    {
+        for (auto it = m_items.begin(); it != m_items.end(); ++it) {
+            if (it->id != id) continue;
+            const QString key = it.key();
+            qWarning("[rt] notifica %s chiusa dal sistema (motivo %u)", qPrintable(key), reason);
+            // dopo un tocco lipstick chiude la notifica e chiama il remote
+            // action quasi insieme, in ordine non garantito: si aspetta un
+            // attimo prima di dimenticarla, o il click arriverebbe a vuoto
+            QTimer::singleShot(3000, this, [this, key]() {
+                auto it = m_items.find(key);
+                if (it == m_items.end()) return;
+                QPointer<QWebEngineNotification> n = it->n;
+                m_items.erase(it);
+                if (n) { n->close(); n->deleteLater(); }
+            });
+            return;
+        }
+    }
+
+private:
+    struct Item { QPointer<QWebEngineNotification> n; QString origin; uint id = 0; };
+
+    void closedBySite(const QString &key)
+    {
+        auto it = m_items.find(key);
+        if (it == m_items.end()) return;
+        const uint id = it->id;
+        if (it->n) it->n->deleteLater();
+        m_items.erase(it);
+        if (id) closeSystem(id);
+    }
+
+    static void closeSystem(uint id)
+    {
+        QDBusMessage m = QDBusMessage::createMethodCall(
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("CloseNotification"));
+        m.setArguments({ id });
+        QDBusConnection::sessionBus().send(m);
+    }
+
+    // argomento del remote action: QVariant serializzato e in base64, come lo
+    // decodifica lipstick (Qt 5) → formato di stream fissato a Qt 5
+    static QString arg(const QString &v)
+    {
+        QByteArray ba;
+        QDataStream s(&ba, QIODevice::WriteOnly);
+        s.setVersion(QDataStream::Qt_5_6);
+        s << QVariant(v);
+        return QString::fromLatin1(ba.toBase64());
+    }
+
+    static QString appIcon()
+    {
+        for (const char *sz : { "172x172", "128x128", "108x108", "86x86" }) {
+            const QString p = QStringLiteral("/usr/share/icons/hicolor/%1/apps/harbour-rootitanium.png")
+                                  .arg(QLatin1String(sz));
+            if (QFileInfo::exists(p)) return p;
+        }
+        return QStringLiteral("harbour-rootitanium");
+    }
+
+    // icona del sito: un file per host nella cache (lipstick vuole un percorso)
+    static QString saveIcon(const QImage &img, const QString &host)
+    {
+        if (img.isNull() || host.isEmpty()) return QString();
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
+                            + QStringLiteral("/notifiche");
+        QDir().mkpath(dir);
+        QString safe = host;
+        safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9.-]")), QStringLiteral("_"));
+        const QString path = dir + '/' + safe + QStringLiteral(".png");
+        const QImage scaled = img.width() > 128 || img.height() > 128
+            ? img.scaled(128, 128, Qt::KeepAspectRatio, Qt::SmoothTransformation) : img;
+        return scaled.save(path, "PNG") ? path : QString();
+    }
+
+    QString m_busName, m_objPath;
+    QHash<QString, Item> m_items;
+    quint64 m_seq = 0;
+};
+static RtNotifier *g_notifier = nullptr;
+
 class OpenHandler : public QObject
 {
     Q_OBJECT
@@ -321,8 +526,18 @@ public slots:
         return n;
     }
 
+    // tocco su una notifica di un sito (remote action di lipstick, task 2.7 #1)
+    void rtNotificationClicked(const QString &key, const QString &origin)
+    {
+        if (g_notifier && g_notifier->activate(key)) emit notificationClicked(origin);
+        else if (!origin.isEmpty()) emit openRequested(origin);   // app riavviata: la notifica non e' piu' nostra
+        if (!RtWindowRaiser::raise())
+            qWarning("[rt] primo piano non richiesto: finestra o protocollo assenti");
+    }
+
 signals:
     void openRequested(const QString &url);   // → QML: apri in NUOVA scheda
+    void notificationClicked(const QString &origin);   // → QML: vai alla scheda del sito
 
 private:
     void handle(const QString &uri)
@@ -548,6 +763,8 @@ public:
         auto *p = qobject_cast<QQuickWebEngineProfile *>(profileObj);
         if (!p) { qWarning() << "rtNative.setupProfile: non è un WebEngineProfile"; return; }
         p->setUrlRequestInterceptor(new HeaderInterceptor(p));
+        // notifiche dei siti (task 2.7 #1). L'incognito lo scarta present()
+        if (g_notifier) g_notifier->attach(p);
 
         // task 1.3 §C — cookie di terze parti. Il filtro resta installato per
         // sempre e consulta il toggle a ogni richiesta: così accenderlo o
@@ -591,6 +808,10 @@ public:
 
     // --- task 1.3 §E: i tre toggle, letti da interceptor e cookie filter ---
     // Chiamata dal QML a ogni cambio e una volta all'avvio dopo loadCfg().
+    // interruttore «Permessi App › Notifiche»: spento, anche i siti gia'
+    // autorizzati tacciono (il permesso salvato per sito resta com'e')
+    Q_INVOKABLE void setNotificationsEnabled(bool on) { if (g_notifier) g_notifier->enabled = on; }
+
     Q_INVOKABLE void setPrivacyFlags(bool dnt, bool noReferrer, bool block3pCookies)
     {
         g_privacy.dnt.store(dnt, std::memory_order_relaxed);
@@ -917,6 +1138,8 @@ int main(int argc, char **argv)
         }
     }
 
+    RtNotifier notifier(busName, objPath);
+    g_notifier = &notifier;
     QQmlApplicationEngine engine;
     NativeHelper native;
     engine.rootContext()->setContextProperty(QStringLiteral("rtNative"), &native);

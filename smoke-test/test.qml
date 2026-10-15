@@ -555,6 +555,8 @@ Window {
     function syncPrivacy() {
         if (typeof rtNative === "undefined") return
         rtNative.setPrivacyFlags(cfgDnt, cfgNoReferrer, cfg3pCookies)
+        // interruttore Notifiche: spento = tacciono anche i siti gia' autorizzati
+        try { rtNative.setNotificationsEnabled(cfgPermNotif) } catch(e) {}
     }
     function applySetting(k, v) {
         if (k === "homepage") {
@@ -592,7 +594,7 @@ Window {
         else if (k === "permcam")   { cfgPermCam = on;      kvSet("set_perm_cam", v) }
         else if (k === "permmic")   { cfgPermMic = on;      kvSet("set_perm_mic", v) }
         else if (k === "permloc")   { cfgPermLoc = on;      kvSet("set_perm_loc", v) }
-        else if (k === "permnotif") { cfgPermNotif = on;    kvSet("set_perm_notif", v) }
+        else if (k === "permnotif") { cfgPermNotif = on;    kvSet("set_perm_notif", v); syncPrivacy() }
         else if (k === "permdl")    { cfgPermDownload = on; kvSet("set_perm_dl", v) }
         else if (k === "uitheme")   { cfgUiTheme = (v === "light") ? "light" : "dark"; kvSet("set_uitheme", cfgUiTheme) }
     }
@@ -1995,7 +1997,14 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
         return true   // altri tipi non coperti dai master → flusso normale
     }
     property var permBlockedToastAt: ({})   // ultimo avviso "bloccato" per tipo di permesso
-    function showPermission(p) {
+    function showPermission(p, priv) {
+        // incognito: niente notifiche, come Chrome (resterebbero sulla schermata
+        // di blocco e negli Eventi anche dopo aver chiuso la scheda)
+        if (priv && p.permissionType === WebEnginePermission.PermissionType.Notifications) {
+            try { p.deny() } catch(e) {}
+            toast.show(win.t("Notifiche non disponibili in incognito", "Notifications are not available in incognito"))
+            return
+        }
         // Interruttore generale spento: si nega SENZA salvare la decisione per il
         // sito (reset subito dopo il deny). Prima il rifiuto restava nei «Permessi
         // siti» come se l'avesse scelto l'utente, e riaccendendo l'interruttore il
@@ -2051,6 +2060,17 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
             var p = normalProfile.queryPermission(origin, type)
             if (p.isValid) p.reset()
         } catch(e) { console.warn("queryPermission/reset: " + e) }
+    }
+    // true = l'origine di u ha il permesso Notifiche concesso (e l'interruttore
+    // generale e' acceso): la sua scheda non va congelata in background
+    function notifKeepAlive(u) {
+        if (!cfgPermNotif) return false
+        var m = /^(https?:\/\/[^\/]+)/i.exec("" + u)
+        if (!m) return false
+        try {
+            var p = normalProfile.queryPermission(m[1], WebEnginePermission.PermissionType.Notifications)
+            return p.isValid && p.state === WebEnginePermission.State.Granted
+        } catch(e) { return false }
     }
     function permRefreshPage() {
         if (currentView && currentView.localPage === "permissions")
@@ -2879,6 +2899,21 @@ ${histCss}
             }
             win.newTabUrl(false, "" + url)
         }
+        // tocco su una notifica di un sito (task 2.7 #1): si va alla sua scheda
+        // (prima la corrente, poi le altre); se non c'e' piu', una nuova
+        function onNotificationClicked(origin) {
+            var o = ("" + origin).replace(/\/+$/, "")
+            if (!o) return
+            function same(i) {
+                var e = tabsModel.get(i)
+                var u = "" + (e ? e.murl : "")
+                return e && !e.priv && (u === o || u.indexOf(o + "/") === 0)
+            }
+            if (currentTab >= 0 && currentTab < tabsModel.count && same(currentTab)) return
+            for (var i = 0; i < tabsModel.count; i++)
+                if (same(i)) { win.switchTab(i); return }
+            win.newTabUrl(false, o)
+        }
     }
     // avvio: config dalla kv PRIMA di creare la prima view (cfgJs/cfgCookies
     // sono binding, ma la homepage/incognito di partenza si decide qui);
@@ -3248,6 +3283,9 @@ ${histCss}
                         if (visible) {
                             discardTimer.stop()
                             lifecycleState = WebEngineView.LifecycleState.Active
+                        } else if (!priv && localPage === "" && win.notifKeepAlive(url)) {
+                            // sito autorizzato alle notifiche (task 2.7 #1): congelato
+                            // non potrebbe piu' mandarne → resta attivo in background
                         } else {
                             lifecycleState = WebEngineView.LifecycleState.Frozen
                             if (localPage === "") discardTimer.restart()
@@ -3256,7 +3294,7 @@ ${histCss}
                     Timer {
                         id: discardTimer
                         interval: 60000   // 60s in background → scarta il renderer
-                        onTriggered: if (!webView.visible && webView.localPage === "")
+                        onTriggered: if (!webView.visible && webView.localPage === "" && !win.notifKeepAlive(webView.url))
                                          webView.lifecycleState = WebEngineView.LifecycleState.Discarded
                     }
                     // popup/nuove schede dai siti (#6): window.open, target=_blank…
@@ -3320,7 +3358,7 @@ ${histCss}
                     // richiesta permesso di un sito (geoloc/notifiche/camera/mic/…):
                     // mostriamo il dialogo QML; grant()/deny() sul permesso, che il
                     // profilo persiste. Senza handler le richieste morivano in silenzio.
-                    onPermissionRequested: function(permission) { win.showPermission(permission) }
+                    onPermissionRequested: function(permission) { win.showPermission(permission, priv) }
                     // Testo della barra. Con Chromium 140 una pagina interna (loadHtml)
                     // CAMBIA url ma Qt NON emette urlChanged (misurato il 12/10): la
                     // barra, legata a url, restava sul sito precedente. Lo rileggiamo
