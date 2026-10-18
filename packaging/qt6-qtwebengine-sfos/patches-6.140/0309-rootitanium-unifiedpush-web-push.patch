@@ -1,0 +1,665 @@
+RooTitanium (task 2.8 #0, 18 ott 2026): Web Push dei siti via UnifiedPush
+(Foghorn su SailfishOS) al posto dei server Google.
+
+- src/core/rt_push.h, rt_push_driver.cpp: RtPushDriver (GCMDriver +
+  InstanceIDHandler). Il token restituito a Chromium e' l'endpoint del
+  distributore; registrazioni in <profilo>/GCM Store/rtpush.json; i messaggi
+  (solo corpo, aes128gcm) li decifra il GCMEncryptionProvider della base.
+  Ponte con l'app ad ABI C (rtpush_*), cercato dall'app con dlsym.
+- gcm_profile_service_factory.cc: con IS_QTWEBENGINE si crea RtPushDriver.
+- push_messaging_utils.cc: CreateEndpoint usa tale e quale un token https://.
+- profile_qt.cpp: le sottoscrizioni non si cancellano piu' alla chiusura.
+- profile_adapter.cpp: InitializeForProfile ripetuto quando il profilo QML
+  passa su disco (nasce off-the-record: al riavvio le iscrizioni restavano
+  senza handler e le push ad app chiusa andavano perse).
+- content_browser_client_qt: OpenURL (clients.openWindow dei service worker)
+  passa l'URL all'app.
+
+Applicare dalla radice di qtwebengine 6.140 con patch -p1.
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 37e1cd4..c3b4ec7 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -165,6 +165,7 @@ foreach(arch ${archs})
+                 profile_adapter_client.cpp profile_adapter_client.h
+                 profile_io_data_qt.cpp profile_io_data_qt.h
+                 profile_qt.cpp profile_qt.h
++                rt_push.h rt_push_driver.cpp
+                 render_view_context_menu_qt.cpp render_view_context_menu_qt.h
+                 render_widget_host_view_qt.cpp render_widget_host_view_qt.h
+                 render_widget_host_view_qt_delegate.h
+diff --git a/src/core/content_browser_client_qt.cpp b/src/core/content_browser_client_qt.cpp
+index e597c6e..40363d5 100644
+--- a/src/core/content_browser_client_qt.cpp
++++ b/src/core/content_browser_client_qt.cpp
+@@ -3,6 +3,8 @@
+ // Qt-Security score:critical reason:network-protocol
+ 
+ #include "content_browser_client_qt.h"
++#include "rt_push.h"
++#include "content/public/browser/page_navigator.h"
+ 
+ #include "base/files/file_util.h"
+ #include "chrome/browser/tab_contents/form_interaction_tab_helper.h"
+@@ -1498,4 +1500,16 @@ void ContentBrowserClientQt::GetMediaDeviceIDSalt(content::RenderFrameHost *rfh,
+     std::move(callback).Run(false, "");
+ }
+ 
++// RooTitanium: tocco su una notifica push → il service worker chiama
++// clients.openWindow(url). Qt non lo gestiva (promessa sempre rifiutata): l'URL
++// va all'app, che lo apre in una scheda. Al worker si risponde nullptr (niente
++// WindowClient), come fa Chrome quando la finestra non e' sua.
++void ContentBrowserClientQt::OpenURL(content::SiteInstance *, const content::OpenURLParams &params,
++                                     base::OnceCallback<void(content::WebContents *)> callback)
++{
++    if (params.url.SchemeIsHTTPOrHTTPS())
++        rtPushOpenUrl(params.url.spec().c_str());
++    std::move(callback).Run(nullptr);
++}
++
+ } // namespace QtWebEngineCore
+diff --git a/src/core/content_browser_client_qt.h b/src/core/content_browser_client_qt.h
+index adc2ec8..3d69eb8 100644
+--- a/src/core/content_browser_client_qt.h
++++ b/src/core/content_browser_client_qt.h
+@@ -255,6 +255,9 @@ public:
+                               const net::SiteForCookies &site_for_cookies,
+                               const blink::StorageKey &storage_key,
+                               base::OnceCallback<void(bool, const std::string&)> callback) override;
++    // RooTitanium: clients.openWindow() dei service worker
++    void OpenURL(content::SiteInstance *site_instance, const content::OpenURLParams &params,
++                 base::OnceCallback<void(content::WebContents *)> callback) override;
+ 
+ private:
+     BrowserMainPartsQt *m_browserMainParts = nullptr;
+diff --git a/src/core/profile_adapter.cpp b/src/core/profile_adapter.cpp
+index c03f967..b8cecd7 100644
+--- a/src/core/profile_adapter.cpp
++++ b/src/core/profile_adapter.cpp
+@@ -3,6 +3,8 @@
+ // Qt-Security score:significant reason:default
+ 
+ #include "profile_adapter.h"
++#include "chrome/browser/push_messaging/push_messaging_service_impl.h"
++#include <QSet>
+ 
+ #include "base/files/file_util.h"
+ #include "base/strings/stringprintf.h"
+@@ -161,6 +163,21 @@ ProfileAdapter::~ProfileAdapter()
+     WebEngineContext::flushMessages();
+ }
+ 
++// RooTitanium (patch 0309): il Push di Chromium si inizializza in
++// ProfileQt::DoFinalInit, ma il profilo QML nasce off-the-record e passa su
++// disco DOPO: InitializeForProfile usciva subito e, al riavvio, le iscrizioni
++// salvate restavano senza handler (push ad app chiusa perse, misurato 19 ott).
++// Lo si ripete quando il profilo e' su disco e il servizio e' acceso, una volta.
++static void rtInitPushOnDisk(ProfileAdapter *adapter, ProfileQt *profile)
++{
++    static QSet<const void *> done;
++    if (!adapter->pushServiceEnabled() || adapter->isOffTheRecord()
++        || adapter->storageName().isEmpty() || done.contains(profile))
++        return;
++    done.insert(profile);
++    PushMessagingServiceImpl::InitializeForProfile(profile);
++}
++
+ void ProfileAdapter::setStorageName(const QString &storageName)
+ {
+     if (storageName == m_name)
+@@ -175,6 +192,7 @@ void ProfileAdapter::setStorageName(const QString &storageName)
+             resetVisitedLinksManager();
+ 
+         reinitializeHistoryService();
++        rtInitPushOnDisk(this, m_profile.data());
+     }
+ }
+ 
+@@ -196,6 +214,7 @@ void ProfileAdapter::setOffTheRecord(bool offTheRecord)
+         faviconService->SetHistoryService(nullptr);
+     } else if (!m_name.isEmpty()) {
+         reinitializeHistoryService();
++        rtInitPushOnDisk(this, m_profile.data());
+     }
+ }
+ 
+@@ -872,6 +891,7 @@ bool ProfileAdapter::pushServiceEnabled() const
+ void ProfileAdapter::setPushServiceEnabled(bool enabled)
+ {
+     m_pushServiceEnabled = enabled;
++    rtInitPushOnDisk(this, m_profile.data());
+ }
+ 
+ void ProfileAdapter::addWebContentsAdapterClient(WebContentsAdapterClient *client)
+diff --git a/src/core/profile_qt.cpp b/src/core/profile_qt.cpp
+index 93e24dd..b168882 100644
+--- a/src/core/profile_qt.cpp
++++ b/src/core/profile_qt.cpp
+@@ -78,9 +78,8 @@ ProfileQt::~ProfileQt()
+     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+     m_prefServiceAdapter.commit();
+     BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(this);
+-    // Remembering push subscriptions and not persisting notification permissions would
+-    // confuse most of web applications.
+-    PushMessagingAppIdentifier::DeleteAllFromPrefs(this);
++    // RooTitanium: le sottoscrizioni Push restano (i permessi delle notifiche li
++    // persiste il profilo, e con UnifiedPush l'app va svegliata anche da chiusa).
+     ShutdownStoragePartitions();
+     m_profileIOData->shutdownOnUIThread();
+     //Should be deleted by IO Thread
+diff --git a/src/core/rt_push.h b/src/core/rt_push.h
+new file mode 100644
+index 0000000..fbcfca2
+--- /dev/null
++++ b/src/core/rt_push.h
+@@ -0,0 +1,43 @@
++// Copyright (C) 2026 RooTitanium
++// SPDX-License-Identifier: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++// RooTitanium: ponte fra il Web Push del motore e un distributore UnifiedPush
++// (Foghorn su SailfishOS). Il motore NON parla D-Bus: chiede all'app di
++// registrare un token e riceve dall'app endpoint e messaggi. La decifratura
++// (aes128gcm, RFC 8291) e il recapito al service worker restano di Chromium.
++//
++// ABI C apposta: l'app cerca questi simboli con dlsym e, se il motore e' vecchio
++// e non li ha, parte lo stesso (senza Web Push). Tutte le funzioni vanno
++// chiamate dal thread principale di Qt.
++
++#ifndef RT_PUSH_H
++#define RT_PUSH_H
++
++#include <QtWebEngineCore/qtwebenginecoreglobal.h>
++
++extern "C" {
++
++// motore -> app: registra token (vapid = chiave del sito in base64url, puo' essere vuota)
++typedef void (*RtPushRegisterCb)(const char *token, const char *vapid, const char *description);
++typedef void (*RtPushUnregisterCb)(const char *token);
++Q_WEBENGINECORE_EXPORT void rtpush_set_handlers(RtPushRegisterCb reg, RtPushUnregisterCb unreg);
++
++// app -> motore: risposte e messaggi del distributore
++Q_WEBENGINECORE_EXPORT void rtpush_endpoint(const char *token, const char *endpoint);
++Q_WEBENGINECORE_EXPORT void rtpush_failed(const char *token);
++Q_WEBENGINECORE_EXPORT void rtpush_message(const char *token, const char *body, int length);
++Q_WEBENGINECORE_EXPORT void rtpush_unregistered(const char *token);
++
++// motore -> app: clients.openWindow() di un service worker (tocco su una
++// notifica push). L'app apre l'URL in una scheda.
++typedef void (*RtOpenUrlCb)(const char *url);
++Q_WEBENGINECORE_EXPORT void rtpush_set_open_handler(RtOpenUrlCb cb);
++
++}
++
++namespace QtWebEngineCore {
++// interna: false = nessuna app in ascolto
++bool rtPushOpenUrl(const char *url);
++}
++
++#endif // RT_PUSH_H
+diff --git a/src/core/rt_push_driver.cpp b/src/core/rt_push_driver.cpp
+new file mode 100644
+index 0000000..5d101c6
+--- /dev/null
++++ b/src/core/rt_push_driver.cpp
+@@ -0,0 +1,387 @@
++// Copyright (C) 2026 RooTitanium
++// SPDX-License-Identifier: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
++
++// RooTitanium: GCMDriver che al posto dei server Google usa un distributore
++// UnifiedPush tramite l'app (vedi rt_push.h).
++//
++// Il servizio Push di Chromium chiede un token via InstanceID; qui il token
++// restituito E' l'endpoint del distributore (push_messaging::CreateEndpoint lo
++// riconosce dal prefisso https:// e lo usa tale e quale). Le chiavi p256dh/auth
++// le genera e le conserva il GCMEncryptionProvider della classe base, che poi
++// decifra i messaggi aes128gcm: il distributore passa solo il corpo, ma in
++// aes128gcm sale e chiave del mittente stanno nel corpo.
++
++#include "rt_push.h"
++
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/single_thread_task_runner.h"
++#include "base/time/time.h"
++#include "base/uuid.h"
++#include "components/gcm_driver/common/gcm_message.h"
++#include "components/gcm_driver/gcm_driver.h"
++#include "components/gcm_driver/crypto/gcm_encryption_provider.h"
++#include "content/public/browser/browser_task_traits.h"
++#include "content/public/browser/browser_thread.h"
++#include "type_conversion.h"
++
++#include <QDir>
++#include <QFile>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QList>
++#include <QSaveFile>
++
++#include <map>
++
++namespace {
++
++RtPushRegisterCb g_register = nullptr;
++RtPushUnregisterCb g_unregister = nullptr;
++RtOpenUrlCb g_openUrl = nullptr;
++
++// Quanto aspettare l'endpoint dopo la Register (Foghorn ne concede 20 al server).
++constexpr base::TimeDelta kEndpointTimeout = base::Seconds(30);
++
++} // namespace
++
++namespace gcm {
++
++class RtPushDriver;
++static RtPushDriver *g_driver = nullptr;
++
++// Messaggi arrivati prima che il profilo esista (avvio da sveglia D-Bus).
++struct RtPushQueued { int kind; QByteArray token, data; };
++static QList<RtPushQueued> &rtPushQueue()
++{
++    static QList<RtPushQueued> q;
++    return q;
++}
++
++class RtPushDriver : public GCMDriver, public InstanceIDHandler
++{
++public:
++    RtPushDriver(const base::FilePath &store_path,
++                 const scoped_refptr<base::SequencedTaskRunner> &blocking_task_runner)
++        : GCMDriver(store_path, blocking_task_runner)
++        , m_file(QtWebEngineCore::toQt(store_path.AppendASCII("rtpush.json").value()))
++    {
++        QDir().mkpath(QtWebEngineCore::toQt(store_path.value()));
++        load();
++        g_driver = this;
++        // In un task: il servizio Push aggiunge il suo handler subito DOPO
++        // averci creato, e un messaggio recapitato qui andrebbe perso.
++        const QList<RtPushQueued> queued = std::move(rtPushQueue());
++        rtPushQueue().clear();
++        for (const RtPushQueued &q : queued)
++            post(base::BindOnce(&RtPushDriver::deliver, m_weak.GetWeakPtr(), q.kind, q.token, q.data));
++    }
++
++    ~RtPushDriver() override
++    {
++        if (g_driver == this)
++            g_driver = nullptr;
++    }
++
++    base::WeakPtr<RtPushDriver> weakPtr() { return m_weak.GetWeakPtr(); }
++
++    // 0 = endpoint, 1 = fallita, 2 = messaggio, 3 = deregistrata
++    void deliver(int kind, const QByteArray &token, const QByteArray &data)
++    {
++        switch (kind) {
++        case 0: onEndpoint(token.toStdString(), data.toStdString()); break;
++        case 1: finishPending(token.toStdString(), std::string(), GCMClient::SERVER_ERROR, true); break;
++        case 2: onMessage(token.toStdString(), data.toStdString()); break;
++        case 3: onUnregistered(token.toStdString()); break;
++        }
++    }
++
++    // ---- InstanceIDHandler ----
++    void GetToken(const std::string &app_id, const std::string &authorized_entity,
++                  const std::string &scope, base::TimeDelta, GetTokenCallback callback) override
++    {
++        for (const auto &[token, e] : m_entries) {
++            if (e.app_id == app_id && e.entity == authorized_entity && e.scope == scope
++                && !e.endpoint.empty()) {
++                post(base::BindOnce(std::move(callback), e.endpoint, GCMClient::SUCCESS));
++                return;
++            }
++        }
++        if (!g_register) {
++            qWarning("RTPUSH: nessun distributore UnifiedPush collegato, sottoscrizione rifiutata");
++            post(base::BindOnce(std::move(callback), std::string(), GCMClient::SERVER_ERROR));
++            return;
++        }
++        const std::string token = base::Uuid::GenerateRandomV4().AsLowercaseString();
++        m_entries[token] = Entry{ app_id, authorized_entity, scope, std::string() };
++        m_pending[token] = std::move(callback);
++        save();
++        qInfo("RTPUSH: Register token %s per %s", token.c_str(), app_id.c_str());
++        g_register(token.c_str(), authorized_entity.c_str(), "RooTitanium");
++        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
++                FROM_HERE,
++                base::BindOnce(&RtPushDriver::finishPending, m_weak.GetWeakPtr(), token,
++                               std::string(), GCMClient::SERVER_ERROR, true),
++                kEndpointTimeout);
++    }
++
++    void ValidateToken(const std::string &app_id, const std::string &, const std::string &,
++                       const std::string &token, ValidateTokenCallback callback) override
++    {
++        bool valid = false;
++        for (const auto &[t, e] : m_entries)
++            if (e.app_id == app_id && e.endpoint == token)
++                valid = true;
++        post(base::BindOnce(std::move(callback), valid));
++    }
++
++    void DeleteToken(const std::string &app_id, const std::string &authorized_entity,
++                     const std::string &scope, DeleteTokenCallback callback) override
++    {
++        for (auto it = m_entries.begin(); it != m_entries.end();) {
++            const Entry &e = it->second;
++            if (e.app_id == app_id && (authorized_entity == "*" || e.entity == authorized_entity)
++                && (scope == "*" || e.scope == scope)) {
++                if (g_unregister)
++                    g_unregister(it->first.c_str());
++                m_pending.erase(it->first);
++                it = m_entries.erase(it);
++            } else {
++                ++it;
++            }
++        }
++        save();
++        post(base::BindOnce(std::move(callback), GCMClient::SUCCESS));
++    }
++
++    void AddInstanceIDData(const std::string &app_id, const std::string &instance_id,
++                           const std::string &extra_data) override
++    {
++        m_iid[app_id] = { instance_id, extra_data };
++        save();
++    }
++
++    void RemoveInstanceIDData(const std::string &app_id) override
++    {
++        m_iid.erase(app_id);
++        save();
++    }
++
++    void GetInstanceIDData(const std::string &app_id, GetInstanceIDDataCallback callback) override
++    {
++        std::string id, extra;
++        auto it = m_iid.find(app_id);
++        if (it != m_iid.end()) {
++            id = it->second.first;
++            extra = it->second.second;
++        }
++        post(base::BindOnce(std::move(callback), id, extra));
++    }
++
++    // ---- GCMDriver ----
++    void ValidateRegistration(const std::string &, const std::vector<std::string> &,
++                              const std::string &, ValidateRegistrationCallback callback) override
++    {
++        post(base::BindOnce(std::move(callback), false));
++    }
++    void AddConnectionObserver(GCMConnectionObserver *) override {}
++    void RemoveConnectionObserver(GCMConnectionObserver *) override {}
++    GCMClient *GetGCMClientForTesting() const override { return nullptr; }
++    bool IsStarted() const override { return true; }
++    bool IsConnected() const override { return true; }
++    void GetGCMStatistics(GetGCMStatisticsCallback, ClearActivityLogs) override {}
++    void SetGCMRecording(const GCMStatisticsRecordingCallback &, bool) override {}
++    void SetAccountTokens(const std::vector<GCMClient::AccountTokenInfo> &) override {}
++    void UpdateAccountMapping(const AccountMapping &) override {}
++    void RemoveAccountMapping(const CoreAccountId &) override {}
++    base::Time GetLastTokenFetchTime() override { return base::Time(); }
++    void SetLastTokenFetchTime(const base::Time &) override {}
++    InstanceIDHandler *GetInstanceIDHandlerInternal() override { return this; }
++    void AddHeartbeatInterval(const std::string &, int) override {}
++    void RemoveHeartbeatInterval(const std::string &) override {}
++
++protected:
++    GCMClient::Result EnsureStarted(GCMClient::StartMode) override { return GCMClient::SUCCESS; }
++    // Le vecchie registrazioni con sender ID (GCM puro) non esistono senza Google.
++    void RegisterImpl(const std::string &app_id, const std::vector<std::string> &) override
++    {
++        post(base::BindOnce(&RtPushDriver::RegisterFinished, m_weak.GetWeakPtr(), app_id,
++                            std::string(), GCMClient::INVALID_PARAMETER));
++    }
++    void UnregisterImpl(const std::string &app_id) override
++    {
++        post(base::BindOnce(&RtPushDriver::RemoveEncryptionInfoAfterUnregister,
++                            m_weak.GetWeakPtr(), app_id, GCMClient::SUCCESS));
++    }
++    void SendImpl(const std::string &, const std::string &, const OutgoingMessage &) override {}
++    void RecordDecryptionFailure(const std::string &app_id, GCMDecryptionResult result) override
++    {
++        qWarning("RTPUSH: decifratura fallita per %s (risultato %d; aesgcm senza intestazioni?)",
++                 app_id.c_str(), int(result));
++    }
++
++private:
++    struct Entry { std::string app_id, entity, scope, endpoint; };
++
++    static void post(base::OnceClosure task)
++    {
++        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, std::move(task));
++    }
++
++    void finishPending(const std::string &token, const std::string &endpoint,
++                       GCMClient::Result result, bool dropEntry)
++    {
++        auto it = m_pending.find(token);
++        if (it == m_pending.end())
++            return;
++        GetTokenCallback cb = std::move(it->second);
++        m_pending.erase(it);
++        if (dropEntry) {
++            qWarning("RTPUSH: registrazione %s non riuscita", token.c_str());
++            m_entries.erase(token);
++            save();
++            if (g_unregister)
++                g_unregister(token.c_str());
++        }
++        std::move(cb).Run(endpoint, result);
++    }
++
++    void onEndpoint(const std::string &token, const std::string &endpoint)
++    {
++        auto it = m_entries.find(token);
++        if (it == m_entries.end()) {
++            qWarning("RTPUSH: endpoint per token sconosciuto %s", token.c_str());
++            return;
++        }
++        // Un endpoint cambiato rende non valida la vecchia sottoscrizione
++        // (ValidateToken), e il sito la rifà alla prossima visita.
++        it->second.endpoint = endpoint;
++        save();
++        qInfo("RTPUSH: endpoint per %s", token.c_str());
++        finishPending(token, endpoint, GCMClient::SUCCESS, false);
++    }
++
++    void onMessage(const std::string &token, const std::string &body)
++    {
++        auto it = m_entries.find(token);
++        if (it == m_entries.end()) {
++            qWarning("RTPUSH: messaggio per token sconosciuto %s", token.c_str());
++            return;
++        }
++        IncomingMessage msg;
++        msg.sender_id = it->second.entity;
++        if (!body.empty()) {
++            msg.raw_data = body;
++            msg.data[GCMEncryptionProvider::kContentEncodingProperty] =
++                    GCMEncryptionProvider::kContentCodingAes128Gcm;
++        }
++        qInfo("RTPUSH: messaggio di %zu byte per %s", body.size(), it->second.app_id.c_str());
++        DispatchMessage(it->second.app_id, msg);
++    }
++
++    void onUnregistered(const std::string &token)
++    {
++        if (m_entries.erase(token))
++            save();
++        finishPending(token, std::string(), GCMClient::SERVER_ERROR, false);
++    }
++
++    void load()
++    {
++        QFile f(m_file);
++        if (!f.open(QIODevice::ReadOnly))
++            return;
++        const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
++        const QJsonObject regs = root.value(QLatin1String("registrations")).toObject();
++        for (auto it = regs.begin(); it != regs.end(); ++it) {
++            const QJsonObject o = it.value().toObject();
++            m_entries[it.key().toStdString()] = Entry{
++                o.value(QLatin1String("app_id")).toString().toStdString(),
++                o.value(QLatin1String("entity")).toString().toStdString(),
++                o.value(QLatin1String("scope")).toString().toStdString(),
++                o.value(QLatin1String("endpoint")).toString().toStdString() };
++        }
++        const QJsonObject iid = root.value(QLatin1String("instance_ids")).toObject();
++        for (auto it = iid.begin(); it != iid.end(); ++it) {
++            const QJsonArray a = it.value().toArray();
++            m_iid[it.key().toStdString()] = { a.at(0).toString().toStdString(),
++                                              a.at(1).toString().toStdString() };
++        }
++    }
++
++    void save()
++    {
++        QJsonObject regs;
++        for (const auto &[token, e] : m_entries) {
++            regs.insert(QString::fromStdString(token), QJsonObject{
++                { QLatin1String("app_id"), QString::fromStdString(e.app_id) },
++                { QLatin1String("entity"), QString::fromStdString(e.entity) },
++                { QLatin1String("scope"), QString::fromStdString(e.scope) },
++                { QLatin1String("endpoint"), QString::fromStdString(e.endpoint) } });
++        }
++        QJsonObject iid;
++        for (const auto &[app, d] : m_iid)
++            iid.insert(QString::fromStdString(app),
++                       QJsonArray{ QString::fromStdString(d.first), QString::fromStdString(d.second) });
++        QSaveFile f(m_file);
++        if (!f.open(QIODevice::WriteOnly))
++            return;
++        f.write(QJsonDocument(QJsonObject{ { QLatin1String("registrations"), regs },
++                                           { QLatin1String("instance_ids"), iid } }).toJson());
++        // dentro ci sono gli endpoint: chi li conosce puo' mandare push ai siti
++        f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
++        f.commit();
++    }
++
++    QString m_file;
++    std::map<std::string, Entry> m_entries;          // token -> registrazione
++    std::map<std::string, GetTokenCallback> m_pending;
++    std::map<std::string, std::pair<std::string, std::string>> m_iid;
++    base::WeakPtrFactory<RtPushDriver> m_weak{ this };
++};
++
++std::unique_ptr<GCMDriver> CreateRtPushDriver(
++        const base::FilePath &store_path,
++        const scoped_refptr<base::SequencedTaskRunner> &blocking_task_runner)
++{
++    return std::make_unique<RtPushDriver>(store_path, blocking_task_runner);
++}
++
++} // namespace gcm
++
++static void rtPushDeliver(int kind, const QByteArray &token, const QByteArray &data)
++{
++    if (gcm::g_driver)
++        content::GetUIThreadTaskRunner({})->PostTask(
++                FROM_HERE, base::BindOnce(&gcm::RtPushDriver::deliver,
++                                          gcm::g_driver->weakPtr(), kind, token, data));
++    else
++        gcm::rtPushQueue().append({ kind, token, data });
++}
++
++extern "C" {
++
++void rtpush_set_handlers(RtPushRegisterCb reg, RtPushUnregisterCb unreg)
++{
++    g_register = reg;
++    g_unregister = unreg;
++}
++
++void rtpush_endpoint(const char *token, const char *endpoint) { rtPushDeliver(0, token, endpoint); }
++void rtpush_failed(const char *token) { rtPushDeliver(1, token, QByteArray()); }
++void rtpush_message(const char *token, const char *body, int length) { rtPushDeliver(2, token, QByteArray(body, length)); }
++void rtpush_unregistered(const char *token) { rtPushDeliver(3, token, QByteArray()); }
++
++void rtpush_set_open_handler(RtOpenUrlCb cb) { g_openUrl = cb; }
++
++}
++
++bool QtWebEngineCore::rtPushOpenUrl(const char *url)
++{
++    if (!g_openUrl)
++        return false;
++    g_openUrl(url);
++    return true;
++}
+diff --git a/src/3rdparty/chromium/chrome/browser/gcm/gcm_profile_service_factory.cc b/src/3rdparty/chromium/chrome/browser/gcm/gcm_profile_service_factory.cc
+index 473a2a44dd..dcec1aa84d 100644
+--- a/src/3rdparty/chromium/chrome/browser/gcm/gcm_profile_service_factory.cc
++++ b/src/3rdparty/chromium/chrome/browser/gcm/gcm_profile_service_factory.cc
+@@ -18,6 +18,8 @@
+ #include "chrome/browser/profiles/profile_key.h"
+ #endif
+ #include "chrome/browser/signin/identity_manager_factory.h"
++#include "components/gcm_driver/gcm_driver.h"
++#include "components/gcm_driver/gcm_driver_constants.h"
+ #include "components/gcm_driver/gcm_profile_service.h"
+ #include "components/offline_pages/buildflags/buildflags.h"
+ #include "content/public/browser/browser_task_traits.h"
+@@ -39,6 +41,22 @@
+ #include "chrome/browser/image_fetcher/image_fetcher_service_factory.h"
+ #endif
+ 
++namespace gcm {
++#if BUILDFLAG(IS_QTWEBENGINE)
++// Definita in qtwebengine src/core/rt_push_driver.cpp.
++std::unique_ptr<GCMDriver> CreateRtPushDriver(
++    const base::FilePath& store_path,
++    const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner);
++// Il costruttore che accetta un driver e' protetto (pensato per i test):
++// una sottoclasse vuota lo rende raggiungibile senza toccare l'header.
++class RtGCMProfileService : public GCMProfileService {
++ public:
++  explicit RtGCMProfileService(std::unique_ptr<GCMDriver> driver)
++      : GCMProfileService(std::move(driver)) {}
++};
++#endif
++}  // namespace gcm
++
+ namespace gcm {
+ 
+ namespace {
+@@ -170,7 +188,12 @@ GCMProfileServiceFactory::BuildServiceInstanceForBrowserContext(
+           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
+   std::unique_ptr<GCMProfileService> service;
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_QTWEBENGINE)
++  // RooTitanium: niente server Google, Web Push via UnifiedPush (rt_push_driver.cpp).
++  service = std::make_unique<RtGCMProfileService>(CreateRtPushDriver(
++      profile->GetPath().Append(gcm_driver::kGCMStoreDirname),
++      blocking_task_runner));
++#elif BUILDFLAG(IS_ANDROID)
+   service = std::make_unique<GCMProfileService>(profile->GetPath(),
+                                                 blocking_task_runner);
+ #else
+diff --git a/src/3rdparty/chromium/chrome/browser/push_messaging/push_messaging_utils.cc b/src/3rdparty/chromium/chrome/browser/push_messaging/push_messaging_utils.cc
+index 6ff3ad4a52..09b6f93d5a 100644
+--- a/src/3rdparty/chromium/chrome/browser/push_messaging/push_messaging_utils.cc
++++ b/src/3rdparty/chromium/chrome/browser/push_messaging/push_messaging_utils.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "base/base64url.h"
+ #include "base/version_info/channel.h"
++#include "build/build_config.h"
+ #include "chrome/browser/push_messaging/push_messaging_constants.h"
+ #include "chrome/browser/push_messaging/push_messaging_features.h"
+ #include "chrome/common/channel_info.h"
+@@ -34,6 +35,11 @@ std::string GetGcmEndpointForChannel(version_info::Channel channel) {
+ }
+ 
+ GURL CreateEndpoint(const std::string& subscription_id) {
++#if BUILDFLAG(IS_QTWEBENGINE)
++  // RooTitanium: con UnifiedPush il token E' gia' l'endpoint del distributore.
++  if (subscription_id.starts_with("https://"))
++    return GURL(subscription_id);
++#endif
+   const GURL endpoint(GetGcmEndpointForChannel(chrome::GetChannel()) +
+                       subscription_id);
+   DCHECK(endpoint.is_valid());

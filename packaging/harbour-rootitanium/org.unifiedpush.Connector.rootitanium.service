@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.unifiedpush.Connector.rootitanium
+Exec=/usr/bin/env RT_PUSH_WAKE=1 /usr/bin/invoker --type=generic --id=harbour-rootitanium /usr/bin/harbour-rootitanium

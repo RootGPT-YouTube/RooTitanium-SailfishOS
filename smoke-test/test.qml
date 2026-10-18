@@ -7,8 +7,12 @@ import Qt.labs.folderlistmodel
 
 Window {
     id: win
-    visible: true
-    visibility: Window.FullScreen
+    // sveglia da Foghorn ad app chiusa (task 2.8 #0): finestra nascosta finche'
+    // l'utente non la apre (icona, tocco sulla notifica, link). Nascosta la
+    // tiene anche visibility: FullScreen da solo mostrerebbe la finestra.
+    property bool wakeHidden: typeof rtWakeMode !== "undefined" && rtWakeMode === true
+    visible: !wakeHidden
+    visibility: wakeHidden ? Window.Hidden : Window.FullScreen
     color: win.pal.bg
 
     contentOrientation: win.orient === 90 ? Qt.InvertedLandscapeOrientation
@@ -211,6 +215,7 @@ Window {
             + '--fg:#1b1b20;--fg2:#33333a;--muted:#5c5c66;--muted2:#6a6a74;--faint:#9a9aa4;'
             + '--accent:#3a5fc0;--link:#1a56d0;--danger:#c0392b;--ok:#2e7d46;--pill:#e6e6ec;'
             + '--incbg:#e9e9ec;--inccard:#ffffff;--knob:#ffffff}'
+          + (cfgAnim ? '@keyframes rtIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}body{animation:rtIn .18s ease-out}' : '')
     }
 
     // --- rotazione landscape ---
@@ -419,6 +424,14 @@ Window {
     // L'auto-hide vale solo con la barra in basso (scelta utente).
     property bool cfgBarBottom: false
     property bool cfgBarAutoHide: false
+    // Animazioni di menù, dialoghi e fogli (task 2.8 #3, richiesta utenti).
+    // Spente = tutto compare e sparisce di colpo come prima.
+    property bool cfgAnim: false
+    // Notifiche push dei siti via UnifiedPush/Foghorn (task 2.8 #0), SPENTE di
+    // default (decisione utente). Il valore vero sta nel file push-on di main.cpp
+    // (lo legge anche la sveglia ad app chiusa): qui se ne tiene una copia.
+    property bool cfgPushSites: false
+    readonly property int animMs: cfgAnim ? 200 : 0
     readonly property bool barAutoHideOn: cfgBarBottom && cfgBarAutoHide
     // stato dell'auto-hide: barHide anima 0 (visibile) → 1 (nascosta)
     property bool barAutoHidden: false
@@ -537,6 +550,8 @@ Window {
         try { customEngines = JSON.parse(kvGet("set_customsearch", "[]")) || [] } catch(e) { customEngines = [] }
         cfgBarBottom    = kvGet("set_barbottom", "0") === "1"
         cfgBarAutoHide  = kvGet("set_barautohide", "0") === "1"
+        cfgAnim         = kvGet("set_anim", "0") === "1"
+        cfgPushSites    = (typeof rtPush !== "undefined") && rtPush.isEnabled()
         cfgHomeNewTab   = kvGet("set_homenewtab", "0") === "1"
         cfgSearch       = kvGet("set_search", "duckduckgo")
         if (!engineFor(cfgSearch)) cfgSearch = "duckduckgo"
@@ -573,6 +588,8 @@ Window {
         else if (k === "barbottom"){ cfgBarBottom = on; kvSet("set_barbottom", v); barShow() }
         else if (k === "barautohide"){ cfgBarAutoHide = on; kvSet("set_barautohide", v); barShow() }
         else if (k === "homenewtab"){ cfgHomeNewTab = on; kvSet("set_homenewtab", v) }
+        else if (k === "anim")     { cfgAnim = on;      kvSet("set_anim", v) }
+        else if (k === "pushsites"){ cfgPushSites = on; if (typeof rtPush !== "undefined") rtPush.setEnabled(on) }
         else if (k === "popups")   { cfgPopups = on;    kvSet("set_popups", v) }
         else if (k === "dnt")      { cfgDnt = on;       kvSet("set_dnt", v); applyViewPrefs(); syncPrivacy() }
         else if (k === "cookies3p"){ cfg3pCookies = on; kvSet("set_3pcookies", v); syncPrivacy() }
@@ -1057,6 +1074,9 @@ Window {
             var mDel = u.match(/^https:\/\/bookmarks\.local\/(del|delhome)\?u=(.*)$/)
             var mHome = u.match(/^https:\/\/bookmarks\.local\/home\?v=([01])&u=(.*)$/)
             var mMove = u.match(/^https:\/\/bookmarks\.local\/move\?d=(up|dn)&u=(.*)$/)
+            // edit = riga in modifica; save = salva nome e indirizzo (o = url vecchio)
+            var mEdit = u.match(/^https:\/\/bookmarks\.local\/edit\?u=(.*)$/)
+            var mSave = u.match(/^https:\/\/bookmarks\.local\/save\?o=([^&]*)&u=([^&]*)&t=(.*)$/)
             if (mDel && mDel[1] === "delhome") {
                 win.bmSetHome(decodeURIComponent(mDel[2]), 0)
                 win.loadInternal(view, "home", win.homeHtml(), "about:blank")
@@ -1064,7 +1084,11 @@ Window {
                 if (mDel) win.bmRemove(decodeURIComponent(mDel[2]))
                 else if (mHome) win.bmSetHome(decodeURIComponent(mHome[2]), mHome[1] === "1")
                 else if (mMove) win.bmMove(decodeURIComponent(mMove[2]), mMove[1] === "up")
-                win.loadInternal(view, "bookmarks", win.bookmarksHtml(), "https://bookmarks.local/")
+                var editing = ""
+                if (mEdit) editing = decodeURIComponent(mEdit[1])
+                else if (mSave && !win.bmUpdate(decodeURIComponent(mSave[1]), decodeURIComponent(mSave[2]), decodeURIComponent(mSave[3])))
+                    editing = decodeURIComponent(mSave[1])   // indirizzo rifiutato: la riga resta aperta
+                win.loadInternal(view, "bookmarks", win.bookmarksHtml(editing), "https://bookmarks.local/")
             }
         } else if (u.indexOf("https://downloads.local/") === 0) {
             var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
@@ -1133,6 +1157,8 @@ Window {
             win.loadInternal(view, "permsapp", win.permsAppHtml(), "https://permsapp.local/")
         } else if (u.indexOf("https://about.local/") === 0) {
             win.loadInternal(view, "about", win.aboutHtml(), "https://about.local/")
+        } else if (u.indexOf("https://pushhelp.local/") === 0) {
+            win.loadInternal(view, "pushhelp", win.pushHelpHtml(), "https://pushhelp.local/")
         }
     }
 
@@ -1620,6 +1646,9 @@ ${a.c}
         // disco così sopravvivono al riavvio (REV 6,8). listAllPermissions()
         // alimenta la pagina di gestione permissions.local
         persistentPermissionsPolicy: WebEngineProfile.StoreOnDisk
+        // Web Push dei siti via UnifiedPush/Foghorn (task 2.8 #0). rtPushReady =
+        // il motore ha il ponte: senza, Chromium userebbe i server Google
+        isPushServiceEnabled: typeof rtPushReady !== "undefined" && rtPushReady === true && win.cfgPushSites
         httpUserAgent: win.firefoxMode ? win.uaFirefox : (win.desktopMode ? win.uaDesktop : win.uaMobile)
         // senza, l'header Accept-Language MANCAVA del tutto (nessun browser
         // vero fa così: altro segnale bot per #7); pilota anche navigator.languages
@@ -1845,12 +1874,17 @@ ${body}
                  + "if(a){var d=a.querySelector('.rad');if(d)d.classList.add('on');}})();"
         }
         var bools = ["js","cookies","popups","dnt","cookies3p","noreferrer",
-                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide","homenewtab"]
+                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide","homenewtab","anim","swipenav","barbottom","pushsites"]
         if (bools.indexOf(k) >= 0) {           // toggle: commuta .on e inverte l'href
             var on = v === "1"
             return "(function(){var a=document.getElementById('r_" + k + "');if(!a)return;"
                  + "var sw=a.querySelector('.sw');if(sw)sw.classList." + (on ? "add" : "remove") + "('on');"
-                 + "a.setAttribute('href','https://settings.local/set?k=" + k + "&v=" + (on ? 0 : 1) + "');})();"
+                 + "a.setAttribute('href','https://settings.local/set?k=" + k + "&v=" + (on ? 0 : 1) + "');"
+                 // «Nascondi scorrendo» esiste solo con la barra in basso: la riga
+                 // c'e' sempre, qui si mostra o si nasconde (prima si ricaricava
+                 // la pagina, che tornava in cima)
+                 + (k === "barbottom" ? "var h=document.getElementById('r_barautohide');if(h)h.style.display='" + (on ? "" : "none") + "';" : "")
+                 + "})();"
         }
         return ""
     }
@@ -1942,19 +1976,93 @@ ${sToggle("storage3p", cfg3pStorage, win.t("Isola lo storage di terze parti", "I
 <a class="srow" href="https://permsapp.local/"><span class="sbody"><span class="st">${win.t("Permessi App", "App Permissions")}</span><span class="sd">${win.t("Cosa RooTitanium può usare: fotocamera, microfono, posizione, notifiche, download", "What RooTitanium can use: camera, microphone, location, notifications, downloads")}</span></span><span class="chev">›</span></a>
 <a class="srow" href="https://permissions.local/"><span class="sbody"><span class="st">${win.t("Permessi siti", "Site Permissions")}</span><span class="sd">${win.t("Decisioni per singolo sito su fotocamera, microfono, posizione, notifiche", "Per-site choices for camera, microphone, location, notifications")}</span></span><span class="chev">›</span></a>
 ${clearRow}
+<h2>${win.t("Notifiche push dei siti", "Site push notifications")}</h2>
+${sToggle("pushsites", cfgPushSites, win.t("Notifiche push dei siti (BETA)", "Site push notifications (BETA)"), pushStatusText())}
+<a class="srow" href="https://pushhelp.local/"><span class="sbody"><span class="st">${win.t("Istruzioni", "Instructions")}</span><span class="sd">${win.t("Cosa serve (Foghorn), come attivarle e come provarle", "What you need (Foghorn), how to turn them on and test them")}</span></span><span class="chev">›</span></a>
 <h2>${win.t("Download — Destinazione", "Downloads — Location")}</h2>
 ${dldirs}
 <h2>${win.t("Tema dell'app", "App theme")}</h2>
 <a class="srow" href="https://settings.local/set?k=uitheme&v=dark"><span class="rad${win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Scuro", "Dark")}</span></span></a>
 <a class="srow" href="https://settings.local/set?k=uitheme&v=light"><span class="rad${!win.uiDark ? ' on' : ''}"></span><span class="sbody"><span class="st">${win.t("Chiaro", "Light")}</span></span></a>
+${sToggle("anim", cfgAnim, win.t("Animazioni fluide", "Smooth animations"), win.t("Menù, dialoghi e pagine compaiono e spariscono con una breve transizione", "Menus, dialogs and pages fade and slide in and out"))}
 <h2>${win.t("Barra degli indirizzi", "Address bar")}</h2>
 ${sToggle("barbottom", cfgBarBottom, win.t("Barra degli indirizzi in basso", "Address bar at the bottom"), win.t("Più comoda da raggiungere col pollice", "Easier to reach with your thumb"))}
-${cfgBarBottom ? sToggle("barautohide", cfgBarAutoHide, win.t("Nascondi scorrendo", "Hide while scrolling"), win.t("Scorrendo in giù la barra si nasconde, scorrendo in su ricompare", "Scrolling down hides the bar, scrolling up brings it back")) : ""}
+${sToggle("barautohide", cfgBarAutoHide, win.t("Nascondi scorrendo", "Hide while scrolling"), win.t("Scorrendo in giù la barra si nasconde, scorrendo in su ricompare", "Scrolling down hides the bar, scrolling up brings it back")).replace('<a class="srow"', cfgBarBottom ? '<a class="srow"' : '<a style="display:none" class="srow"')}
 <h2>${win.t("Pagine web", "Web pages")}</h2>
 ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
 ${sToggle("swipenav", cfgSwipeNav, win.t("Swipe per Indietro e Avanti", "Swipe for Back and Forward"), win.t("Trascina dal centro della pagina: verso destra torni indietro, verso sinistra vai avanti", "Drag from the middle of the page: right goes back, left goes forward"))}
 <h2>${win.t("Informazioni", "About")}</h2>
 <a class="srow" href="https://about.local/"><span class="sbody"><span class="st">${win.t("Informazioni su RooTitanium", "About RooTitanium")}</span><span class="sd">${win.t("Versione, crediti e licenza", "Version, credits and license")}</span></span><span class="chev">›</span></a>
+</body></html>`
+    }
+
+    // ===================== NOTIFICHE PUSH: stato e istruzioni (task 2.8 #0) =====================
+    function pushStatusText() {
+        var st = (typeof rtPush !== "undefined") ? "" + rtPush.status() : "noengine"
+        if (st === "noengine") return win.t("Non disponibili con questa versione del motore", "Not available with this engine version")
+        if (st === "noname") return win.t("Il connettore D-Bus non è partito: riavvia RooTitanium", "The D-Bus connector did not start: restart RooTitanium")
+        if (st === "nodistributor") return win.t("Serve Foghorn, che non è installato: vedi Istruzioni", "Foghorn is needed and is not installed: see Instructions")
+        var d = st.replace(/^ready:/, "")
+        return cfgPushSites ? win.t("Attive: le consegna " + d + ", anche ad app chiusa", "On: delivered by " + d + ", even with the app closed")
+                            : win.t(d + " è installato: accendi per ricevere le notifiche dei siti anche ad app chiusa", d + " is installed: turn on to get site notifications even with the app closed")
+    }
+    function pushHelpHtml() {
+        var T = function(it, en) { return win.t(it, en) }
+        return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${T("Notifiche push dei siti", "Site push notifications")}</title><style>${win.themeVars()}
+*{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px 20px 40px;line-height:1.5;font-size:15px}
+h1{font-size:20px;font-weight:600;margin:6px 0 4px} h2{color:var(--accent);font-size:15px;font-weight:600;margin:24px 0 8px}
+.beta{color:var(--muted);font-size:13px;margin:0 0 14px} p,li{color:var(--fg2)} ol,ul{padding-left:22px;margin:6px 0} li{margin:5px 0}
+a{color:var(--link);text-decoration:none} code{background:var(--card);border-radius:4px;padding:1px 4px;font-size:.88em;word-break:break-all}
+.st{background:var(--card);border-radius:10px;padding:10px 12px;margin:4px 0 0;color:var(--fg2)}
+table{border-collapse:collapse;width:100%;font-size:14px} td{border-top:1px solid var(--line);padding:8px 6px;vertical-align:top;color:var(--fg2)} td:first-child{color:var(--fg);width:38%}
+</style></head><body>
+<h1>${T("Notifiche push dei siti", "Site push notifications")}</h1>
+<div class="beta">BETA · ${T("spente di default", "off by default")}</div>
+<div class="st">${T("Stato adesso", "Status now")}: ${win.htmlEsc(win.pushStatusText())}</div>
+
+<h2>${T("Cosa sono", "What they are")}</h2>
+<p>${T("Alcuni siti (chat, posta, social, notizie) possono mandarti una notifica anche quando non li hai aperti. Sui telefoni Android passano dai server di Google; RooTitanium usa invece <b>UnifiedPush</b>: una piccola app, <b>Foghorn</b>, tiene un'unica connessione al servizio push di Mozilla per tutte le app del telefono e sveglia RooTitanium quando un sito ha qualcosa per te.",
+ "Some sites (chats, mail, social networks, news) can send you a notification even when you don't have them open. On Android phones these go through Google's servers; RooTitanium uses <b>UnifiedPush</b> instead: a small app, <b>Foghorn</b>, keeps one single connection to Mozilla's push service for all the apps on the phone and wakes RooTitanium up when a site has something for you.")}</p>
+<p>${T("Il contenuto è cifrato dal sito fino al telefono: né Mozilla né Foghorn possono leggerlo.", "The content is encrypted from the site to the phone: neither Mozilla nor Foghorn can read it.")}</p>
+
+<h2>${T("Cosa serve", "What you need")}</h2>
+<ul>
+<li>${T("Sailfish OS 5.1 (provato su 5.1).", "Sailfish OS 5.1 (tested on 5.1).")}</li>
+<li>${T("L'app <b>Foghorn</b> 0.7.0 o successiva, da OpenRepos (si installa con Storeman):", "The <b>Foghorn</b> app, 0.7.0 or newer, from OpenRepos (install it with Storeman):")} <a href="https://openrepos.net/content/projectmoon/foghorn">openrepos.net/content/projectmoon/foghorn</a></li>
+<li>${T("Una connessione a Internet.", "An Internet connection.")}</li>
+</ul>
+
+<h2>${T("Passo per passo", "Step by step")}</h2>
+<ol>
+<li>${T("Installa Foghorn e aprilo una volta dalla sua icona: controlla che il suo servizio sia attivo.", "Install Foghorn and open it once from its icon: check that its service is running.")}</li>
+<li>${T("Lascia Foghorn sul servizio predefinito, <b>Mozilla</b>. Non scegliere ntfy: nelle prove di RooTelegram il server pubblico ntfy.sh non consegnava quasi nulla.", "Leave Foghorn on its default service, <b>Mozilla</b>. Don't pick ntfy: in RooTelegram's tests the public ntfy.sh server delivered almost nothing.")}</li>
+<li>${T("In RooTitanium, Impostazioni → <b>Notifiche push dei siti</b>: accendi l'interruttore. Controlla anche che «Notifiche» sia acceso in Impostazioni → Permessi App.", "In RooTitanium, Settings → <b>Site push notifications</b>: turn the switch on. Also check that “Notifications” is on in Settings → App Permissions.")}</li>
+<li>${T("Apri il sito e accetta quando ti chiede di inviarti notifiche (spesso c'è un pulsante apposta nelle sue impostazioni).", "Open the site and accept when it asks to send you notifications (often there is a button for it in its settings).")}</li>
+<li>${T("Prova: chiudi RooTitanium del tutto (✕ sulla sua cover) e fatti mandare qualcosa dal sito. La notifica arriva lo stesso.", "Try it: close RooTitanium completely (✕ on its cover) and have the site send you something. The notification still arrives.")}</li>
+</ol>
+
+<h2>${T("Come si comporta", "How it behaves")}</h2>
+<table>
+<tr><td>${T("App aperta o in cover", "App open or minimized")}</td><td>${T("La notifica compare come sempre.", "The notification shows up as usual.")}</td></tr>
+<tr><td>${T("App chiusa", "App closed")}</td><td>${T("Foghorn avvia RooTitanium senza finestra, il sito mostra la sua notifica e l'app si richiude da sola dopo una ventina di secondi.", "Foghorn starts RooTitanium without a window, the site shows its notification and the app closes again by itself after about twenty seconds.")}</td></tr>
+<tr><td>${T("Tocchi la notifica", "You tap the notification")}</td><td>${T("Si apre la pagina scelta dal sito. Se l'app era chiusa parte da zero, quindi ci mette qualche secondo in più.", "The page chosen by the site opens. If the app was closed it starts from scratch, so it takes a few seconds longer.")}</td></tr>
+<tr><td>${T("Interruttore spento", "Switch off")}</td><td>${T("I siti non possono iscriversi e le push in arrivo vengono ignorate. Le iscrizioni già fatte restano: riaccendendo tornano a funzionare.", "Sites can't subscribe and incoming pushes are ignored. Existing subscriptions are kept: turning it back on makes them work again.")}</td></tr>
+<tr><td>${T("Navigazione anonima", "Private browsing")}</td><td>${T("Niente notifiche, come in Chrome.", "No notifications, as in Chrome.")}</td></tr>
+</table>
+
+<h2>${T("Se non funziona", "Troubleshooting")}</h2>
+<ul>
+<li>${T("«Serve Foghorn»: installalo e aprilo (passo 1).", "“Foghorn is needed”: install and open it (step 1).")}</li>
+<li>${T("Le notifiche non arrivano: controlla che Foghorn usi Mozilla e che tra le sue app registrate ci sia RooTitanium; controlla «Notifiche» in Permessi App e il permesso del sito in Permessi siti.", "Notifications don't arrive: check that Foghorn uses Mozilla and that RooTitanium is among its registered apps; check “Notifications” in App Permissions and the site's permission in Site Permissions.")}</li>
+<li>${T("Qualche sito vecchio cifra le push nel formato «aesgcm», che tiene le chiavi nelle intestazioni HTTP: UnifiedPush consegna solo il contenuto, quindi quelle push non si possono leggere e vanno perse. I siti attuali usano «aes128gcm» e funzionano.", "A few old sites encrypt pushes in the “aesgcm” format, which keeps the keys in the HTTP headers: UnifiedPush only delivers the content, so those pushes can't be read and are lost. Current sites use “aes128gcm” and work.")}</li>
+</ul>
+
+<h2>${T("Per utenti esperti", "For advanced users")}</h2>
+<ul>
+<li>${T("Log dell'app: righe <code>[rtpush]</code>. Log di Foghorn:", "App log: lines tagged <code>[rtpush]</code>. Foghorn's log:")} <code>devel-su journalctl -f | grep foghornd</code> ${T("(una sveglia appare come", "(a wake-up shows up as")} <code>push for org.unifiedpush.Connector.rootitanium</code>).</li>
+<li>${T("D-Bus: RooTitanium possiede", "D-Bus: RooTitanium owns")} <code>org.unifiedpush.Connector.rootitanium</code> (<code>/org/unifiedpush/Connector</code>, <code>org.unifiedpush.Connector2</code>). ${T("Ad app chiusa la avvia il file", "When it is closed, it is started by")} <code>/usr/share/dbus-1/services/org.unifiedpush.Connector.rootitanium.service</code>.</li>
+<li>${T("Interruttore:", "Switch:")} <code>~/.local/share/harbour-rootitanium/push-on</code> ${T("(presente = acceso). Iscrizioni e indirizzi dei siti:", "(present = on). Site subscriptions and addresses:")} <code>rtpush.json</code> ${T("nella cartella «GCM Store» del profilo: tienilo privato.", "in the profile's “GCM Store” folder: keep it private.")}</li>
+</ul>
 </body></html>`
     }
 
@@ -2414,8 +2522,6 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
             toast.show(win.t("Questa pagina non si può aggiungere", "This page can't be added")); return
         }
         var host = histHost(url)
-        var palette = ["#de5833","#4285f4","#0f9d58","#6e5494","#ff4500","#7ebc6f","#f4b400","#ab47bc","#00acc1","#ff7043"]
-        var hsum = 0; for (var i = 0; i < host.length; i++) hsum = (hsum * 31 + host.charCodeAt(i)) % 9973
         var t = ("" + title).length ? "" + title : host
         try {
             histDb().transaction(function(tx) {
@@ -2425,11 +2531,42 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
                 } else {
                     // home=0: in HOME ci va solo per scelta esplicita (⌂ nella pagina Segnalibri)
                     tx.executeSql("INSERT INTO bookmarks(url,title,color,letter,ts,home) VALUES(?,?,?,?,?,0)",
-                                  [url, t, palette[hsum % palette.length], host.charAt(0).toUpperCase(), Date.now()])
+                                  [url, t, bmColor(host), host.charAt(0).toUpperCase(), Date.now()])
                     toast.show(win.t("Aggiunto ai segnalibri", "Bookmark added"))
                 }
             })
         } catch(e) { _histErr = "" + e; console.warn("segnalibri add: " + e) }
+    }
+    function bmColor(host) {
+        var palette = ["#de5833","#4285f4","#0f9d58","#6e5494","#ff4500","#7ebc6f","#f4b400","#ab47bc","#00acc1","#ff7043"]
+        var hsum = 0; for (var i = 0; i < host.length; i++) hsum = (hsum * 31 + host.charCodeAt(i)) % 9973
+        return palette[hsum % palette.length]
+    }
+    // modifica nome e indirizzo; false = rifiutata (la pagina riapre la riga).
+    // Colore e lettera seguono l'host solo se l'host cambia.
+    function bmUpdate(oldUrl, url, title) {
+        url = ("" + url).trim(); title = ("" + title).trim()
+        if (url.length && !/^[a-z]+:\/\//i.test(url)) url = "https://" + url
+        if (!/^https?:\/\/[^\/\s]+/i.test(url) || /^https?:\/\/[^\/]*\.local(\/|$)/i.test(url)) {
+            toast.show(win.t("Indirizzo non valido", "Invalid address")); return false
+        }
+        var ok = true
+        try {
+            histDb().transaction(function(tx) {
+                bmEnsure(tx)
+                if (url !== oldUrl && tx.executeSql("SELECT url FROM bookmarks WHERE url=?", [url]).rows.length) {
+                    toast.show(win.t("Già nei segnalibri", "Already bookmarked")); ok = false; return
+                }
+                var host = histHost(url)
+                var t = title.length ? title : host
+                if (host !== histHost(oldUrl))
+                    tx.executeSql("UPDATE bookmarks SET url=?, title=?, color=?, letter=? WHERE url=?",
+                                  [url, t, bmColor(host), host.charAt(0).toUpperCase(), oldUrl])
+                else
+                    tx.executeSql("UPDATE bookmarks SET url=?, title=? WHERE url=?", [url, t, oldUrl])
+            })
+        } catch(e) { _histErr = "" + e; console.warn("segnalibri edit: " + e); return false }
+        return ok
     }
     function bmRemove(url) {
         try { histDb().transaction(function(tx) { bmEnsure(tx); tx.executeSql("DELETE FROM bookmarks WHERE url=?", ["" + url]) }) } catch(e) {}
@@ -2439,7 +2576,7 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
     // presenza in HOME (unico posto dove si AGGIUNGE ai preferiti HOME),
     // ✕ = cancella il segnalibro (unico posto dove si cancella davvero).
     // Sentinelle https://bookmarks.local/{home,del}?... in onNavigationRequested
-    function bookmarksHtml() {
+    function bookmarksHtml(editing) {
         var items = bmAll(false)
         var body = items.length
             ? items.map(function(b) {
@@ -2447,13 +2584,19 @@ document.addEventListener('fullscreenchange',function(){addl('fullscreenchange: 
                 var t = win.htmlEsc(b.title && ("" + b.title).length ? b.title : host)
                 var inHome = b.home === 1 || b.home === "1"
                 var enc = encodeURIComponent(b.url)
+                if (editing && b.url === editing)
+                    return '<form class="bedit" data-o="' + win.htmlEsc(enc) + '">'
+                         + '<label>' + win.t("Nome", "Name") + '<input name="t" value="' + win.htmlEsc(b.title || "") + '" autocomplete="off"></label>'
+                         + '<label>' + win.t("Indirizzo", "Address") + '<input name="u" type="url" value="' + win.htmlEsc(b.url) + '" autocomplete="off" autocapitalize="none" spellcheck="false"></label>'
+                         + '<div class="bebtn"><a class="becancel" href="https://bookmarks.local/">' + win.t("Annulla", "Cancel") + '</a><button type="submit">' + win.t("Salva", "Save") + '</button></div></form>'
                 return '<div class="brow"><a class="bmain" href="' + win.htmlEsc(b.url) + '"><span class="hfav" style="background:' + b.color + '">' + win.htmlEsc(b.letter) + '</span><span class="hbody"><span class="ht">' + t + '</span><span class="hu">' + win.htmlEsc(host) + '</span></span></a>'
                      + '<span class="bmov"><a class="bar" href="https://bookmarks.local/move?d=up&u=' + enc + '">▲</a><a class="bar" href="https://bookmarks.local/move?d=dn&u=' + enc + '">▼</a></span>'
                      + '<a class="bhome' + (inHome ? ' on' : '') + '" title="' + win.t("Mostra in HOME", "Show on HOME") + '" href="https://bookmarks.local/home?v=' + (inHome ? 0 : 1) + '&u=' + enc + '">⌂</a>'
+                     + '<a class="bedt" title="' + win.t("Modifica", "Edit") + '" href="https://bookmarks.local/edit?u=' + enc + '">✎</a>'
                      + '<a class="bdel" href="https://bookmarks.local/del?u=' + enc + '">✕</a></div>'
               }).join("")
             : '<div class="empty">' + win.t("Nessun segnalibro. Aggiungi la pagina che stai guardando dal menù ⋮ → “Aggiungi ai segnalibri”.", "No bookmarks. Add the page you're viewing from the ⋮ menu → “Add bookmark”.") + '</div>'
-        var hint = items.length ? '<div class="hint">' + win.t("⌂ verde = mostrato nei Preferiti della HOME · ✕ = elimina il segnalibro", "⌂ green = shown in HOME Favorites · ✕ = delete the bookmark") + '</div>' : ''
+        var hint = items.length ? '<div class="hint">' + win.t("⌂ verde = mostrato nei Preferiti della HOME · ✎ = modifica · ✕ = elimina il segnalibro", "⌂ green = shown in HOME Favorites · ✎ = edit · ✕ = delete the bookmark") + '</div>' : ''
         return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><title>${win.t("Segnalibri", "Bookmarks")}</title><style>${win.themeVars()}
 *{box-sizing:border-box} body{background:var(--bg);color:var(--fg);font-family:sans-serif;margin:0;padding:22px}
 h1{font-size:20px;font-weight:600;margin:6px 0 10px}
@@ -2466,10 +2609,29 @@ h1{font-size:20px;font-weight:600;margin:6px 0 10px}
 .bhome{flex:none;color:#4a4a54;font-size:21px;text-decoration:none;padding:10px 8px}
 .bhome.on{color:var(--ok)}
 .bdel{flex:none;color:var(--muted2);font-size:19px;text-decoration:none;padding:10px 4px 10px 14px}
+.bedt{flex:none;color:var(--muted2);font-size:19px;text-decoration:none;padding:10px 6px}
+.bedit{border-bottom:1px solid var(--line);padding:10px 2px 14px}
+.bedit label{display:block;color:var(--faint);font-size:12px;margin:6px 0 0}
+.bedit input{display:block;width:100%;margin-top:4px;padding:10px;font-size:16px;color:var(--fg);background:var(--input);border:1px solid var(--line);border-radius:8px}
+.bebtn{display:flex;justify-content:flex-end;align-items:center;gap:18px;margin-top:12px}
+.becancel{color:var(--muted2);text-decoration:none;font-size:15px}
+.bebtn button{font-size:15px;padding:9px 20px;border:0;border-radius:18px;background:var(--ok);color:#fff}
 ${histCss}
 </style></head><body>
 <h1>${win.t("Segnalibri", "Bookmarks")}</h1>${hint}
 ${body}
+<script>
+// il salvataggio passa dalla sentinella save?o=&u=&t= (encodeURIComponent, non il
+// GET del form che codifica gli spazi come +)
+document.querySelectorAll("form.bedit").forEach(function(f) {
+    var i = f.querySelector("input"); if (i) { i.focus(); i.select() }
+    f.addEventListener("submit", function(e) {
+        e.preventDefault()
+        location.href = "https://bookmarks.local/save?o=" + f.dataset.o
+            + "&u=" + encodeURIComponent(f.elements.u.value) + "&t=" + encodeURIComponent(f.elements.t.value)
+    })
+})
+</script>
 </body></html>`
     }
 
@@ -2928,14 +3090,31 @@ ${histCss}
 
     ListModel { id: tabsModel }
 
+    // Web Push (task 2.8 #0): un sito ha chiesto le notifiche push ma sul
+    // telefono non c'e' un distributore UnifiedPush
+    Connections {
+        target: (typeof rtPush !== "undefined") ? rtPush : null
+        function onNoDistributor() {
+            toast.show(win.t("Per le notifiche push dei siti installa Foghorn (OpenRepos)",
+                             "For site push notifications install Foghorn (OpenRepos)"))
+        }
+    }
+
     // Link aperto da un'ALTRA app mentre RooTitanium e' gia' in esecuzione:
     // main.cpp lo riceve via DBus (org.freedesktop.Application) e lo rilancia
     // qui. Sempre in una NUOVA scheda: non si butta via la pagina aperta.
     // typeof: rtOpen manca se il binario e' piu' vecchio di questo test.qml.
     Connections {
         target: (typeof rtOpen !== "undefined") ? rtOpen : null
+        function onWakeShow() { win.wakeUp() }
         function onOpenRequested(url) {
             if (!url) return
+            win.wakeUp()
+            // il sito apre una pagina (clients.openWindow dopo un tocco sulla
+            // notifica): basta questa, niente salto alla scheda dell'origine. Di
+            // qualunque sito: aprire un altro dominio e' lecito (misurato 19 ott:
+            // col confronto sull'origine il salto riportava indietro la vista)
+            if (notifFocus.running) notifFocus.stop()
             // Se l'unica scheda è la Home appena aperta (tipico: app avviata
             // proprio dal link, via attivazione DBus), il link la sostituisce:
             // una Home vuota accanto al link è solo una scheda in più da chiudere.
@@ -2954,6 +3133,20 @@ ${histCss}
         function onNotificationClicked(origin) {
             var o = ("" + origin).replace(/\/+$/, "")
             if (!o) return
+            win.wakeUp()
+            // un attimo di attesa: una notifica push fa di solito aprire al
+            // service worker la pagina giusta (clients.openWindow), che arriva
+            // come onOpenRequested e annulla questo salto all'origine
+            notifFocus.origin = o
+            notifFocus.restart()
+        }
+    }
+    Timer {
+        id: notifFocus
+        property string origin: ""
+        interval: 900
+        onTriggered: {
+            var o = origin
             function same(i) {
                 var e = tabsModel.get(i)
                 var u = "" + (e ? e.murl : "")
@@ -2979,6 +3172,21 @@ ${histCss}
         // certi X10 III è preferibile al browser inutilizzabile su X10 II.
         loadCfg()
         applyClientHints()
+        // da sveglia niente sessione ne' pop-up: niente pagine caricate per
+        // nessuno, e il pop-up una-tantum si consumerebbe senza essere visto
+        // (trappola pagata da RooTelegram). Si parte in wakeUp().
+        if (!wakeHidden) startUi()
+    }
+    property bool uiStarted: false
+    function wakeUp() {
+        if (!wakeHidden) return
+        console.log("[rtpush] sveglia → app vera")
+        wakeHidden = false
+        startUi()
+    }
+    function startUi() {
+        if (uiStarted) return
+        uiStarted = true
         // pop-up una-tantum: spiega come gestire i permessi via «Permessi App»
         // (mostrato una sola volta, differito così compare sopra la UI pronta).
         if (!cfgFirstRunSeen) Qt.callLater(function() { firstRunDlg.open = true })
@@ -3379,7 +3587,7 @@ ${histCss}
                         // interruttori in Impostazioni). Qui solo reject(); il lavoro
                         // si fa dopo, a richiesta chiusa (Qt.callLater).
                         var u = "" + request.url
-                        if (/^https:\/\/(history|bookmarks|downloads|settings|permissions|reader|permsapp|about)\.local\//.test(u)) {
+                        if (/^https:\/\/(history|bookmarks|downloads|settings|permissions|reader|permsapp|about|pushhelp)\.local\//.test(u)) {
                             request.reject()
                             var view = this
                             Qt.callLater(function() { win.internalNav(view, u) })
@@ -3490,7 +3698,9 @@ ${histCss}
         // (overlay a tutta altezza sopra di essa, z sopra pagina e toolbar)
         y: win.cfgBarBottom ? toolbar.y : 0
         width: parent.width; height: toolbar.height
-        visible: open && !win.videoFS; z: 40
+        visible: (open || opacity > 0) && !win.videoFS; z: 40
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         color: win.pal.surface
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: win.pal.border }
 
@@ -3547,7 +3757,12 @@ ${histCss}
         y: win.cfgBarBottom ? toolbar.y - height : toolbar.y + toolbar.height
         width: 340 * win.u; height: menuCol.height + 16 * win.u
         color: win.pal.card; border.color: win.pal.border; border.width: 1
-        visible: open; z: 50
+        visible: open || opacity > 0; z: 50
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
+        scale: open || !win.cfgAnim ? 1 : 0.9
+        transformOrigin: win.cfgBarBottom ? Item.BottomRight : Item.TopRight
+        Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         Column {
             id: menuCol; width: parent.width; y: 8 * win.u
             Repeater {
@@ -3638,7 +3853,11 @@ ${histCss}
         x: Math.max(8*win.u, Math.min(px, appRoot.width  - width  - 8*win.u))
         y: Math.max(8*win.u, Math.min(py, appRoot.height - height - 8*win.u))
         color: win.pal.card; border.color: win.pal.border; border.width: 1; radius: 6 * win.u
-        visible: open; z: 60
+        visible: open || opacity > 0; z: 60
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
+        scale: open || !win.cfgAnim ? 1 : 0.9
+        Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         Column {
             id: ctxCol; width: parent.width; y: 8 * win.u
             Repeater {
@@ -3679,7 +3898,11 @@ ${histCss}
         property bool showPrivate: false
         anchors.fill: parent
         color: showPrivate ? "#17121f" : win.pal.bg
-        visible: open; z: 80
+        visible: open || opacity > 0; z: 80
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
+        scale: open || !win.cfgAnim ? 1 : 0.96
+        Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
 
         // barra superiore
         Rectangle {
@@ -3862,13 +4085,17 @@ ${histCss}
         id: selMenu
         property bool open: false
         anchors.fill: parent
-        visible: open; z: 93
+        visible: open || opacity > 0; z: 93
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         Rectangle {
             anchors.fill: parent; color: "black"; opacity: 0.45
             MouseArea { anchors.fill: parent; onClicked: win.selectMenuDone(-1) }   // tap fuori = annulla
         }
         Rectangle {
             id: selSheet
+            transform: Translate { y: selMenu.open || !win.cfgAnim ? 0 : selSheet.height
+                Behavior on y { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } } }
             anchors.bottom: parent.bottom; width: parent.width
             height: Math.min(parent.height * 0.7, selHeader.height + selList.contentHeight + 16*win.u)
             color: win.pal.card; radius: 12*win.u
@@ -3946,7 +4173,11 @@ ${histCss}
         readonly property string curPath: ("" + fileModel.folder).replace(/^file:\/\//, "")
         anchors.fill: parent
         color: win.pal.bg
-        visible: open; z: 92
+        visible: open || opacity > 0; z: 92
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
+        transform: Translate { y: filePicker.open || !win.cfgAnim ? 0 : 40 * win.u
+            Behavior on y { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } } }
         onOpenChanged: if (!open) fileList.positionViewAtBeginning()
         MouseArea { anchors.fill: parent }   // foglio modale: assorbe i tap che sfuggono
 
@@ -4022,7 +4253,7 @@ ${histCss}
             delegate: Rectangle {
                 width: ListView.view.width; height: 66*win.u
                 color: rowMa.pressed ? win.pal.neutralPress : "transparent"
-                property bool picked: filePicker.multi && !fileIsDir && filePicker.chosen.indexOf("" + fileURL) >= 0
+                property bool picked: filePicker.multi && !fileIsDir && filePicker.chosen.indexOf("" + fileUrl) >= 0
                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1
                     anchors.leftMargin: 66*win.u; color: win.pal.line; opacity: 0.5 }
                 MenuIcon { id: rowIco; kind: fileIsDir ? "folder" : "file"
@@ -4043,8 +4274,10 @@ ${histCss}
                         text: win.fmtFileSize(fileSize); color: win.pal.muted; font.pixelSize: 15*win.u }
                     Text { visible: parent.parent.picked; anchors.centerIn: parent; text: "✓"; color: win.pal.ok; font.pixelSize: 24*win.u; font.bold: true }
                 }
+                // fileUrl, non fileURL: Qt 6.12 ha tolto il ruolo vecchio (dà undefined,
+                // e nessuna cartella si apriva; misurato sul POCO 18 ott)
                 MouseArea { id: rowMa; anchors.fill: parent
-                    onClicked: fileIsDir ? (fileModel.folder = fileURL) : win.filePickerPick(fileURL) }
+                    onClicked: fileIsDir ? (fileModel.folder = fileUrl) : win.filePickerPick(fileUrl) }
             }
             // cartella vuota
             Text {
@@ -4084,13 +4317,17 @@ ${histCss}
         readonly property bool isPrompt: dtype === JavaScriptDialogRequest.DialogTypePrompt
         anchors.fill: parent
         color: "#99000000"
-        visible: open; z: 90
+        visible: open || opacity > 0; z: 90
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         onOpenChanged: if (open && isPrompt) jsInput.forceActiveFocus()
         MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale: blocca i gesti sotto
 
         Rectangle {
             anchors.centerIn: parent
             width: Math.min(jsDlg.width - 48*win.u, 460*win.u)
+            scale: jsDlg.open || !win.cfgAnim ? 1 : 0.92
+            Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
             height: dlgCol.height + 36*win.u
             radius: 14*win.u; color: win.pal.card; border.color: win.pal.border; border.width: 1
             Column {
@@ -4139,12 +4376,16 @@ ${histCss}
         property string msg: ""
         anchors.fill: parent
         color: "#99000000"
-        visible: open; z: 90
+        visible: open || opacity > 0; z: 90
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale
 
         Rectangle {
             anchors.centerIn: parent
             width: Math.min(permDlg.width - 48*win.u, 460*win.u)
+            scale: permDlg.open || !win.cfgAnim ? 1 : 0.92
+            Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
             height: permCol.height + 36*win.u
             radius: 14*win.u; color: win.pal.card; border.color: win.pal.border; border.width: 1
             Column {
@@ -4181,7 +4422,9 @@ ${histCss}
         property bool open: false
         anchors.fill: parent
         color: "#99000000"
-        visible: open; z: 95
+        visible: open || opacity > 0; z: 95
+        opacity: open ? 1 : 0; enabled: open
+        Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         MouseArea { anchors.fill: parent; onPressAndHold: {} }   // modale
         function dismiss() {
             win.cfgFirstRunSeen = true

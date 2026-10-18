@@ -15,6 +15,7 @@ Serie riportata dalla 6.8.4 (`../patches/`) il 10 ott 2026, verificata con
 | 0306 arm32-gcc-no-tree-vectorize | applica invariata (da ricontrollare al collaudo: il SIGBUS si vede solo su pagine con CSS vero) |
 | 0307 sfos-eglimage-texture | NUOVA (11 ott): consegna frame senza dma_buf (MakeCurrent+glFinish; ID nudo con 0308, ripiego EGLImage, sonde RT_GLPROBE) |
 | 0308 sfos-qt-share-group | NUOVA (11 ott, idea Fable): ✅ COLLAUDATA sul POCO, GPU funzionante (home, Wikipedia, YouTube, WebGL); attiva di default, RT_NOSHAREGROUP=1 per spegnerla |
+| 0309 unifiedpush-web-push | NUOVA (18 ott, task 2.8 #0): Web Push via UnifiedPush/Foghorn al posto dei server Google (driver GCM nostro, sottoscrizioni persistenti, `clients.openWindow`). L'app la trova con dlsym (`rtpush_*`); senza la patch il Web Push resta spento |
 
 Patch SFOS di Rinigus (chum `qt6-lts-6.11.1`) sullo stesso albero: tutte
 applicano (hwcap2-bti con offset di 3 righe, dalla cartella `chromium/`),

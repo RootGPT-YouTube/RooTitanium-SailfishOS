@@ -50,6 +50,10 @@
 #include <QDataStream>
 #include <QImage>
 #include <QPointer>
+#include <QDBusArgument>
+#include <QDBusMetaType>
+#include <dlfcn.h>
+#include <QDateTime>
 
 // ⚠️ Link visitati (cancellazione selettiva della cronologia, 12 ott 2026).
 // Chromium tiene la sua lista dei link visitati (il colore :visited) e Qt la
@@ -305,6 +309,14 @@ private:
 // anche il vecchio inoltro: un secondo processo lanciato con un URL trova il
 // nome occupato e lo passa qui prima di uscire (main()). Interfaccia standard
 // org.freedesktop.Application, come in RooTheater.
+// Sveglia da Foghorn ad app chiusa (task 2.8 #0): il processo parte nascosto,
+// recapita la push al motore (che sveglia il service worker del sito, e la
+// notifica esce da RtNotifier) e si richiude da solo se nessuno lo apre.
+// g_wakeHidden = siamo una sveglia e la finestra non e' ancora stata mostrata.
+static std::atomic<bool> g_wakeHidden{false};
+static std::atomic<qint64> g_wakeActivity{0};   // ms dell'ultima push o notifica
+static void wakeTouch() { g_wakeActivity = QDateTime::currentMSecsSinceEpoch(); }
+
 // ===================== notifiche dei siti (task 2.7 #1) =====================
 // Senza un ricevitore di presentNotification il permesso «Notifiche» si
 // concedeva ma non compariva nulla. Qui ogni notifica del motore diventa una
@@ -355,6 +367,7 @@ private slots:
         // perche' il profilo normale nasce off-the-record e cambia dopo
         auto *prof = qobject_cast<QQuickWebEngineProfile *>(sender());
         if (!enabled.load() || (prof && prof->isOffTheRecord())) { n->deleteLater(); return; }
+        wakeTouch();
 
         // stesso tag dello stesso sito = sostituisce la precedente (come Chrome).
         // Senza tag mai: matches() confronta solo tag e origine, e due notifiche
@@ -503,6 +516,294 @@ private:
 };
 static RtNotifier *g_notifier = nullptr;
 
+// ===================== Web Push via UnifiedPush (task 2.8 #0) =====================
+// Il motore (patch rt_push_driver.cpp in QtWebEngineCore) ha il Web Push di
+// Chromium al completo, ma al posto dei server Google chiede A NOI di registrare
+// un token presso il distributore UnifiedPush del telefono (Foghorn) e riceve da
+// noi endpoint e messaggi. Decifratura e recapito al service worker del sito li
+// fa Chromium; la notifica che il sito mostra passa poi da RtNotifier.
+// Protocollo: UnifiedPush D-Bus v2 (Distributor2/Connector2), come RooTelegram.
+// I simboli rtpush_* si cercano con dlsym: con un motore senza la patch l'app
+// parte uguale e il Web Push resta spento (mai verso Google).
+extern "C" {
+typedef void (*RtPushRegisterCb)(const char *, const char *, const char *);
+typedef void (*RtPushUnregisterCb)(const char *);
+typedef void (*RtOpenUrlCb)(const char *);
+}
+class RtUnifiedPush;
+class RtPushConnector : public QDBusAbstractAdaptor
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.unifiedpush.Connector2")
+public:
+    explicit RtPushConnector(RtUnifiedPush *up);
+public slots:
+    QVariantMap NewEndpoint(const QVariantMap &args);
+    QVariantMap Message(const QVariantMap &args);
+    QVariantMap Unregistered(const QVariantMap &args);
+private:
+    RtUnifiedPush *m_up;
+};
+
+class RtUnifiedPush : public QObject
+{
+    Q_OBJECT
+public:
+    static constexpr const char *SERVICE = "org.unifiedpush.Connector.rootitanium";
+    static constexpr const char *PATH = "/org/unifiedpush/Connector";
+
+    RtUnifiedPush()
+    {
+        s_self = this;
+        m_setHandlers = (void (*)(RtPushRegisterCb, RtPushUnregisterCb))dlsym(RTLD_DEFAULT, "rtpush_set_handlers");
+        m_endpoint = (void (*)(const char *, const char *))dlsym(RTLD_DEFAULT, "rtpush_endpoint");
+        m_failed = (void (*)(const char *))dlsym(RTLD_DEFAULT, "rtpush_failed");
+        m_message = (void (*)(const char *, const char *, int))dlsym(RTLD_DEFAULT, "rtpush_message");
+        m_unregistered = (void (*)(const char *))dlsym(RTLD_DEFAULT, "rtpush_unregistered");
+        m_setOpen = (void (*)(RtOpenUrlCb))dlsym(RTLD_DEFAULT, "rtpush_set_open_handler");
+        new RtPushConnector(this);
+    }
+
+    // Interruttore «Notifiche push dei siti», SPENTO di default (decisione
+    // utente 18 ott). Sta in un file e non nella kv del QML perche' lo deve
+    // leggere anche la sveglia, prima del QML. Spento: i siti non si iscrivono,
+    // le push in arrivo si scartano, la sveglia esce subito. Le iscrizioni
+    // restano: riaccendendo tornano buone.
+    static QString onMarker()
+    {
+        return QDir::homePath() + QStringLiteral("/.local/share/harbour-rootitanium/push-on");
+    }
+    static QString goneFile()
+    {
+        return QDir::homePath() + QStringLiteral("/.local/share/harbour-rootitanium/push-gone");
+    }
+    Q_INVOKABLE bool isEnabled() const { return QFile::exists(onMarker()); }
+    // deregistrazioni arrivate a interruttore spento → al motore, che le tiene in
+    // coda finche' il suo driver non esiste (nasce con il servizio Push acceso)
+    void replayGone()
+    {
+        if (!m_started || !isEnabled()) return;
+        QFile f(goneFile());
+        if (!f.open(QIODevice::ReadOnly)) return;
+        const QList<QByteArray> tokens = f.readAll().split('\n');
+        f.close();
+        f.remove();
+        for (const QByteArray &t : tokens)
+            if (!t.trimmed().isEmpty()) {
+                qInfo("[rtpush] deregistrazione rimasta in sospeso: %s", t.constData());
+                m_unregistered(t.trimmed().constData());
+            }
+    }
+    Q_INVOKABLE void setEnabled(bool on)
+    {
+        if (!on) {
+            QFile::remove(onMarker());
+        } else {
+            QDir().mkpath(QFileInfo(onMarker()).absolutePath());
+            QFile f(onMarker());
+            if (f.open(QIODevice::WriteOnly)) f.write("1\n");
+        }
+        qInfo("[rtpush] notifiche push dei siti: %s", on ? "accese" : "spente");
+        if (on) replayGone();
+    }
+    // per la riga di stato in Impostazioni: noengine | noname | nodistributor | ready:<nome>
+    Q_INVOKABLE QString status() const
+    {
+        if (!engineSupport()) return QStringLiteral("noengine");
+        if (!m_started) return QStringLiteral("noname");
+        const QString d = findDistributor();
+        if (d.isEmpty()) return QStringLiteral("nodistributor");
+        return QStringLiteral("ready:") + d.mid(int(qstrlen("org.unifiedpush.Distributor.")));
+    }
+
+    // il motore ha la patch: si puo' accendere il servizio Push del profilo
+    bool engineSupport() const
+    {
+        return m_setHandlers && m_endpoint && m_failed && m_message && m_unregistered;
+    }
+
+    // Prende il nome del connettore (Foghorn ci chiama li') e si offre al motore.
+    bool start()
+    {
+        if (!engineSupport()) {
+            qWarning("[rtpush] motore senza ponte UnifiedPush: Web Push spento");
+            return false;
+        }
+        QDBusConnection bus = QDBusConnection::sessionBus();
+        if (!bus.registerObject(QLatin1String(PATH), this, QDBusConnection::ExportAdaptors)
+            || !bus.registerService(QLatin1String(SERVICE))) {
+            qWarning("[rtpush] nome %s non disponibile: %s", SERVICE, qPrintable(bus.lastError().message()));
+            bus.unregisterObject(QLatin1String(PATH));
+            return false;
+        }
+        m_setHandlers(&RtUnifiedPush::onRegister, &RtUnifiedPush::onUnregister);
+        if (m_setOpen) m_setOpen(&RtUnifiedPush::onOpenUrl);
+        m_started = true;
+        replayGone();
+        const QString d = findDistributor();
+        qInfo("[rtpush] connettore %s pronto (distributore: %s)", SERVICE,
+              d.isEmpty() ? "nessuno" : qPrintable(d));
+        return true;
+    }
+
+    void newEndpoint(const QString &token, const QString &endpoint)
+    {
+        qInfo("[rtpush] endpoint per %s: %s", qPrintable(token), qPrintable(QUrl(endpoint).host()));
+        m_endpoint(token.toUtf8().constData(), endpoint.toUtf8().constData());
+    }
+    void message(const QString &token, const QByteArray &body)
+    {
+        if (!isEnabled()) {
+            qInfo("[rtpush] push per %s scartata: interruttore spento", qPrintable(token));
+            return;
+        }
+        qInfo("[rtpush] push di %d byte per %s", int(body.size()), qPrintable(token));
+        emit activity();
+        m_message(token.toUtf8().constData(), body.constData(), int(body.size()));
+    }
+    void unregistered(const QString &token)
+    {
+        qInfo("[rtpush] il distributore ha tolto %s", qPrintable(token));
+        if (!isEnabled()) {
+            // a interruttore spento il motore non ha il driver attivo e la
+            // notizia andrebbe persa (misurato 19 ott): la si tiene da parte
+            // e la si consegna alla riaccensione, altrimenti il sito si
+            // crederebbe ancora iscritto senza ricevere piu' nulla
+            QDir().mkpath(QFileInfo(goneFile()).absolutePath());
+            QFile f(goneFile());
+            if (f.open(QIODevice::Append)) f.write(token.toUtf8() + '\n');
+            return;
+        }
+        m_unregistered(token.toUtf8().constData());
+    }
+
+signals:
+    void noDistributor();   // → QML: avviso «installa Foghorn»
+    void activity();        // push arrivata: la sveglia resta viva ancora un po'
+    void openUrlRequested(const QString &url);   // clients.openWindow() del sito
+
+private:
+    static void onRegister(const char *token, const char *vapid, const char *description)
+    {
+        if (s_self) s_self->doRegister(QString::fromUtf8(token), QString::fromUtf8(vapid), QString::fromUtf8(description));
+    }
+    static void onUnregister(const char *token)
+    {
+        if (s_self) s_self->doUnregister(QString::fromUtf8(token));
+    }
+    static void onOpenUrl(const char *url)
+    {
+        qInfo("[rtpush] il sito apre %s", url);
+        if (s_self) emit s_self->openUrlRequested(QString::fromUtf8(url));
+    }
+
+    void doRegister(const QString &token, const QString &vapid, const QString &description)
+    {
+        if (!isEnabled()) {
+            qInfo("[rtpush] iscrizione %s rifiutata: interruttore spento", qPrintable(token));
+            m_failed(token.toUtf8().constData());
+            return;
+        }
+        const QString distributor = findDistributor();
+        if (distributor.isEmpty()) {
+            qWarning("[rtpush] nessun distributore UnifiedPush installato");
+            m_failed(token.toUtf8().constData());
+            emit noDistributor();
+            return;
+        }
+        QVariantMap args;
+        args.insert(QStringLiteral("service"), QLatin1String(SERVICE));
+        args.insert(QStringLiteral("token"), token);
+        args.insert(QStringLiteral("description"), description);
+        // la chiave VAPID del sito: con Mozilla l'endpoint accetta solo lui
+        if (!vapid.isEmpty()) args.insert(QStringLiteral("vapid"), vapid);
+        QDBusMessage call = QDBusMessage::createMethodCall(distributor, QStringLiteral("/org/unifiedpush/Distributor"),
+                                                           QStringLiteral("org.unifiedpush.Distributor2"),
+                                                           QStringLiteral("Register"));
+        call << args;
+        // asincrona: prima di rispondere il distributore ci chiama NewEndpoint
+        auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(call, 20000), this);
+        connect(w, &QDBusPendingCallWatcher::finished, this, [this, token](QDBusPendingCallWatcher *w) {
+            w->deleteLater();
+            const QDBusMessage r = w->reply();
+            // a{sv} arriva come QDBusArgument: toMap() darebbe una mappa vuota
+            const QVariantMap res = qdbus_cast<QVariantMap>(r.arguments().value(0));
+            if (r.type() == QDBusMessage::ReplyMessage
+                && res.value(QStringLiteral("success")).toString() == QLatin1String("REGISTRATION_SUCCEEDED")) {
+                qInfo("[rtpush] registrazione %s accettata", qPrintable(token));
+                return;
+            }
+            qWarning("[rtpush] registrazione %s rifiutata: %s %s", qPrintable(token),
+                     qPrintable(r.errorMessage()), qPrintable(res.value(QStringLiteral("reason")).toString()));
+            m_failed(token.toUtf8().constData());
+        });
+    }
+
+    void doUnregister(const QString &token)
+    {
+        const QString distributor = findDistributor();
+        if (distributor.isEmpty()) return;
+        QVariantMap args;
+        args.insert(QStringLiteral("token"), token);
+        QDBusMessage call = QDBusMessage::createMethodCall(distributor, QStringLiteral("/org/unifiedpush/Distributor"),
+                                                           QStringLiteral("org.unifiedpush.Distributor2"),
+                                                           QStringLiteral("Unregister"));
+        call << args;
+        QDBusConnection::sessionBus().send(call);
+        qInfo("[rtpush] deregistrato %s", qPrintable(token));
+    }
+
+    // primo org.unifiedpush.Distributor.* attivo o attivabile (Foghorn)
+    static QString findDistributor()
+    {
+        QDBusConnectionInterface *iface = QDBusConnection::sessionBus().interface();
+        if (!iface) return QString();
+        QStringList names = iface->registeredServiceNames().value();
+        QDBusMessage la = QDBusMessage::createMethodCall(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
+                                                         QStringLiteral("org.freedesktop.DBus"), QStringLiteral("ListActivatableNames"));
+        const QDBusMessage r = QDBusConnection::sessionBus().call(la, QDBus::Block, 3000);
+        if (r.type() == QDBusMessage::ReplyMessage) names += r.arguments().value(0).toStringList();
+        for (const QString &n : names)
+            if (n.startsWith(QLatin1String("org.unifiedpush.Distributor."))) return n;
+        return QString();
+    }
+
+    static RtUnifiedPush *s_self;
+    void (*m_setHandlers)(RtPushRegisterCb, RtPushUnregisterCb) = nullptr;
+    void (*m_endpoint)(const char *, const char *) = nullptr;
+    void (*m_failed)(const char *) = nullptr;
+    void (*m_message)(const char *, const char *, int) = nullptr;
+    void (*m_unregistered)(const char *) = nullptr;
+    void (*m_setOpen)(RtOpenUrlCb) = nullptr;
+    bool m_started = false;
+};
+RtUnifiedPush *RtUnifiedPush::s_self = nullptr;
+
+RtPushConnector::RtPushConnector(RtUnifiedPush *up) : QDBusAbstractAdaptor(up), m_up(up) {}
+
+QVariantMap RtPushConnector::NewEndpoint(const QVariantMap &args)
+{
+    m_up->newEndpoint(args.value(QStringLiteral("token")).toString(), args.value(QStringLiteral("endpoint")).toString());
+    return QVariantMap();
+}
+
+QVariantMap RtPushConnector::Message(const QVariantMap &args)
+{
+    const QVariant v = args.value(QStringLiteral("message"));
+    const QByteArray body = v.canConvert<QDBusArgument>() ? qdbus_cast<QByteArray>(v) : v.toByteArray();
+    m_up->message(args.value(QStringLiteral("token")).toString(), body);
+    // l'id conferma la consegna al distributore
+    QVariantMap reply;
+    reply.insert(QStringLiteral("id"), args.value(QStringLiteral("id")).toString());
+    return reply;
+}
+
+QVariantMap RtPushConnector::Unregistered(const QVariantMap &args)
+{
+    m_up->unregistered(args.value(QStringLiteral("token")).toString());
+    return QVariantMap();
+}
+
 class OpenHandler : public QObject
 {
     Q_OBJECT
@@ -520,6 +821,9 @@ public slots:
     // fermo). Valore = finestre visibili; 0 = istanza viva ma senza finestra.
     int rtAlive()
     {
+        // sveglia nascosta: chi chiede e' un lancio dall'icona → ci mostriamo noi,
+        // altrimenti ci chiuderebbe come fantasma (0 finestre) e ripartirebbe
+        if (g_wakeHidden) { emit wakeShow(); return 1; }
         int n = 0;
         for (QWindow *w : QGuiApplication::allWindows())
             if (w->isVisible()) ++n;
@@ -529,6 +833,7 @@ public slots:
     // tocco su una notifica di un sito (remote action di lipstick, task 2.7 #1)
     void rtNotificationClicked(const QString &key, const QString &origin)
     {
+        if (g_wakeHidden) emit wakeShow();
         if (g_notifier && g_notifier->activate(key)) emit notificationClicked(origin);
         else if (!origin.isEmpty()) emit openRequested(origin);   // app riavviata: la notifica non e' piu' nostra
         if (!RtWindowRaiser::raise())
@@ -538,11 +843,13 @@ public slots:
 signals:
     void openRequested(const QString &url);   // → QML: apri in NUOVA scheda
     void notificationClicked(const QString &origin);   // → QML: vai alla scheda del sito
+    void wakeShow();   // → QML: la sveglia diventa l'app vera (finestra + sessione)
 
 private:
     void handle(const QString &uri)
     {
         if (uri.isEmpty()) return;
+        if (g_wakeHidden) emit wakeShow();
         emit openRequested(uri);
         // in cover l'utente non vedrebbe la scheda nuova (task 2.5 #3)
         if (!RtWindowRaiser::raise())
@@ -1010,6 +1317,13 @@ int main(int argc, char **argv)
     // launcher item. Insieme evitano la cover-segnaposto fantasma all'avvio.
     prctl(PR_SET_NAME, (unsigned long)"harbour-rootitanium", 0, 0, 0);
 
+    // avvio da attivazione D-Bus di Foghorn (org.unifiedpush.Connector.rootitanium
+    // .service): la variabile si toglie subito, non deve arrivare ai figli
+    const bool pushWake = qgetenv("RT_PUSH_WAKE") == "1";
+    qunsetenv("RT_PUSH_WAKE");
+    g_wakeHidden = pushWake;
+    wakeTouch();
+
     // Ripiego rendering software: se accanto al binario esiste il file NOGPU,
     // Chromium non usa la GPU. Serve col motore 6.140 sui driver senza
     // EGL_EXT_image_dma_buf_import (Mali/libhybris): la pagina via GPU esce
@@ -1140,7 +1454,18 @@ int main(int argc, char **argv)
 
     RtNotifier notifier(busName, objPath);
     g_notifier = &notifier;
+    RtUnifiedPush unifiedPush;
+    const bool pushReady = unifiedPush.start();
     QQmlApplicationEngine engine;
+    // il QML accende il servizio Push del profilo SOLO se c'e' il ponte: con un
+    // motore senza patch Chromium userebbe i server Google
+    engine.rootContext()->setContextProperty(QStringLiteral("rtPushReady"), pushReady);
+    engine.rootContext()->setContextProperty(QStringLiteral("rtPush"), &unifiedPush);
+    engine.rootContext()->setContextProperty(QStringLiteral("rtWakeMode"), pushWake);
+    QObject::connect(&unifiedPush, &RtUnifiedPush::activity, &app, []() { wakeTouch(); });
+    // clients.openWindow() di un sito (tocco su una sua notifica): come un link
+    QObject::connect(&unifiedPush, &RtUnifiedPush::openUrlRequested, &openHandler,
+                     [&openHandler](const QString &url) { openHandler.openUrl(url); });
     NativeHelper native;
     engine.rootContext()->setContextProperty(QStringLiteral("rtNative"), &native);
     engine.rootContext()->setContextProperty(QStringLiteral("rtOpen"), &openHandler);
@@ -1158,6 +1483,35 @@ int main(int argc, char **argv)
     // Il primo piano su un link lo chiede OpenHandler (RtWindowRaiser): lipstick
     // consegna l'URL via DBus (X-Maemo-* del .desktop) ma non porta avanti da
     // solo una finestra Qt6 in cover — misurato il 10 ott (task 2.5 #3).
+    // La sveglia vive almeno 20 s (Foghorn chiama Message subito, il service
+    // worker deve partire e mostrare la notifica) e poi esce dopo 10 s senza
+    // push ne' notifiche, finche' nessuno mostra la finestra. RooTelegram ha
+    // misurato che quit() a finestra nascosta puo' restare appeso: paracadute.
+    QTimer wakeExit;
+    if (pushWake) {
+        qInfo("[rtpush] avvio da sveglia: finestra nascosta");
+        const qint64 born = QDateTime::currentMSecsSinceEpoch();
+        // interruttore spento: la push si scarta, inutile restare 20 s
+        const qint64 minLife = unifiedPush.isEnabled() ? 20000 : 2000;
+        QObject::connect(&wakeExit, &QTimer::timeout, &app, [&wakeExit, born, minLife]() {
+            bool shown = false;
+            for (QWindow *w : QGuiApplication::allWindows())
+                if (w->isVisible()) shown = true;
+            if (shown || !g_wakeHidden) {
+                g_wakeHidden = false;
+                wakeExit.stop();
+                qInfo("[rtpush] la sveglia ora e' l'app vera");
+                return;
+            }
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            if (now - born < minLife || (minLife > 2000 && now - g_wakeActivity < 10000)) return;
+            qInfo("[rtpush] sveglia inattiva: esco");
+            wakeExit.stop();
+            QTimer::singleShot(8000, []() { killTree(getpid()); _exit(0); });
+            QCoreApplication::quit();
+        });
+        wakeExit.start(2000);
+    }
     const int rc = app.exec();
     // Esci dal menu' (task 2.5 #7): niente processi Chromium orfani dopo di noi
     killTree(getpid());

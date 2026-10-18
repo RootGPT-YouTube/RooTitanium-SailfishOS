@@ -109,6 +109,10 @@ install -m0644 %{stagingdir}/harbour-rootitanium.desktop %{buildroot}%{_datadir}
 #    Con Sandboxing=Disabled sailjaild non lo genera da se': va spedito.
 mkdir -p %{buildroot}%{_datadir}/dbus-1/services
 install -m0644 %{stagingdir}/com.github.RootGPT_YouTube.rootitanium.service %{buildroot}%{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
+#    Web Push (task 2.8 #0): Foghorn sveglia l'app chiusa chiamando questo nome;
+#    RT_PUSH_WAKE=1 = parti nascosta, recapita la push e richiuditi da sola.
+#    Niente sailjail (Sandboxing=Disabled), quindi l'Exec e' libero.
+install -m0644 %{stagingdir}/org.unifiedpush.Connector.rootitanium.service %{buildroot}%{_datadir}/dbus-1/services/org.unifiedpush.Connector.rootitanium.service
 # 3) icone -> hicolor (le taglie disponibili nello staging)
 for s in 86 108 128 172 256; do
   if [ -f %{stagingdir}/icons/${s}.png ]; then
@@ -130,6 +134,7 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_bindir}/harbour-rootitanium
 %{_datadir}/applications/harbour-rootitanium.desktop
 %{_datadir}/dbus-1/services/com.github.RootGPT_YouTube.rootitanium.service
+%{_datadir}/dbus-1/services/org.unifiedpush.Connector.rootitanium.service
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
