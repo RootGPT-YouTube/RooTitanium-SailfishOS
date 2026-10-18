@@ -976,7 +976,28 @@ Window {
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: false
         })
-        return s
+        // Rete per gli script a DocumentCreation (misurato 18 ott, Chromium 140):
+        // sulla PRIMA pagina di un sito diverso (HOME → sito, sito A → sito B) il
+        // frame nuovo riceve gli script da QtWebEngine dopo che il documento è già
+        // nato, e quelli a DocumentCreation saltano tutti; i DocumentReady no.
+        // Ogni script ha quindi un gemello a DocumentReady, e il segnalino
+        // __rtDC_<nome> lo fa girare una volta sola per documento: se il primo è
+        // già partito il gemello non fa niente, altrimenti arriva lui (tardi, ma
+        // meglio che mai: swipe e menù a tendina vanno lo stesso).
+        var late = []
+        for (var i = 0; i < s.length; i++) {
+            if (s[i].injectionPoint !== WebEngineScript.DocumentCreation) continue
+            var flag = "window.__rtDC_" + s[i].name
+            late.push({
+                name: s[i].name + "Late",
+                sourceCode: "if (!" + flag + ") { " + flag + " = true;\n" + s[i].sourceCode + "\n}",
+                injectionPoint: WebEngineScript.DocumentReady,
+                worldId: s[i].worldId,
+                runsOnSubFrames: s[i].runsOnSubFrames
+            })
+            s[i].sourceCode = flag + " = true;\n" + s[i].sourceCode
+        }
+        return s.concat(late)
     }
     // riallinea le view esistenti dopo un cambio impostazione (dark subito,
     // DNT dal prossimo load). forceDarkMode è REVISION(6,7): assegnazione
