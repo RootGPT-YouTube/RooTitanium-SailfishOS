@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.7
-Release:    2
+Version:    2.8
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,21 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Mon Oct 19 2026 RootGPT <emagiampa@gmail.com> - 2.8-1
+- Notifiche push dei siti (BETA, spente di default): con Foghorn
+  (UnifiedPush, OpenRepos) i siti mandano notifiche anche ad app chiusa,
+  senza server Google. Il contenuto e' cifrato dal sito al telefono.
+  Impostazioni → Notifiche push dei siti, con pagina Istruzioni. Solo
+  aarch64: su armv7hl il motore non ha ancora il supporto.
+- File picker: le cartelle non si aprivano piu' (Qt 6.12 ha cambiato il
+  modello dei file) e non si potevano caricare file. Riparato.
+- Segnalibri modificabili: nome e indirizzo (✎ nella pagina Segnalibri).
+- Animazioni fluide per menu', dialoghi e pagine (Impostazioni → Tema,
+  spente di default).
+- Gli interruttori delle Impostazioni non riportano piu' la pagina in cima.
+- Swipe Indietro/Avanti e protezioni privacy di nuovo attivi anche sulla
+  prima pagina di ogni sito nuovo.
+
 * Thu Oct 15 2026 RootGPT <emagiampa@gmail.com> - 2.7-2
 - Yandex Maps: "Let's go" → "Open" lasciava una scheda bianca (il sito
   prova ad aprire l'app Android). Ora la scheda vuota si chiude e compare
