@@ -18,7 +18,7 @@
 
 Name:       harbour-rootitanium
 Version:    2.8
-Release:    1
+Release:    2
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,13 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Mon Oct 19 2026 RootGPT <emagiampa@gmail.com> - 2.8-2
+- Le pagine non passano piu' da sole alla versione desktop. Quando il
+  telefono chiudeva il processo di una pagina (scheda in background da
+  tempo, poca memoria, crash), alla ricarica la pagina tornava senza lo
+  zoom mobile e il sito mostrava il layout desktop, anche con "Versione
+  desktop" spenta. Ora lo zoom viene rimesso a ogni caricamento.
+
 * Mon Oct 19 2026 RootGPT <emagiampa@gmail.com> - 2.8-1
 - Notifiche push dei siti (BETA, spente di default): con Foghorn
   (UnifiedPush, OpenRepos) i siti mandano notifiche anche ad app chiusa,

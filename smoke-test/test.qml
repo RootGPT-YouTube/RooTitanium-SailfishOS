@@ -327,6 +327,9 @@ Window {
     readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Mobile Safari/537.36"
     readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Safari/537.36"
     function setDesktop(on) { desktopMode = on; applyClientHints(); if (currentView) currentView.reload() }
+    // zoom voluto delle view: lato corto dello SCHERMO / 412 (viewport CSS
+    // ~412px in portrait), 1.0 in modalità desktop
+    function wantZoom() { return desktopMode ? 1.0 : Math.max(1.0, Math.min(Screen.width, Screen.height) / 412) }
 
     // ESPERIMENTO login X (#7) — ESITO NEGATIVO, toggle lasciato SPENTO.
     // Ipotesi: il browser NATIVO SailfishOS (Gecko/Firefox 91) accetta il login su
@@ -2727,7 +2730,7 @@ ${body}
     // stime in px CSS: riga cronologia ~60, riga griglia 82 + gap 18
     function homeHistCount(gridRows) {
         // stesso criterio dello zoomFactor: lato corto dello SCHERMO
-        var zoom = desktopMode ? 1.0 : Math.max(1.0, Math.min(Screen.width, Screen.height) / 412)
+        var zoom = wantZoom()
         var viewH = height - toolbar.height
         var vh = viewH / zoom
         var fixed = 26 + 60 + 58 + 58 + 40 + 50   // padding, logo, 2×h2, hmore, fondo+margine
@@ -3486,8 +3489,27 @@ ${histCss}
                     // NB: --force-device-scale-factor NON cambia il DSF della view
                     // (QtWebEngine usa il dpr della QQuickWindow = 1) ma corregge
                     // screen.* (in DIP) e le soglie gesture del display
-                    zoomFactor: win.desktopMode ? 1.0
-                                : Math.max(1.0, Math.min(Screen.width, Screen.height) / 412)
+                    zoomFactor: win.wantZoom()
+                    // Lo zoom vive nel frame del renderer, non nella view: se il
+                    // processo renderer muore (scheda scartata in background,
+                    // OOM killer, crash) la ricarica riparte a 1.0 — Qt lo
+                    // riapplica solo se il processo nuovo è GIÀ avviato
+                    // (RenderFrameHostChanged + process.IsValid()), e sul
+                    // telefono di solito non lo è. Risultato: viewport di 1080px,
+                    // il sito sceglie il layout desktop con «Versione desktop»
+                    // spenta (segnalazione utente, riprodotta 12/12 uccidendo il
+                    // renderer e ricaricando). Il binding non se ne accorge: il
+                    // valore voluto non è cambiato. Qui si confronta lo zoom
+                    // EFFETTIVO (il getter legge quello del motore) e lo si
+                    // riscrive; il binding va rimesso, l'assegnazione lo rompe.
+                    function fixZoom() {
+                        var z = win.wantZoom()
+                        if (Math.abs(zoomFactor - z) < 0.01) return
+                        zoomFactor = z
+                        zoomFactor = Qt.binding(function() { return win.wantZoom() })
+                    }
+                    onRenderProcessPidChanged: fixZoom()
+                    onLoadProgressChanged: fixZoom()
                     // Pallini di selezione nostri. Serve per sapere DOVE sono:
                     // Chromium passa al delegate x/y/width/height esatti del
                     // rettangolo con cui fa il test di aggancio, e senza quelli
@@ -3571,6 +3593,7 @@ ${histCss}
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
                         shownUrl = "" + url
+                        fixZoom()
                         // ogni pagina nuova parte con la barra visibile (task 2.6 #5):
                         // su una pagina che non scorre non tornerebbe più
                         if (li.status !== WebEngineView.LoadStartedStatus && index === win.currentTab) win.barShow()
