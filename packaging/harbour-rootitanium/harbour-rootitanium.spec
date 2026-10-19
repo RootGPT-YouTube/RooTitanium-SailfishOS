@@ -144,6 +144,8 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
   tempo, poca memoria, crash), alla ricarica la pagina tornava senza lo
   zoom mobile e il sito mostrava il layout desktop, anche con "Versione
   desktop" spenta. Ora lo zoom viene rimesso a ogni caricamento.
+- Notifiche push dei siti ora anche su armv7hl (motore a 32 bit
+  aggiornato).
 
 * Mon Oct 19 2026 RootGPT <emagiampa@gmail.com> - 2.8-1
 - Notifiche push dei siti (BETA, spente di default): con Foghorn
