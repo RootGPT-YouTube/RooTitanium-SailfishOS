@@ -85,6 +85,36 @@ t=$(leggi_vrm)
 command -v sfdk >/dev/null || PATH=$PATH:$HOME/SailfishOS/bin
 command -v sfdk >/dev/null || { echo "ERRORE: sfdk non trovato"; exit 1; }
 
+# --- ninja interno: limite di parallelismo ---------------------------------
+# QtWebEngine lancia un ninja INTERNO per Chromium (righe "/usr/bin/ninja -C
+# …/src/core/Release/<arch>" in build.ninja). Senza -j usa nproc dell'host +2
+# = 34 compilazioni, che sommate al -j$J esterno esauriscono la RAM (build
+# uccisa il 10 ott). Il -j10 si mette a mano in build.ninja, ma quando un
+# CMakeLists del motore cambia cmake si riconfigura DENTRO "cmake --build",
+# riscrive build.ninja senza -j e parte subito (18 ott, patch 0309): un
+# controllo prima del lancio non lo vedrebbe. Quindi: si fa rigenerare
+# build.ninja da solo (target build.ninja, non compila niente; se è già
+# aggiornato è un no-op), si rimette il -j e solo dopo parte la build.
+# NINJA_INTERNO_J=0 salta il controllo.
+NINJA_INTERNO_J=${NINJA_INTERNO_J:-10}
+fissa_ninja_interno() {
+    local f=$BUILDDIR/build.ninja senza con
+    nota "build.ninja: rigenerazione se serve, poi controllo del -j del ninja interno"
+    docker exec -u mersdk "$ENGINE" bash -lc "cd $BUILDDIR && sb2 -t $TARGET cmake --build . --target build.ninja" \
+        >>"$GUARDLOG" 2>&1 || { nota "ERRORE: rigenerazione di build.ninja fallita"; return 1; }
+    sed -i -E "s#(/usr/bin/ninja) -C #\1 -j$NINJA_INTERNO_J -C #g" "$f"
+    senza=$(grep -cE '/usr/bin/ninja -C ' "$f")
+    con=$(grep -c "/usr/bin/ninja -j$NINJA_INTERNO_J -C " "$f")
+    if [ "$senza" -ne 0 ]; then
+        nota "ERRORE: $senza righe del ninja interno ancora senza -j in $f"; return 1
+    fi
+    [ "$con" -eq 0 ] && nota "ATTENZIONE: nessuna riga del ninja interno in $f (formato cambiato?)"
+    nota "ninja interno: $con righe con -j$NINJA_INTERNO_J"
+}
+if [ "$NINJA_INTERNO_J" != 0 ]; then
+    fissa_ninja_interno || exit 1
+fi
+
 ripristina_cpu   # imposta subito il regime stazionario (${CORE_PIENI} core)
 nota "=== Avvio build $ARCH -j${J} via sb2 (cross-gcc NATIVO) con guardia VRM (regime ${CORE_PIENI} core, ninja -j${J}, throttle >=${SOGLIA_STOP}°C -> ${CORE_RIDOTTI} core, ripresa <=${SOGLIA_RIPRESA}°C). VRM ora: ${t}°C ==="
 
