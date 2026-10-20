@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.8
-Release:    2
+Version:    2.8.1
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,13 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Tue Oct 20 2026 RootGPT <emagiampa@gmail.com> - 2.8.1-1
+- Toccando una notifica push ad app chiusa si apre la pagina che il
+  sito voleva mostrare (prima si apriva la sua pagina principale), e
+  RooTitanium resta aperto.
+- La sveglia per una notifica push in arrivo dura pochi secondi invece
+  di circa 25: l'app si richiude appena la notifica e' consegnata.
+
 * Mon Oct 19 2026 RootGPT <emagiampa@gmail.com> - 2.8-2
 - Le pagine non passano piu' da sole alla versione desktop. Quando il
   telefono chiudeva il processo di una pagina (scheda in background da
