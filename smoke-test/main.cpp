@@ -346,6 +346,16 @@ public:
         connect(p, &QQuickWebEngineProfile::presentNotification, this, &RtNotifier::present);
     }
 
+    // Tocco su una notifica di un processo precedente (patch 0310 del motore):
+    // il motore consegna il click al service worker del sito, che apre la sua
+    // pagina come ad app aperta. false = motore senza la patch.
+    bool clickPersistent(const QString &id, const QString &origin)
+    {
+        if (!m_click || id.isEmpty()) return false;
+        m_click(id.toUtf8().constData(), origin.toUtf8().constData());
+        return true;
+    }
+
     // true = notifica ancora nostra: click() inoltrato al sito
     bool activate(const QString &key)
     {
@@ -384,9 +394,14 @@ private slots:
                 break;
             }
         }
-        const QString key = QString::number(++m_seq);
+        // il pid nella chiave: dopo un riavvio la chiave di una notifica
+        // vecchia non deve combaciare con una nuova del processo nuovo
+        const QString key = QString::number(QCoreApplication::applicationPid()) + '-' + QString::number(++m_seq);
         const QString origin = n->origin().toString();
         const QString host = n->origin().host();
+        // id persistente (notifica di un service worker): vale solo qui dentro,
+        // il motore emette presentNotification in modo sincrono (patch 0310)
+        const QString pid = m_currentId ? QString::fromUtf8(m_currentId()) : QString();
 
         QVariantMap hints;
         hints.insert(QStringLiteral("x-nemo-preview-summary"), n->title());
@@ -394,9 +409,13 @@ private slots:
         hints.insert(QStringLiteral("x-nemo-feedback"), QStringLiteral("chat_exists"));
         hints.insert(QStringLiteral("x-nemo-priority"), 120);
         hints.insert(QStringLiteral("urgency"), QVariant::fromValue<uchar>(1));
+        // con l'id persistente il tocco arriva al sito anche ad app riavviata
         hints.insert(QStringLiteral("x-nemo-remote-action-default"),
-                     m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtNotificationClicked ")
-                     + arg(key) + ' ' + arg(origin));
+                     pid.isEmpty()
+                     ? m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtNotificationClicked ")
+                       + arg(key) + ' ' + arg(origin)
+                     : m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtPersistentClicked ")
+                       + arg(key) + ' ' + arg(origin) + ' ' + arg(pid));
         const QString icon = saveIcon(n->icon(), host);
         if (!icon.isEmpty()) hints.insert(QStringLiteral("image-path"), icon);
 
@@ -516,6 +535,9 @@ private:
     QString m_busName, m_objPath;
     QHash<QString, Item> m_items;
     quint64 m_seq = 0;
+    const char *(*m_currentId)() = (const char *(*)())dlsym(RTLD_DEFAULT, "rtpush_notification_current_id");
+    void (*m_click)(const char *, const char *) =
+        (void (*)(const char *, const char *))dlsym(RTLD_DEFAULT, "rtpush_notification_click");
 };
 static RtNotifier *g_notifier = nullptr;
 
@@ -628,6 +650,8 @@ public:
     // Prende il nome del connettore (Foghorn ci chiama li') e si offre al motore.
     bool start()
     {
+        // openWindow dei siti e click delle notifiche (0310) anche a Push spento
+        if (m_setOpen) m_setOpen(&RtUnifiedPush::onOpenUrl);
         if (!engineSupport()) {
             qWarning("[rtpush] motore senza ponte UnifiedPush: Web Push spento");
             return false;
@@ -640,7 +664,6 @@ public:
             return false;
         }
         m_setHandlers(&RtUnifiedPush::onRegister, &RtUnifiedPush::onUnregister);
-        if (m_setOpen) m_setOpen(&RtUnifiedPush::onOpenUrl);
         m_started = true;
         replayGone();
         const QString d = findDistributor();
@@ -833,6 +856,18 @@ public slots:
         return n;
     }
 
+    // tocco su una notifica di un service worker (patch 0310): se la notifica
+    // e' di un processo precedente il click va al sito tramite il suo id
+    void rtPersistentClicked(const QString &key, const QString &origin, const QString &id)
+    {
+        if (g_wakeHidden.exchange(false)) emit wakeShow();
+        if (g_notifier && g_notifier->activate(key)) emit notificationClicked(origin);
+        else if (g_notifier && g_notifier->clickPersistent(id, origin)) emit persistentClicked(origin);
+        else if (!origin.isEmpty()) emit openRequested(origin);
+        if (!RtWindowRaiser::raise())
+            qWarning("[rt] primo piano non richiesto: finestra o protocollo assenti");
+    }
+
     // tocco su una notifica di un sito (remote action di lipstick, task 2.7 #1)
     void rtNotificationClicked(const QString &key, const QString &origin)
     {
@@ -846,6 +881,7 @@ public slots:
 signals:
     void openRequested(const QString &url);   // → QML: apri in NUOVA scheda
     void notificationClicked(const QString &origin);   // → QML: vai alla scheda del sito
+    void persistentClicked(const QString &origin);     // → QML: idem, ma il sito parte da freddo
     void wakeShow();   // → QML: la sveglia diventa l'app vera (finestra + sessione)
 
 private:

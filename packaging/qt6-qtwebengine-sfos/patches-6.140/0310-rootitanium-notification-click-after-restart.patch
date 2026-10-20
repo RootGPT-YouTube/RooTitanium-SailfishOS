@@ -1,0 +1,191 @@
+diff --git a/src/core/rt_push.h b/src/core/rt_push.h
+--- a/src/core/rt_push.h
++++ b/src/core/rt_push.h
+@@ -33,11 +33,29 @@
+ typedef void (*RtOpenUrlCb)(const char *url);
+ Q_WEBENGINECORE_EXPORT void rtpush_set_open_handler(RtOpenUrlCb cb);
+ 
++// Patch 0310: tocco su una notifica di un processo PRECEDENTE (app riavviata
++// dal tocco). Chromium tiene le notifiche dei service worker nel database del
++// profilo: con il loro id il click arriva al sito come se l'app non si fosse
++// mai chiusa, e il sito apre la sua pagina (clients.openWindow).
++// - rtpush_notification_current_id: valido SOLO dentro presentNotification
++//   (la emette il motore in modo sincrono): id persistente della notifica che
++//   si sta consegnando, "" se non ha un service worker dietro.
++// - rtpush_notification_click: consegna il click; si accoda finche' il profilo
++//   su disco non esiste (l'app parte off-the-record). Se il sito non puo'
++//   riceverlo (dati spariti, service worker assente) apre l'origine con
++//   l'handler di rtpush_set_open_handler.
++Q_WEBENGINECORE_EXPORT const char *rtpush_notification_current_id(void);
++Q_WEBENGINECORE_EXPORT void rtpush_notification_click(const char *id, const char *origin);
++
+ }
+ 
++namespace content { class BrowserContext; }
++
+ namespace QtWebEngineCore {
+ // interna: false = nessuna app in ascolto
+ bool rtPushOpenUrl(const char *url);
++// interna (0310): il profilo e' passato su disco, i click accodati possono partire
++void rtNotificationProfileOnDisk(content::BrowserContext *context);
+ }
+ 
+ #endif // RT_PUSH_H
+diff --git a/src/core/platform_notification_service_qt.cpp b/src/core/platform_notification_service_qt.cpp
+--- a/src/core/platform_notification_service_qt.cpp
++++ b/src/core/platform_notification_service_qt.cpp
+@@ -4,10 +4,12 @@
+ 
+ #include "platform_notification_service_qt.h"
+ 
++#include "base/functional/bind.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/prefs/pref_service.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "content/public/browser/notification_event_dispatcher.h"
++#include "content/public/common/persistent_notification_status.h"
+ #include "ui/message_center/public/cpp/notification_delegate.h"
+ #include "url/gurl.h"
+ #include "url/origin.h"
+@@ -17,11 +19,52 @@
+ #include "profile_qt.h"
+ #include "user_notification_controller.h"
+ #include "type_conversion.h"
++#include "rt_push.h"
+ 
++#include <QList>
++#include <QPair>
+ #include <QSharedPointer>
+ 
+ namespace QtWebEngineCore {
+ 
++// RooTitanium (patch 0310), vedi rt_push.h
++static std::string g_rtCurrentId;                        // id durante presentNotification
++static content::BrowserContext *g_rtDiskContext = nullptr;
++static QList<QPair<std::string, GURL>> &rtPendingClicks()
++{
++    static QList<QPair<std::string, GURL>> q;
++    return q;
++}
++
++static void rtDispatchClick(content::BrowserContext *context, const std::string &id, const GURL &origin)
++{
++    auto inst = content::NotificationEventDispatcher::GetInstance();
++    if (!inst) {
++        rtPushOpenUrl(origin.spec().c_str());
++        return;
++    }
++    qInfo("[rtpush] click alla notifica %s di %s (processo precedente)", id.c_str(), origin.spec().c_str());
++    inst->DispatchNotificationClickEvent(
++            context, id, origin, std::nullopt, std::nullopt,
++            base::BindOnce([](GURL origin, content::PersistentNotificationStatus status) {
++                // consegnato (anche con waitUntil respinto): ci pensa il sito
++                if (status == content::PersistentNotificationStatus::kSuccess
++                    || status == content::PersistentNotificationStatus::kWaitUntilRejected)
++                    return;
++                qWarning("[rtpush] click non consegnato (stato %d): apro l'origine", int(status));
++                rtPushOpenUrl(origin.spec().c_str());
++            }, origin));
++}
++
++void rtNotificationProfileOnDisk(content::BrowserContext *context)
++{
++    g_rtDiskContext = context;
++    const auto pending = std::move(rtPendingClicks());
++    rtPendingClicks().clear();
++    for (const auto &c : pending)
++        rtDispatchClick(context, c.first, c.second);
++}
++
+ struct NonPersistentNotificationDelegate : UserNotificationController::Delegate {
+     NonPersistentNotificationDelegate(const std::string &id) : notification_id(id) { }
+ 
+@@ -113,8 +156,10 @@
+ 
+     profile->profileAdapter()->persistentNotifications().insert(QByteArray::fromStdString(notification_id), controller);
+     const QList<ProfileAdapterClient *> clients = profile->profileAdapter()->clients();
++    g_rtCurrentId = notification_id;
+     for (ProfileAdapterClient *client : clients)
+         client->showNotification(controller);
++    g_rtCurrentId.clear();
+ }
+ 
+ void PlatformNotificationServiceQt::CloseNotification(const std::string &notification_id)
+@@ -153,7 +198,11 @@
+         ++it;
+     }
+ 
+-    std::move(callback).Run(std::move(movableStdStringSet), true /* supports_synchronization */);
++    // RooTitanium (0310): false. Le notifiche restano a lipstick anche dopo la
++    // chiusura dell'app, ma un processo nuovo non le ha in memoria: con true
++    // Chromium le cancellava dal database all'avvio e il tocco non poteva piu'
++    // arrivare al sito. Le piu' vecchie di 7 giorni le pulisce comunque.
++    std::move(callback).Run(std::move(movableStdStringSet), false /* supports_synchronization */);
+ }
+ 
+ void PlatformNotificationServiceQt::GetDisplayedNotificationsForOrigin(const GURL &url, DisplayedNotificationsCallback callback)
+@@ -171,7 +220,11 @@
+         ++it;
+     }
+ 
+-    std::move(callback).Run(std::move(movableStdStringSet), true /* supports_synchronization */);
++    // RooTitanium (0310): false. Le notifiche restano a lipstick anche dopo la
++    // chiusura dell'app, ma un processo nuovo non le ha in memoria: con true
++    // Chromium le cancellava dal database all'avvio e il tocco non poteva piu'
++    // arrivare al sito. Le piu' vecchie di 7 giorni le pulisce comunque.
++    std::move(callback).Run(std::move(movableStdStringSet), false /* supports_synchronization */);
+ }
+ 
+ int64_t PlatformNotificationServiceQt::ReadNextPersistentNotificationId()
+@@ -194,3 +247,24 @@
+ }
+ 
+ } // namespace QtWebEngineCore
++
++extern "C" {
++
++const char *rtpush_notification_current_id(void)
++{
++    return QtWebEngineCore::g_rtCurrentId.c_str();
++}
++
++void rtpush_notification_click(const char *id, const char *origin)
++{
++    Q_ASSERT(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
++    if (!id || !*id || !origin || !*origin)
++        return;
++    const GURL url(origin);
++    if (QtWebEngineCore::g_rtDiskContext)
++        QtWebEngineCore::rtDispatchClick(QtWebEngineCore::g_rtDiskContext, id, url);
++    else
++        QtWebEngineCore::rtPendingClicks().append({ std::string(id), url });
++}
++
++}
+diff --git a/src/core/profile_adapter.cpp b/src/core/profile_adapter.cpp
+--- a/src/core/profile_adapter.cpp
++++ b/src/core/profile_adapter.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "profile_adapter.h"
+ #include "chrome/browser/push_messaging/push_messaging_service_impl.h"
++#include "rt_push.h"
+ #include <QSet>
+ 
+ #include "base/files/file_util.h"
+@@ -193,6 +194,7 @@
+ 
+         reinitializeHistoryService();
+         rtInitPushOnDisk(this, m_profile.data());
++        rtNotificationProfileOnDisk(m_profile.data());
+     }
+ }
+ 
+@@ -215,6 +217,7 @@
+     } else if (!m_name.isEmpty()) {
+         reinitializeHistoryService();
+         rtInitPushOnDisk(this, m_profile.data());
++        rtNotificationProfileOnDisk(m_profile.data());
+     }
+ }
+ 

@@ -3141,6 +3141,18 @@ ${histCss}
             // service worker la pagina giusta (clients.openWindow), che arriva
             // come onOpenRequested e annulla questo salto all'origine
             notifFocus.origin = o
+            notifFocus.interval = 900
+            notifFocus.restart()
+        }
+        // tocco su una notifica di un processo precedente (patch 0310): il
+        // motore ha consegnato il click al sito, che deve prima ripartire;
+        // l'origine si apre solo se entro 4 s non arriva la sua pagina
+        function onPersistentClicked(origin) {
+            var o = ("" + origin).replace(/\/+$/, "")
+            if (!o) return
+            win.wakeUp()
+            notifFocus.origin = o
+            notifFocus.interval = 4000
             notifFocus.restart()
         }
     }
