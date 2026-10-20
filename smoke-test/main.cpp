@@ -315,6 +315,8 @@ private:
 // g_wakeHidden = siamo una sveglia e la finestra non e' ancora stata mostrata.
 static std::atomic<bool> g_wakeHidden{false};
 static std::atomic<qint64> g_wakeActivity{0};   // ms dell'ultima push o notifica
+static std::atomic<qint64> g_wakePush{0};       // ms dell'ultima push arrivata
+static std::atomic<qint64> g_wakeNotif{0};      // ms dell'ultima notifica mostrata
 static void wakeTouch() { g_wakeActivity = QDateTime::currentMSecsSinceEpoch(); }
 
 // ===================== notifiche dei siti (task 2.7 #1) =====================
@@ -368,6 +370,7 @@ private slots:
         auto *prof = qobject_cast<QQuickWebEngineProfile *>(sender());
         if (!enabled.load() || (prof && prof->isOffTheRecord())) { n->deleteLater(); return; }
         wakeTouch();
+        g_wakeNotif = QDateTime::currentMSecsSinceEpoch();
 
         // stesso tag dello stesso sito = sostituisce la precedente (come Chrome).
         // Senza tag mai: matches() confronta solo tag e origine, e due notifiche
@@ -823,7 +826,7 @@ public slots:
     {
         // sveglia nascosta: chi chiede e' un lancio dall'icona → ci mostriamo noi,
         // altrimenti ci chiuderebbe come fantasma (0 finestre) e ripartirebbe
-        if (g_wakeHidden) { emit wakeShow(); return 1; }
+        if (g_wakeHidden.exchange(false)) { emit wakeShow(); return 1; }
         int n = 0;
         for (QWindow *w : QGuiApplication::allWindows())
             if (w->isVisible()) ++n;
@@ -833,7 +836,7 @@ public slots:
     // tocco su una notifica di un sito (remote action di lipstick, task 2.7 #1)
     void rtNotificationClicked(const QString &key, const QString &origin)
     {
-        if (g_wakeHidden) emit wakeShow();
+        if (g_wakeHidden.exchange(false)) emit wakeShow();
         if (g_notifier && g_notifier->activate(key)) emit notificationClicked(origin);
         else if (!origin.isEmpty()) emit openRequested(origin);   // app riavviata: la notifica non e' piu' nostra
         if (!RtWindowRaiser::raise())
@@ -849,7 +852,7 @@ private:
     void handle(const QString &uri)
     {
         if (uri.isEmpty()) return;
-        if (g_wakeHidden) emit wakeShow();
+        if (g_wakeHidden.exchange(false)) emit wakeShow();
         emit openRequested(uri);
         // in cover l'utente non vedrebbe la scheda nuova (task 2.5 #3)
         if (!RtWindowRaiser::raise())
@@ -1462,7 +1465,10 @@ int main(int argc, char **argv)
     engine.rootContext()->setContextProperty(QStringLiteral("rtPushReady"), pushReady);
     engine.rootContext()->setContextProperty(QStringLiteral("rtPush"), &unifiedPush);
     engine.rootContext()->setContextProperty(QStringLiteral("rtWakeMode"), pushWake);
-    QObject::connect(&unifiedPush, &RtUnifiedPush::activity, &app, []() { wakeTouch(); });
+    QObject::connect(&unifiedPush, &RtUnifiedPush::activity, &app, []() {
+        wakeTouch();
+        g_wakePush = QDateTime::currentMSecsSinceEpoch();
+    });
     // clients.openWindow() di un sito (tocco su una sua notifica): come un link
     QObject::connect(&unifiedPush, &RtUnifiedPush::openUrlRequested, &openHandler,
                      [&openHandler](const QString &url) { openHandler.openUrl(url); });
@@ -1483,9 +1489,12 @@ int main(int argc, char **argv)
     // Il primo piano su un link lo chiede OpenHandler (RtWindowRaiser): lipstick
     // consegna l'URL via DBus (X-Maemo-* del .desktop) ma non porta avanti da
     // solo una finestra Qt6 in cover — misurato il 10 ott (task 2.5 #3).
-    // La sveglia vive almeno 20 s (Foghorn chiama Message subito, il service
-    // worker deve partire e mostrare la notifica) e poi esce dopo 10 s senza
-    // push ne' notifiche, finche' nessuno mostra la finestra. RooTelegram ha
+    // La sveglia esce 3 s dopo la notifica della push (misurato 20 ott sul
+    // POCO: ~200 MB di PSS, motore + renderer del service worker; tenerli 20 s
+    // per niente era il lamento di un tester). Se la notifica non arriva vale
+    // la regola di prima: almeno 20 s di vita e 10 s senza push ne' notifiche.
+    // Mostrare la finestra spegne la sveglia per sempre (g_wakeHidden = latch:
+    // in cover isVisible() torna false, misurato da RooTelegram). RooTelegram ha
     // misurato che quit() a finestra nascosta puo' restare appeso: paracadute.
     QTimer wakeExit;
     if (pushWake) {
@@ -1504,13 +1513,17 @@ int main(int argc, char **argv)
                 return;
             }
             const qint64 now = QDateTime::currentMSecsSinceEpoch();
-            if (now - born < minLife || (minLife > 2000 && now - g_wakeActivity < 10000)) return;
-            qInfo("[rtpush] sveglia inattiva: esco");
+            const qint64 push = g_wakePush, notif = g_wakeNotif;
+            const bool delivered = push > 0 && notif >= push && now - notif >= 3000;
+            if (!delivered
+                && (now - born < minLife || (minLife > 2000 && now - g_wakeActivity < 10000))) return;
+            qInfo("[rtpush] sveglia %s dopo %lld ms: esco", delivered ? "consegnata" : "inattiva",
+                  (long long)(now - born));
             wakeExit.stop();
             QTimer::singleShot(8000, []() { killTree(getpid()); _exit(0); });
             QCoreApplication::quit();
         });
-        wakeExit.start(2000);
+        wakeExit.start(500);
     }
     const int rc = app.exec();
     // Esci dal menu' (task 2.5 #7): niente processi Chromium orfani dopo di noi
