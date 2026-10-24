@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.8.1
+Version:    2.9
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -138,6 +138,22 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-1
+- Download: accanto ad "Apri" c'e' "Apri con...", che elenca le app
+  adatte al tipo di file (la predefinita e' segnata).
+- Notifiche dei siti: su Jolla Home si possono espandere e hanno il
+  pulsante "Elimina", che le toglie dalla vista Eventi.
+- Se un sito riceve una notifica push ma non mostra niente (succede con
+  avito.ru), RooTitanium mostra comunque una notifica generica del sito;
+  toccandola si apre il sito.
+- mail.rambler.ru: la pagina di accesso non si ricarica piu' da sola ogni
+  30 secondi, si riesce a scrivere utente e password.
+- Incognito col tema chiaro: barra in basso ed elenco schede leggibili.
+- Nuova opzione "Blocca link nascosti e pubblicita' a sorpresa" (spenta):
+  un tocco apre un altro sito solo se hai toccato un link visibile verso
+  quel sito. Niente popup o pagine pubblicitarie quando premi play su un
+  video; se una pagina vuole portarti altrove dopo un tocco, chiede.
+
 * Tue Oct 20 2026 RootGPT <emagiampa@gmail.com> - 2.8.1-1
 - Toccando una notifica push ad app chiusa si apre la pagina che il
   sito voleva mostrare (prima si apriva la sua pagina principale), e
