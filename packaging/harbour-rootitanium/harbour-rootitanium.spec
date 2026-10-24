@@ -18,7 +18,7 @@
 
 Name:       harbour-rootitanium
 Version:    2.9
-Release:    1
+Release:    2
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,16 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-2
+- Notifiche push nel vecchio formato aesgcm (Firebase, per esempio
+  avito.ru): RooTitanium le sa leggere, appena Foghorn inoltrera' le
+  intestazioni di cifratura (richiesta fatta all'autore). Fino ad allora
+  resta la notifica generica del sito.
+- Iscrizione alle notifiche push piu' affidabile: se Foghorn in quel
+  momento non e' collegato al server (rete appena cambiata, telefono
+  appena svegliato) RooTitanium riprova invece di rinunciare, e non
+  lascia registrazioni orfane in Foghorn.
+
 * Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-1
 - Download: accanto ad "Apri" c'e' "Apri con...", che elenca le app
   adatte al tipo di file (la predefinita e' segnata).

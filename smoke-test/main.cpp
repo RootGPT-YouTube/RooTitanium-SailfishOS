@@ -658,6 +658,9 @@ public:
         m_endpoint = (void (*)(const char *, const char *))dlsym(RTLD_DEFAULT, "rtpush_endpoint");
         m_failed = (void (*)(const char *))dlsym(RTLD_DEFAULT, "rtpush_failed");
         m_message = (void (*)(const char *, const char *, int))dlsym(RTLD_DEFAULT, "rtpush_message");
+        // 0311: con le intestazioni aesgcm; un motore piu' vecchio non lo ha
+        m_messageEx = (void (*)(const char *, const char *, int, const char *, const char *, const char *))
+                dlsym(RTLD_DEFAULT, "rtpush_message_ex");
         m_unregistered = (void (*)(const char *))dlsym(RTLD_DEFAULT, "rtpush_unregistered");
         m_setOpen = (void (*)(RtOpenUrlCb))dlsym(RTLD_DEFAULT, "rtpush_set_open_handler");
         new RtPushConnector(this);
@@ -751,15 +754,22 @@ public:
         qInfo("[rtpush] endpoint per %s: %s", qPrintable(token), qPrintable(QUrl(endpoint).host()));
         m_endpoint(token.toUtf8().constData(), endpoint.toUtf8().constData());
     }
-    void message(const QString &token, const QByteArray &body)
+    void message(const QString &token, const QByteArray &body, const QString &encoding = QString(),
+                 const QString &encryption = QString(), const QString &cryptoKey = QString())
     {
         if (!isEnabled()) {
             qInfo("[rtpush] push per %s scartata: interruttore spento", qPrintable(token));
             return;
         }
-        qInfo("[rtpush] push di %d byte per %s", int(body.size()), qPrintable(token));
+        qInfo("[rtpush] push di %d byte per %s%s", int(body.size()), qPrintable(token),
+              encoding.isEmpty() ? "" : qPrintable(QStringLiteral(" (") + encoding + QLatin1Char(')')));
         emit activity();
-        m_message(token.toUtf8().constData(), body.constData(), int(body.size()));
+        if (m_messageEx && !encoding.isEmpty())
+            m_messageEx(token.toUtf8().constData(), body.constData(), int(body.size()),
+                        encoding.toUtf8().constData(), encryption.toUtf8().constData(),
+                        cryptoKey.toUtf8().constData());
+        else
+            m_message(token.toUtf8().constData(), body.constData(), int(body.size()));
         if (g_notifier) g_notifier->pushArrived(originOf(token));
     }
     // sito di una registrazione: il motore tiene token → app_id in rtpush.json,
@@ -811,7 +821,7 @@ private:
         if (s_self) emit s_self->openUrlRequested(QString::fromUtf8(url));
     }
 
-    void doRegister(const QString &token, const QString &vapid, const QString &description)
+    void doRegister(const QString &token, const QString &vapid, const QString &description, int attempt = 1)
     {
         if (!isEnabled()) {
             qInfo("[rtpush] iscrizione %s rifiutata: interruttore spento", qPrintable(token));
@@ -836,8 +846,12 @@ private:
                                                            QStringLiteral("Register"));
         call << args;
         // asincrona: prima di rispondere il distributore ci chiama NewEndpoint
-        auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(call, 20000), this);
-        connect(w, &QDBusPendingCallWatcher::finished, this, [this, token](QDBusPendingCallWatcher *w) {
+        // 0311: 30 s e non 20, cioe' piu' dei 20 che Foghorn concede al server:
+        // con lo stesso valore la nostra attesa scadeva un attimo prima della
+        // sua risposta
+        auto *w = new QDBusPendingCallWatcher(QDBusConnection::sessionBus().asyncCall(call, 30000), this);
+        connect(w, &QDBusPendingCallWatcher::finished, this,
+                [this, token, vapid, description, attempt](QDBusPendingCallWatcher *w) {
             w->deleteLater();
             const QDBusMessage r = w->reply();
             // a{sv} arriva come QDBusArgument: toMap() darebbe una mappa vuota
@@ -847,8 +861,19 @@ private:
                 qInfo("[rtpush] registrazione %s accettata", qPrintable(token));
                 return;
             }
-            qWarning("[rtpush] registrazione %s rifiutata: %s %s", qPrintable(token),
-                     qPrintable(r.errorMessage()), qPrintable(res.value(QStringLiteral("reason")).toString()));
+            const QString reason = res.value(QStringLiteral("reason")).toString();
+            qWarning("[rtpush] registrazione %s rifiutata (tentativo %d): %s %s", qPrintable(token), attempt,
+                     qPrintable(r.errorMessage()), qPrintable(reason));
+            // 0311: INTERNAL_ERROR (o nessuna risposta) = Foghorn non collegato
+            // al server in quel momento, misurato il 24 ott: si ricollega da
+            // solo pochi secondi dopo. Si riprova invece di rinunciare
+            const bool transient = r.type() != QDBusMessage::ReplyMessage || reason == QLatin1String("INTERNAL_ERROR");
+            if (transient && attempt < 3) {
+                QTimer::singleShot(8000, this, [this, token, vapid, description, attempt]() {
+                    doRegister(token, vapid, description, attempt + 1);
+                });
+                return;
+            }
             m_failed(token.toUtf8().constData());
         });
     }
@@ -887,6 +912,7 @@ private:
     void (*m_endpoint)(const char *, const char *) = nullptr;
     void (*m_failed)(const char *) = nullptr;
     void (*m_message)(const char *, const char *, int) = nullptr;
+    void (*m_messageEx)(const char *, const char *, int, const char *, const char *, const char *) = nullptr;
     void (*m_unregistered)(const char *) = nullptr;
     void (*m_setOpen)(RtOpenUrlCb) = nullptr;
     bool m_started = false;
@@ -905,7 +931,37 @@ QVariantMap RtPushConnector::Message(const QVariantMap &args)
 {
     const QVariant v = args.value(QStringLiteral("message"));
     const QByteArray body = v.canConvert<QDBusArgument>() ? qdbus_cast<QByteArray>(v) : v.toByteArray();
-    m_up->message(args.value(QStringLiteral("token")).toString(), body);
+    // 0311: intestazioni di cifratura, se il distributore le inoltra (oggi
+    // Foghorn no: richiesta all'autore). Accettati sia un dizionario «headers»
+    // con i nomi di autopush, sia le chiavi piatte; trattino o trattino basso
+    QVariantMap h = args;
+    const QVariant hv = args.value(QStringLiteral("headers"));
+    if (hv.canConvert<QDBusArgument>()) {
+        // a{ss} oppure a{sv}: convertire un a{ss} in QVariantMap fa cadere
+        // l'app (SIGSEGV, misurato 24 ott), quindi si guarda la firma
+        const QDBusArgument a = hv.value<QDBusArgument>();
+        if (a.currentSignature() == QLatin1String("a{ss}")) {
+            QMap<QString, QString> m;
+            a >> m;
+            for (auto it = m.cbegin(); it != m.cend(); ++it) h.insert(it.key(), it.value());
+        } else if (a.currentSignature() == QLatin1String("a{sv}")) {
+            QVariantMap m;
+            a >> m;
+            h.insert(m);
+        }
+    } else if (hv.isValid()) {
+        h.insert(hv.toMap());
+    }
+    auto pick = [&h](std::initializer_list<const char *> names) {
+        for (const char *n : names) {
+            const QString v = h.value(QLatin1String(n)).toString();
+            if (!v.isEmpty()) return v;
+        }
+        return QString();
+    };
+    m_up->message(args.value(QStringLiteral("token")).toString(), body,
+                  pick({ "encoding", "content-encoding", "content_encoding" }),
+                  pick({ "encryption" }), pick({ "crypto_key", "crypto-key" }));
     // l'id conferma la consegna al distributore
     QVariantMap reply;
     reply.insert(QStringLiteral("id"), args.value(QStringLiteral("id")).toString());

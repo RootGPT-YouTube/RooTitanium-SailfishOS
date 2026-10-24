@@ -1,0 +1,241 @@
+diff --git a/src/core/rt_push.h b/src/core/rt_push.h
+--- a/src/core/rt_push.h
++++ b/src/core/rt_push.h
+@@ -27,6 +27,13 @@
+ Q_WEBENGINECORE_EXPORT void rtpush_failed(const char *token);
+ Q_WEBENGINECORE_EXPORT void rtpush_message(const char *token, const char *body, int length);
+ Q_WEBENGINECORE_EXPORT void rtpush_unregistered(const char *token);
++// Patch 0311: come rtpush_message, con le intestazioni di cifratura se il
++// distributore le inoltra (autopush le manda per il vecchio formato aesgcm,
++// usato per esempio da Firebase verso endpoint non Google). encoding/encryption/
++// cryptoKey vuoti o NULL = aes128gcm come prima.
++Q_WEBENGINECORE_EXPORT void rtpush_message_ex(const char *token, const char *body, int length,
++                                              const char *encoding, const char *encryption,
++                                              const char *cryptoKey);
+ 
+ // motore -> app: clients.openWindow() di un service worker (tocco su una
+ // notifica push). L'app apre l'URL in una scheda.
+diff --git a/src/core/rt_push_driver.cpp b/src/core/rt_push_driver.cpp
+--- a/src/core/rt_push_driver.cpp
++++ b/src/core/rt_push_driver.cpp
+@@ -35,6 +35,7 @@
+ #include <QSaveFile>
+ 
+ #include <map>
++#include <vector>
+ 
+ namespace {
+ 
+@@ -42,8 +43,11 @@
+ RtPushUnregisterCb g_unregister = nullptr;
+ RtOpenUrlCb g_openUrl = nullptr;
+ 
+-// Quanto aspettare l'endpoint dopo la Register (Foghorn ne concede 20 al server).
+-constexpr base::TimeDelta kEndpointTimeout = base::Seconds(30);
++// Quanto aspettare l'endpoint dopo la Register. Foghorn concede 20 s al server
++// e, se in quel momento non e' collegato (rete appena cambiata, telefono che si
++// sveglia), risponde INTERNAL_ERROR: l'app riprova qualche volta (0311), e
++// questo tempo deve coprire tutti i tentativi.
++constexpr base::TimeDelta kEndpointTimeout = base::Seconds(120);
+ 
+ } // namespace
+ 
+@@ -53,7 +57,7 @@
+ static RtPushDriver *g_driver = nullptr;
+ 
+ // Messaggi arrivati prima che il profilo esista (avvio da sveglia D-Bus).
+-struct RtPushQueued { int kind; QByteArray token, data; };
++struct RtPushQueued { int kind; QByteArray token, data, meta; };
+ static QList<RtPushQueued> &rtPushQueue()
+ {
+     static QList<RtPushQueued> q;
+@@ -76,7 +80,7 @@
+         const QList<RtPushQueued> queued = std::move(rtPushQueue());
+         rtPushQueue().clear();
+         for (const RtPushQueued &q : queued)
+-            post(base::BindOnce(&RtPushDriver::deliver, m_weak.GetWeakPtr(), q.kind, q.token, q.data));
++            post(base::BindOnce(&RtPushDriver::deliver, m_weak.GetWeakPtr(), q.kind, q.token, q.data, q.meta));
+     }
+ 
+     ~RtPushDriver() override
+@@ -88,12 +92,14 @@
+     base::WeakPtr<RtPushDriver> weakPtr() { return m_weak.GetWeakPtr(); }
+ 
+     // 0 = endpoint, 1 = fallita, 2 = messaggio, 3 = deregistrata
+-    void deliver(int kind, const QByteArray &token, const QByteArray &data)
++    // meta (solo messaggi, 0311): "encoding\nencryption\ncrypto-key" se il
++    // distributore ha inoltrato le intestazioni di cifratura, altrimenti vuoto
++    void deliver(int kind, const QByteArray &token, const QByteArray &data, const QByteArray &meta)
+     {
+         switch (kind) {
+         case 0: onEndpoint(token.toStdString(), data.toStdString()); break;
+         case 1: finishPending(token.toStdString(), std::string(), GCMClient::SERVER_ERROR, true); break;
+-        case 2: onMessage(token.toStdString(), data.toStdString()); break;
++        case 2: onMessage(token.toStdString(), data.toStdString(), meta); break;
+         case 3: onUnregistered(token.toStdString()); break;
+         }
+     }
+@@ -103,11 +109,22 @@
+                   const std::string &scope, base::TimeDelta, GetTokenCallback callback) override
+     {
+         for (const auto &[token, e] : m_entries) {
+-            if (e.app_id == app_id && e.entity == authorized_entity && e.scope == scope
+-                && !e.endpoint.empty()) {
++            if (e.app_id != app_id || e.entity != authorized_entity || e.scope != scope)
++                continue;
++            if (!e.endpoint.empty()) {
+                 post(base::BindOnce(std::move(callback), e.endpoint, GCMClient::SUCCESS));
+                 return;
+             }
++            // 0311: il sito si iscrive di nuovo mentre la prima Register e'
++            // ancora in corso (SPA, doppio tocco). Prima nasceva una seconda
++            // registrazione con un altro endpoint, e il sito poteva tenersi
++            // quello che Chromium non associava piu' alla sottoscrizione.
++            auto p = m_pending.find(token);
++            if (p != m_pending.end()) {
++                qInfo("RTPUSH: iscrizione ripetuta per %s: attende la Register %s", app_id.c_str(), token.c_str());
++                p->second.push_back(std::move(callback));
++                return;
++            }
+         }
+         if (!g_register) {
+             qWarning("RTPUSH: nessun distributore UnifiedPush collegato, sottoscrizione rifiutata");
+@@ -116,7 +133,7 @@
+         }
+         const std::string token = base::Uuid::GenerateRandomV4().AsLowercaseString();
+         m_entries[token] = Entry{ app_id, authorized_entity, scope, std::string() };
+-        m_pending[token] = std::move(callback);
++        m_pending[token].push_back(std::move(callback));
+         save();
+         qInfo("RTPUSH: Register token %s per %s", token.c_str(), app_id.c_str());
+         g_register(token.c_str(), authorized_entity.c_str(), "RooTitanium");
+@@ -146,7 +163,14 @@
+                 && (scope == "*" || e.scope == scope)) {
+                 if (g_unregister)
+                     g_unregister(it->first.c_str());
+-                m_pending.erase(it->first);
++                // 0311: senza risposta la subscribe() del sito restava appesa
++                auto p = m_pending.find(it->first);
++                if (p != m_pending.end()) {
++                    std::vector<GetTokenCallback> cbs = std::move(p->second);
++                    m_pending.erase(p);
++                    for (auto &cb : cbs)
++                        post(base::BindOnce(std::move(cb), std::string(), GCMClient::SERVER_ERROR));
++                }
+                 it = m_entries.erase(it);
+             } else {
+                 ++it;
+@@ -236,7 +260,7 @@
+         auto it = m_pending.find(token);
+         if (it == m_pending.end())
+             return;
+-        GetTokenCallback cb = std::move(it->second);
++        std::vector<GetTokenCallback> cbs = std::move(it->second);
+         m_pending.erase(it);
+         if (dropEntry) {
+             qWarning("RTPUSH: registrazione %s non riuscita", token.c_str());
+@@ -245,14 +269,20 @@
+             if (g_unregister)
+                 g_unregister(token.c_str());
+         }
+-        std::move(cb).Run(endpoint, result);
++        for (auto &cb : cbs)
++            std::move(cb).Run(endpoint, result);
+     }
+ 
+     void onEndpoint(const std::string &token, const std::string &endpoint)
+     {
+         auto it = m_entries.find(token);
+         if (it == m_entries.end()) {
+-            qWarning("RTPUSH: endpoint per token sconosciuto %s", token.c_str());
++            // 0311: Register finita dopo che l'avevamo data per fallita (Foghorn
++            // scollegato che si ricollega): senza questa Unregister la
++            // registrazione restava orfana in Foghorn
++            qWarning("RTPUSH: endpoint per token sconosciuto %s: lo tolgo dal distributore", token.c_str());
++            if (g_unregister)
++                g_unregister(token.c_str());
+             return;
+         }
+         // Un endpoint cambiato rende non valida la vecchia sottoscrizione
+@@ -263,7 +293,7 @@
+         finishPending(token, endpoint, GCMClient::SUCCESS, false);
+     }
+ 
+-    void onMessage(const std::string &token, const std::string &body)
++    void onMessage(const std::string &token, const std::string &body, const QByteArray &meta)
+     {
+         auto it = m_entries.find(token);
+         if (it == m_entries.end()) {
+@@ -272,12 +302,25 @@
+         }
+         IncomingMessage msg;
+         msg.sender_id = it->second.entity;
++        const QList<QByteArray> h = meta.split('\n');
++        const bool aesgcm = h.size() == 3 && h.at(0).trimmed().toLower() == "aesgcm"
++                            && !h.at(1).trimmed().isEmpty() && !h.at(2).trimmed().isEmpty();
+         if (!body.empty()) {
+             msg.raw_data = body;
+-            msg.data[GCMEncryptionProvider::kContentEncodingProperty] =
+-                    GCMEncryptionProvider::kContentCodingAes128Gcm;
++            if (aesgcm) {
++                // 0311: vecchio formato aesgcm (FCM verso endpoint non Google):
++                // sale e chiave del mittente stanno nelle intestazioni, che il
++                // distributore ci ha passato. Senza content-encoding la classe
++                // base le legge da qui (kEncryptionProperty/kCryptoKeyProperty)
++                msg.data["encryption"] = h.at(1).trimmed().toStdString();
++                msg.data["crypto-key"] = h.at(2).trimmed().toStdString();
++            } else {
++                msg.data[GCMEncryptionProvider::kContentEncodingProperty] =
++                        GCMEncryptionProvider::kContentCodingAes128Gcm;
++            }
+         }
+-        qInfo("RTPUSH: messaggio di %zu byte per %s", body.size(), it->second.app_id.c_str());
++        qInfo("RTPUSH: messaggio di %zu byte per %s%s", body.size(), it->second.app_id.c_str(),
++              aesgcm ? " (aesgcm con intestazioni)" : "");
+         DispatchMessage(it->second.app_id, msg);
+     }
+ 
+@@ -337,7 +380,7 @@
+ 
+     QString m_file;
+     std::map<std::string, Entry> m_entries;          // token -> registrazione
+-    std::map<std::string, GetTokenCallback> m_pending;
++    std::map<std::string, std::vector<GetTokenCallback>> m_pending;   // token -> chi aspetta l'endpoint
+     std::map<std::string, std::pair<std::string, std::string>> m_iid;
+     base::WeakPtrFactory<RtPushDriver> m_weak{ this };
+ };
+@@ -351,14 +394,15 @@
+ 
+ } // namespace gcm
+ 
+-static void rtPushDeliver(int kind, const QByteArray &token, const QByteArray &data)
++static void rtPushDeliver(int kind, const QByteArray &token, const QByteArray &data,
++                          const QByteArray &meta = QByteArray())
+ {
+     if (gcm::g_driver)
+         content::GetUIThreadTaskRunner({})->PostTask(
+                 FROM_HERE, base::BindOnce(&gcm::RtPushDriver::deliver,
+-                                          gcm::g_driver->weakPtr(), kind, token, data));
++                                          gcm::g_driver->weakPtr(), kind, token, data, meta));
+     else
+-        gcm::rtPushQueue().append({ kind, token, data });
++        gcm::rtPushQueue().append({ kind, token, data, meta });
+ }
+ 
+ extern "C" {
+@@ -374,6 +418,15 @@
+ void rtpush_message(const char *token, const char *body, int length) { rtPushDeliver(2, token, QByteArray(body, length)); }
+ void rtpush_unregistered(const char *token) { rtPushDeliver(3, token, QByteArray()); }
+ 
++void rtpush_message_ex(const char *token, const char *body, int length, const char *encoding,
++                       const char *encryption, const char *cryptoKey)
++{
++    QByteArray meta;
++    if (encoding && *encoding && encryption && *encryption && cryptoKey && *cryptoKey)
++        meta = QByteArray(encoding) + '\n' + QByteArray(encryption) + '\n' + QByteArray(cryptoKey);
++    rtPushDeliver(2, token, QByteArray(body, length), meta);
++}
++
+ void rtpush_set_open_handler(RtOpenUrlCb cb) { g_openUrl = cb; }
+ 
+ }
