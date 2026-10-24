@@ -18,7 +18,7 @@
 
 Name:       harbour-rootitanium
 Version:    2.9
-Release:    2
+Release:    3
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,13 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-3
+- "Blocca link nascosti e pubblicita' a sorpresa": il video coperto da
+  uno strato invisibile ora parte al primo tocco anche quando il player
+  sta in un riquadro di un altro sito (prima la pubblicita' era bloccata
+  ma il video non partiva). Uno strato tolto viene segnalato una volta
+  per pagina.
+
 * Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-2
 - Notifiche push nel vecchio formato aesgcm (Firebase, per esempio
   avito.ru): RooTitanium le sa leggere, appena Foghorn inoltrera' le
