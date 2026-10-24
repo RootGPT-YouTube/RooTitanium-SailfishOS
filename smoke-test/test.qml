@@ -824,12 +824,67 @@ Window {
     var under = document.elementFromPoint(x, y);
     if (under && under !== el && !el.contains(under)) { last.el = null; under.click(); }
   };
+  // velo che copre un player in un iframe di un altro sito: il click
+  // sintetico di passThrough li' dentro non entra (e un <video> non parte con
+  // un click finto). Lo si riconosce al primo contatto del dito e lo si rende
+  // trasparente SUBITO: Chromium cerca il bersaglio del tap dopo, quindi il
+  // tocco vero, con la sua attivazione utente, arriva direttamente al player
+  var veilOverFrame = function(el, x, y){
+    for (var v = el, i = 0; v && i < 4; v = v.parentElement, i++) {
+      if (!emptyVeil(v)) continue;
+      var pe = v.style.getPropertyValue('pointer-events'), pr = v.style.getPropertyPriority('pointer-events');
+      v.style.setProperty('pointer-events', 'none', 'important');
+      var under = document.elementFromPoint(x, y);
+      v.style.setProperty('pointer-events', pe, pr);
+      var F = under && under.tagName === 'IFRAME' && urlOf(under.src);
+      if (F && foreign(F)) return v;
+    }
+    return null;
+  };
+  // ...ma il tap va comunque al bersaglio scelto all'inizio del tocco (misurato
+  // su Chromium: col velo tolto al pointerdown parte solo il SECONDO tocco).
+  // Allora i veli sopra gli iframe di altri siti si tolgono PRIMA: al
+  // caricamento, nei primi secondi e dopo ogni scorrimento si guardano solo gli
+  // iframe (pochi) e cosa c'e' sopra al loro centro
+  var neutralize = function(v){
+    v.style.setProperty('pointer-events', 'none', 'important');
+    say('veil');
+  };
+  var scanFrames = function(){
+    var fs = document.getElementsByTagName('iframe');
+    for (var i = 0; i < fs.length; i++) {
+      var f = fs[i], F = urlOf(f.src);
+      if (!F || !foreign(F)) continue;
+      var r = f.getBoundingClientRect();
+      if (r.width < 80 || r.height < 60 || r.bottom < 0 || r.top > innerHeight) continue;
+      var x = r.left + r.width / 2, y = Math.min(Math.max(r.top + r.height / 2, 1), innerHeight - 1);
+      var el = document.elementFromPoint(x, y);
+      if (!el || el === f || el.tagName === 'IFRAME') continue;
+      var a = el.closest ? el.closest('a[href]') : null, U = a && urlOf(a.href);
+      if (a && foreign(U) && (invisible(a) || emptyVeil(a))) { neutralize(a); continue; }
+      var v = veilOverFrame(el, x, y);
+      if (v) neutralize(v);
+    }
+  };
+  var scanLater = (function(){ var t = 0; return function(){ clearTimeout(t); t = setTimeout(scanFrames, 300); }; })();
+  document.addEventListener('DOMContentLoaded', scanLater);
+  window.addEventListener('load', scanLater);
+  window.addEventListener('scroll', scanLater, { passive: true });
+  window.addEventListener('resize', scanLater);
+  for (var k = 1; k <= 10; k++) setTimeout(scanFrames, k * 1500);
   window.addEventListener('pointerdown', function(e){
     if (!e.isTrusted) return;
     last.t = Date.now(); last.el = e.target; last.x = e.clientX; last.y = e.clientY;
     var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
     var U = a && urlOf(a.href);
-    last.site = (U && /^https?:$/.test(U.protocol) && !invisible(a) && !emptyVeil(a)) ? site(U.hostname) : '-';
+    var hostile = a && foreign(U) && (invisible(a) || emptyVeil(a));
+    last.site = (U && /^https?:$/.test(U.protocol) && !hostile) ? site(U.hostname) : '-';
+    var veil = hostile ? a : veilOverFrame(e.target, e.clientX, e.clientY);
+    if (veil) {
+      veil.style.setProperty('pointer-events', 'none', 'important');
+      last.el = null;
+      say(hostile ? 'blocked ' + U.hostname : 'veil');
+    }
     say('tap ' + last.site);
   }, true);
   window.addEventListener('click', function(e){
@@ -1955,6 +2010,11 @@ ${a.c}
         if (m.indexOf("tap ") === 0) view.ahTap = { t: Date.now(), site: m.substring(4) }
         else if (m.indexOf("blocked ") === 0 && view === currentView)
             toast.show(t("Bloccato: ", "Blocked: ") + m.substring(8).replace(/^www\./, ""))
+        else if (m === "veil" && view === currentView && !view.ahVeilSaid) {
+            // una volta per pagina: un sito ne puo' avere parecchi
+            view.ahVeilSaid = true
+            toast.show(t("Tolto uno strato invisibile sopra un video", "Removed an invisible layer over a video"))
+        }
     }
     // salto della pagina principale verso un altro sito, fatto da uno script
     // subito dopo un tocco che NON era un link verso quel sito
@@ -3865,7 +3925,8 @@ ${histCss}
                     property string shownUrl: ""
                     property var ahTap: null        // #5: ultimo tocco riferito dallo script ({t, site})
                     property string ahAllow: ""     // #5: salto concesso dall'utente, una volta
-                    onUrlChanged: { shownUrl = "" + url; localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
+                    property bool ahVeilSaid: false // #5: avviso «strato invisibile» gia' dato su questa pagina
+                    onUrlChanged: { shownUrl = "" + url; localPage = ""; ahVeilSaid = false; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
                         if (!priv) win.histTitle(url, title)   // il titolo spesso arriva dopo il load
