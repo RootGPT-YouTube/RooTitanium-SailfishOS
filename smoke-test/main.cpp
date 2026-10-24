@@ -34,6 +34,8 @@
 #include <QDBusConnectionInterface>
 #include <QWindow>
 #include <QHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <qpa/qplatformnativeinterface.h>
 #include <wayland-client.h>
 // interceptor header (QtWebEngineCore) + profilo QML (QQuickWebEngineProfile
@@ -368,6 +370,24 @@ public:
         return true;
     }
 
+    // Push arrivata per un sito (richiesta utenti #3, avito). Se entro 10 s il
+    // sito non mostra niente, una notifica nostra: Chrome fa lo stesso (dopo un
+    // piccolo budget) con «sito aggiornato in background», QtWebEngine invece
+    // tace (silent_push_allowed sempre vero). Casi misurati: service worker
+    // senza gestore «push» (m.avito.ru) e payload aesgcm, che UnifiedPush non
+    // puo' decifrare perche' Foghorn passa solo il corpo.
+    void pushArrived(const QString &origin)
+    {
+        if (origin.isEmpty() || !enabled.load()) return;
+        const QString o = bareOrigin(origin);
+        const qint64 t = QDateTime::currentMSecsSinceEpoch();
+        QTimer::singleShot(10000, this, [this, o, t]() {
+            if (m_lastShown.value(o) >= t) return;
+            qWarning("[rt] push di %s senza notifica del sito: mostro quella generica", qPrintable(o));
+            presentGeneric(o);
+        });
+    }
+
 private slots:
     void present(QWebEngineNotification *n)
     {
@@ -439,6 +459,7 @@ private slots:
                          QStringList{ QStringLiteral("default"), QString(),
                                       QStringLiteral("delete"), deleteLabel() }, hints, -1 });
 
+        m_lastShown.insert(bareOrigin(origin), QDateTime::currentMSecsSinceEpoch());
         Item item; item.n = n; item.origin = origin;
         m_items.insert(key, item);
         connect(n, &QWebEngineNotification::closed, this, [this, key]() { closedBySite(key); });
@@ -487,6 +508,42 @@ private slots:
 private:
     struct Item { QPointer<QWebEngineNotification> n; QString origin; uint id = 0; };
 
+    static QString bareOrigin(QString o)
+    {
+        while (o.endsWith(QLatin1Char('/'))) o.chop(1);
+        return o;
+    }
+
+    // tocco: la chiave non e' di nessuna notifica viva, quindi il sito si apre
+    // sulla sua origine (stessa strada delle notifiche di un processo morto)
+    void presentGeneric(const QString &origin)
+    {
+        g_wakeNotif = QDateTime::currentMSecsSinceEpoch();
+        m_lastShown.insert(origin, g_wakeNotif);
+        const QString host = QUrl(origin).host().remove(QRegularExpression(QStringLiteral("^www\\.")));
+        const bool it = QLocale().language() == QLocale::Italian;
+        const QString body = it ? QStringLiteral("Nuova notifica dal sito (senza testo): toccala per aprirlo")
+                                : QStringLiteral("New notification from the site (no text): tap to open it");
+        QVariantMap hints;
+        hints.insert(QStringLiteral("x-nemo-preview-summary"), host);
+        hints.insert(QStringLiteral("x-nemo-preview-body"), body);
+        hints.insert(QStringLiteral("x-nemo-feedback"), QStringLiteral("chat_exists"));
+        hints.insert(QStringLiteral("x-nemo-priority"), 120);
+        hints.insert(QStringLiteral("urgency"), QVariant::fromValue<uchar>(1));
+        hints.insert(QStringLiteral("x-nemo-remote-action-default"),
+                     m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtNotificationClicked ")
+                     + arg(QStringLiteral("generic")) + ' ' + arg(origin));
+        hints.insert(QStringLiteral("x-nemo-remote-action-delete"),
+                     QStringLiteral("org.freedesktop.DBus / org.freedesktop.DBus GetId"));
+        QDBusMessage m = QDBusMessage::createMethodCall(
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("/org/freedesktop/Notifications"),
+            QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("Notify"));
+        m.setArguments({ QStringLiteral("RooTitanium"), uint(0), appIcon(), host, body,
+                         QStringList{ QStringLiteral("default"), QString(),
+                                      QStringLiteral("delete"), deleteLabel() }, hints, -1 });
+        QDBusConnection::sessionBus().send(m);
+    }
+
     void closedBySite(const QString &key)
     {
         auto it = m_items.find(key);
@@ -506,14 +563,14 @@ private:
         QDBusConnection::sessionBus().send(m);
     }
 
-    // argomento del remote action: QVariant serializzato e in base64, come lo
-    // decodifica lipstick (Qt 5) → formato di stream fissato a Qt 5
     // stessa scelta di lingua del QML (win.t): italiano o inglese
     static QString deleteLabel()
     {
         return QLocale().language() == QLocale::Italian ? QStringLiteral("Elimina") : QStringLiteral("Delete");
     }
 
+    // argomento del remote action: QVariant serializzato e in base64, come lo
+    // decodifica lipstick (Qt 5) → formato di stream fissato a Qt 5
     static QString arg(const QString &v)
     {
         QByteArray ba;
@@ -550,6 +607,7 @@ private:
 
     QString m_busName, m_objPath;
     QHash<QString, Item> m_items;
+    QHash<QString, qint64> m_lastShown;   // origine (senza / finale) → ms dell'ultima notifica
     quint64 m_seq = 0;
     const char *(*m_currentId)() = (const char *(*)())dlsym(RTLD_DEFAULT, "rtpush_notification_current_id");
     void (*m_click)(const char *, const char *) =
@@ -702,7 +760,21 @@ public:
         qInfo("[rtpush] push di %d byte per %s", int(body.size()), qPrintable(token));
         emit activity();
         m_message(token.toUtf8().constData(), body.constData(), int(body.size()));
+        if (g_notifier) g_notifier->pushArrived(originOf(token));
     }
+    // sito di una registrazione: il motore tiene token → app_id in rtpush.json,
+    // e l'app_id di Chromium e' «wp:<origine>#<guid>»
+    static QString originOf(const QString &token)
+    {
+        QFile f(QDir::homePath() + QStringLiteral("/.rootitanium/GCM Store/rtpush.json"));
+        if (!f.open(QIODevice::ReadOnly)) return QString();
+        const QString app = QJsonDocument::fromJson(f.readAll()).object()
+            .value(QLatin1String("registrations")).toObject()
+            .value(token).toObject().value(QLatin1String("app_id")).toString();
+        if (!app.startsWith(QLatin1String("wp:"))) return QString();
+        return app.mid(3).section(QLatin1Char('#'), 0, 0);
+    }
+
     void unregistered(const QString &token)
     {
         qInfo("[rtpush] il distributore ha tolto %s", qPrintable(token));

@@ -861,6 +861,24 @@ Window {
   };
 })();`
 
+    // Correzioni per siti singoli, sempre attive (girano solo sul loro host).
+    // mail.rambler.ru (#6 richieste utenti, 24 ott): sulla pagina di login il
+    // client mobile interroga la casella ogni 30 s anche senza utente (manca
+    // la flag «new-auth»), riceve «Missed rsid», fa logout e ricarica la
+    // pagina: impossibile scrivere le credenziali. Su /auth quella richiesta
+    // non parte (resta in sospeso, il ciclo si ferma); fuori da /auth nulla.
+    readonly property string siteQuirksJs: `(function(){
+  if (window.__rtQuirks) return; window.__rtQuirks = true;
+  if (location.hostname !== 'mail.rambler.ru') return;
+  var poll = function(u, body){ return location.pathname.indexOf('/auth') === 0
+    && /\\/api\\/v2/.test(String(u)) && /get_mailbox_folders/.test(String(body || '')); };
+  var open = XMLHttpRequest.prototype.open, send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(m, u){ this.__rtUrl = u; return open.apply(this, arguments); };
+  XMLHttpRequest.prototype.send = function(b){ if (poll(this.__rtUrl, b)) return; return send.apply(this, arguments); };
+  var f = window.fetch;
+  window.fetch = function(u, o){ if (poll(u && u.url || u, o && o.body)) return new Promise(function(){}); return f.apply(this, arguments); };
+})();`
+
     readonly property string farbleJs: `(function(){
   if (window.__rtFarble) return; window.__rtFarble = true;
   function h(s){var x=2166136261>>>0;for(var i=0;i<s.length;i++){x^=s.charCodeAt(i);x=Math.imul(x,16777619);}return x>>>0;}
@@ -1080,6 +1098,13 @@ Window {
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: false   // solo il frame principale: è lui che ha la cronologia
+        })
+        s.push({
+            name: "rtSiteQuirks",
+            sourceCode: siteQuirksJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: false
         })
         if (cfgAntiHijack) s.push({
             name: "rtAntiHijack",
