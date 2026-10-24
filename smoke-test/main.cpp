@@ -44,6 +44,7 @@
 #include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 #include <QtWebEngineCore/QWebEngineNotification>
+#include <QLocale>
 #include <QQmlEngine>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
@@ -416,6 +417,14 @@ private slots:
                        + arg(key) + ' ' + arg(origin)
                      : m_busName + ' ' + m_objPath + QStringLiteral(" org.freedesktop.Application rtPersistentClicked ")
                        + arg(key) + ' ' + arg(origin) + ' ' + arg(pid));
+        // «Elimina» (richiesta utenti): con la sola azione default lipstick
+        // non offre la freccia per espandere, quindi nemmeno un modo di
+        // togliere una singola notifica fuori dalla modalita' riordino. Il
+        // remote action va al bus stesso (GetId, sempre presente, senza
+        // argomenti): non sveglia l'app chiusa, e lipstick dopo l'azione
+        // rimuove la notifica non residente, che ci torna come NotificationClosed
+        hints.insert(QStringLiteral("x-nemo-remote-action-delete"),
+                     QStringLiteral("org.freedesktop.DBus / org.freedesktop.DBus GetId"));
         const QString icon = saveIcon(n->icon(), host);
         if (!icon.isEmpty()) hints.insert(QStringLiteral("image-path"), icon);
 
@@ -427,7 +436,8 @@ private slots:
             QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("/org/freedesktop/Notifications"),
             QStringLiteral("org.freedesktop.Notifications"), QStringLiteral("Notify"));
         m.setArguments({ QStringLiteral("RooTitanium"), replaces, appIcon(), n->title(), body,
-                         QStringList{ QStringLiteral("default"), QString() }, hints, -1 });
+                         QStringList{ QStringLiteral("default"), QString(),
+                                      QStringLiteral("delete"), deleteLabel() }, hints, -1 });
 
         Item item; item.n = n; item.origin = origin;
         m_items.insert(key, item);
@@ -498,6 +508,12 @@ private:
 
     // argomento del remote action: QVariant serializzato e in base64, come lo
     // decodifica lipstick (Qt 5) → formato di stream fissato a Qt 5
+    // stessa scelta di lingua del QML (win.t): italiano o inglese
+    static QString deleteLabel()
+    {
+        return QLocale().language() == QLocale::Italian ? QStringLiteral("Elimina") : QStringLiteral("Delete");
+    }
+
     static QString arg(const QString &v)
     {
         QByteArray ba;
@@ -1098,6 +1114,44 @@ public:
             return false;
         return QProcess::startDetached(QStringLiteral("/usr/bin/lca-tool"),
             { QStringLiteral("--triggerfile"), QUrl::fromLocalFile(path).toString() });
+    }
+
+    // «Apri con…» (richiesta utenti): le app che libcontentaction associa al
+    // tipo del file, nell'ordine di lca-tool. Ogni voce: id = nome del .desktop
+    // (quello che vuole --trigger), name = nome localizzato, def = predefinita
+    Q_INVOKABLE QVariantList openWithActions(const QString &path)
+    {
+        QVariantList out;
+        if (!QFileInfo::exists(path))
+            return out;
+        const QString url = QUrl::fromLocalFile(path).toString();
+        auto run = [](const QStringList &args) {
+            QProcess p;
+            p.start(QStringLiteral("/usr/bin/lca-tool"), args);
+            if (!p.waitForFinished(4000)) { p.kill(); p.waitForFinished(500); return QStringList(); }
+            return QString::fromUtf8(p.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        };
+        const QStringList ids = run({ QStringLiteral("--file"), QStringLiteral("--print"), url });
+        const QStringList names = run({ QStringLiteral("--l10n"), QStringLiteral("--file"), QStringLiteral("--print"), url });
+        const QStringList def = run({ QStringLiteral("--file"), QStringLiteral("--printdefault"), url });
+        for (int i = 0; i < ids.size(); ++i) {
+            const QString id = ids.at(i).trimmed();
+            if (id.isEmpty())
+                continue;
+            out.append(QVariantMap{
+                { QStringLiteral("id"), id },
+                { QStringLiteral("name"), names.size() == ids.size() ? names.at(i).trimmed() : id },
+                { QStringLiteral("def"), !def.isEmpty() && def.first().trimmed() == id },
+            });
+        }
+        return out;
+    }
+    Q_INVOKABLE bool openFileWith(const QString &path, const QString &action)
+    {
+        if (!QFileInfo::exists(path) || action.isEmpty())
+            return false;
+        return QProcess::startDetached(QStringLiteral("/usr/bin/lca-tool"),
+            { QStringLiteral("--file"), QStringLiteral("--trigger"), action, QUrl::fromLocalFile(path).toString() });
     }
 
     // Installa l'interceptor header sul profilo QML. I due WebEngineProfile sono

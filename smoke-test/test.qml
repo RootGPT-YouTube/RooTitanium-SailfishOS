@@ -197,12 +197,14 @@ Window {
         bg: "#101014", surface: "#1c1c22", card: "#2c2c31", border: "#3a3a42",
         fg: "#e6e6ea", fg2: "#c8c8d0", muted: "#9aa0a6", muted2: "#8a8a92", faint: "#6a6a72", ok: "#4ea866",
         line: "#3a3a44", link: "#8ab4f8", accent: "#3a5fc0", accentPress: "#4a6fd0",
-        neutralPress: "#3a3a44", focus: "#5a7fd0", incAccent: "#c9b8e0"
+        neutralPress: "#3a3a44", focus: "#5a7fd0", incAccent: "#c9b8e0",
+        incBar: "#2a2233", incPill: "#352b44", incBg: "#17121f", incTab: "#3a3050", incCard: "#2c2440"
     }) : ({
         bg: "#e9e9ec", surface: "#ffffff", card: "#ffffff", border: "#d6d6dc",
         fg: "#1b1b20", fg2: "#33333a", muted: "#5c5c66", muted2: "#6a6a74", faint: "#9a9aa4", ok: "#2e7d46",
         line: "#d0d0d6", link: "#1a56d0", accent: "#3a5fc0", accentPress: "#2f4fa8",
-        neutralPress: "#e0e0e6", focus: "#5a7fd0", incAccent: "#7a4fd0"
+        neutralPress: "#e0e0e6", focus: "#5a7fd0", incAccent: "#6a3fc0",
+        incBar: "#dcd2ec", incPill: "#f6f2fb", incBg: "#ece6f5", incTab: "#d6cae9", incCard: "#e4dcf0"
     })
     // variabili CSS iniettate in <head> di ogni pagina interna: le regole usano var(--x)
     function themeVars() {
@@ -401,6 +403,10 @@ Window {
     property bool cfgCloseTabs: true        // ON = chiudi tutte le schede all'uscita; OFF = ripristina sessione
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
+    // #5 richiesta utenti (24 ott): link trasparenti sopra i player, popup e
+    // salti a siti pubblicitari al tocco. SPENTO di default: l'utente ha chiesto
+    // «un toggle per attivare»
+    property bool cfgAntiHijack: false
     property bool cfgSwipeNav: true         // swipe orizzontale dal centro = Indietro/Avanti (acceso di default: scelta utente 19 set, dopo il collaudo)
     // --- task 1.3: hardening privacy. Erano tutti e tre spenti di default (20
     // lug): sono le misure che possono rompere siti. Il 17 set i cookie di terze
@@ -542,6 +548,7 @@ Window {
         cfgFarble       = kvGet("set_farble", "1") === "1"
         cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
         cfgSwipeNav     = kvGet("set_swipenav", "1") === "1"
+        cfgAntiHijack   = kvGet("set_antihijack", "0") === "1"
         cfgPermCam      = kvGet("set_perm_cam", "1") === "1"
         cfgPermMic      = kvGet("set_perm_mic", "1") === "1"
         cfgPermLoc      = kvGet("set_perm_loc", "1") === "1"
@@ -611,6 +618,7 @@ Window {
         else if (k === "farble")   { cfgFarble = on;   kvSet("set_farble", v); applyViewPrefs() }
         else if (k === "nocookie") { cfgNoCookieBanner = on; kvSet("set_nocookie", v); applyViewPrefs() }
         else if (k === "swipenav") { cfgSwipeNav = on; kvSet("set_swipenav", v); applyViewPrefs() }
+        else if (k === "antihijack") { cfgAntiHijack = on; kvSet("set_antihijack", v); applyViewPrefs() }
         else if (k === "permcam")   { cfgPermCam = on;      kvSet("set_perm_cam", v) }
         else if (k === "permmic")   { cfgPermMic = on;      kvSet("set_perm_mic", v) }
         else if (k === "permloc")   { cfgPermLoc = on;      kvSet("set_perm_loc", v) }
@@ -767,6 +775,90 @@ Window {
   try{navigator.getBattery=function(){return Promise.resolve(
     {charging:true,chargingTime:0,dischargingTime:Infinity,level:1,
      addEventListener:function(){},removeEventListener:function(){}})}}catch(e){}
+})();`
+
+    // #5 link nascosti / pubblicità a sorpresa. Regola unica: un ALTRO sito si
+    // apre solo se l'utente ha appena toccato un link VISIBILE verso quel sito.
+    //  - tocco su un <a> trasparente o su un velo vuoto sopra il contenuto (il
+    //    trucco dei player video): bloccato, il velo diventa trasparente al
+    //    tocco e il tocco passa all'elemento sotto (il pulsante play);
+    //  - window.open e click sintetici verso altri siti senza quel tocco:
+    //    bloccati. window.open rende una finestra finta che inghiotte tutto, cosi'
+    //    lo script non ripiega sul salto della scheda stessa;
+    //  - al QML arriva «__rtah:tap <sito>» a ogni tocco (sito del link toccato,
+    //    «-» se non era un link): con quello onNavigationRequested riconosce il
+    //    salto della pagina principale fatto da uno script (anche da un iframe).
+    readonly property string antiHijackJs: `(function(){
+  if (window.__rtAH) return; window.__rtAH = true;
+  var site = function(h){ h = (h || '').toLowerCase().replace(/^www\\./, ''); var p = h.split('.');
+    return p.length > 2 && !/^\\d+$/.test(p[p.length-1]) ? p.slice(-2).join('.') : h; };
+  var here = site(location.hostname);
+  var last = { t: 0, site: '', el: null, x: 0, y: 0 };
+  var urlOf = function(u){ try { return new URL(u, location.href); } catch(e) { return null; } };
+  var foreign = function(U){ return U && /^https?:$/.test(U.protocol) && site(U.hostname) !== here; };
+  var intent = function(U){ return Date.now() - last.t < 1500 && last.site === site(U.hostname); };
+  var say = function(m){ try { console.log('__rtah:' + m); } catch(e) {} };
+  var media = 'img,video,canvas,svg,picture,iframe';
+  var invisible = function(el){
+    var op = 1;
+    for (var e = el; e && e.nodeType === 1; e = e.parentElement) {
+      var cs = getComputedStyle(e);
+      if (cs.visibility === 'hidden') return true;
+      op *= parseFloat(cs.opacity || '1');
+    }
+    return op < 0.1;
+  };
+  // velo vuoto: grande, posizionato sopra il resto, senza testo ne' immagini vere
+  var emptyVeil = function(el){
+    if (!el || el.nodeType !== 1 || el === document.body || el === document.documentElement) return false;
+    var cs = getComputedStyle(el); if (cs.position !== 'absolute' && cs.position !== 'fixed') return false;
+    var r = el.getBoundingClientRect();
+    if (r.width * r.height < 0.15 * innerWidth * innerHeight) return false;
+    if ((el.innerText || '').trim().length) return false;
+    var ms = el.querySelectorAll(media);
+    for (var i = 0; i < ms.length; i++) { var m = ms[i].getBoundingClientRect(); if (m.width > 24 && m.height > 24) return false; }
+    return true;
+  };
+  var passThrough = function(el, x, y){
+    el.style.setProperty('pointer-events', 'none', 'important');
+    var under = document.elementFromPoint(x, y);
+    if (under && under !== el && !el.contains(under)) { last.el = null; under.click(); }
+  };
+  window.addEventListener('pointerdown', function(e){
+    if (!e.isTrusted) return;
+    last.t = Date.now(); last.el = e.target; last.x = e.clientX; last.y = e.clientY;
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    var U = a && urlOf(a.href);
+    last.site = (U && /^https?:$/.test(U.protocol) && !invisible(a) && !emptyVeil(a)) ? site(U.hostname) : '-';
+    say('tap ' + last.site);
+  }, true);
+  window.addEventListener('click', function(e){
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    var U = a && urlOf(a.href);
+    if (!foreign(U)) return;
+    if (e.isTrusted ? !(invisible(a) || emptyVeil(a)) : intent(U)) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    say('blocked ' + U.hostname);
+    if (e.isTrusted) passThrough(a, e.clientX, e.clientY);
+  }, true);
+  var fake = new Proxy(function(){}, { get: function(t, k){ return k === 'closed' ? false : fake; }, set: function(){ return true; }, apply: function(){ return fake; } });
+  var wopen = window.open;
+  window.open = function(u){
+    var U = urlOf(u || 'about:blank');
+    if (foreign(U) && !intent(U)) {
+      say('blocked ' + U.hostname);
+      if (last.el && Date.now() - last.t < 1500 && emptyVeil(last.el)) passThrough(last.el, last.x, last.y);
+      return fake;
+    }
+    return wopen.apply(this, arguments);
+  };
+  // <a> staccati dal documento e cliccati da script: il loro click non passa da window
+  var aclick = HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click = function(){
+    var U = urlOf(this.href);
+    if (!this.isConnected && foreign(U) && !intent(U)) { say('blocked ' + U.hostname); return; }
+    return aclick.apply(this, arguments);
+  };
 })();`
 
     readonly property string farbleJs: `(function(){
@@ -989,6 +1081,13 @@ Window {
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: false   // solo il frame principale: è lui che ha la cronologia
         })
+        if (cfgAntiHijack) s.push({
+            name: "rtAntiHijack",
+            sourceCode: antiHijackJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: true    // i player stanno quasi sempre in un iframe
+        })
         if (cfgNoCookieBanner) s.push({
             name: "rtCookieBanner",
             sourceCode: cookieBannerJs,
@@ -1095,12 +1194,15 @@ Window {
             }
         } else if (u.indexOf("https://downloads.local/") === 0) {
             var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
+            var mWith = u.match(/^https:\/\/downloads\.local\/openwith\?id=(.*)$/)
             var mCanc = u.match(/^https:\/\/downloads\.local\/cancel\?id=(.*)$/)
             if (mOpen) {
                 // niente reload: l'app handler si apre sopra la pagina
                 var de = win.dlFind(mOpen[1])
                 if (!(de && typeof rtNative !== "undefined" && rtNative.openFile(de.path)))
                     toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
+            } else if (mWith) {
+                win.openWith(win.dlFind(mWith[1]))
             } else {
                 if (mCanc) win.dlCancel(mCanc[1])
                 else if (u === "https://downloads.local/clear") win.dlClear()
@@ -1413,6 +1515,9 @@ Window {
     // di console; qui tiriamo su i dati e mostriamo il foglio QML. Il valore si
     // riscrive con __rtSelApply, che spara anche input/change.
     property var selView: null
+    // foglio usato da QML (es. «Apri con…»): la scelta va a questa funzione
+    // invece che alla pagina
+    property var selDoneCb: null
     property var selModel: []
     property string selTitle: ""
     property int selCur: -1
@@ -1429,9 +1534,21 @@ Window {
             selList.positionViewAtIndex(Math.max(0, selCur), ListView.Center)
         })
     }
+    function openChooser(title, labels, cur, cb) {
+        selView = null
+        selDoneCb = cb
+        selTitle = title
+        selCur = cur
+        selModel = labels.map(function(l, i) { return { l: l, i: i } })
+        selMenu.open = true
+        selList.positionViewAtIndex(0, ListView.Beginning)
+    }
     function selectMenuDone(i) {
         selMenu.open = false
-        if (selView) selView.runJavaScript("window.__rtSelApply && window.__rtSelApply(" + i + ")")
+        var cb = selDoneCb
+        selDoneCb = null
+        if (cb) { if (i >= 0) cb(i) }
+        else if (selView) selView.runJavaScript("window.__rtSelApply && window.__rtSelApply(" + i + ")")
         selView = null
         selModel = []
     }
@@ -1803,6 +1920,58 @@ ${a.c}
 
     // pagina di gestione (menù ⋮ → Download): sessione + storico dalla SQLite,
     // dedupe per did. Azioni via link sentinella downloads.local/{open,cancel,clear}
+    // ===================== #5 LINK NASCOSTI / PUBBLICITÀ A SORPRESA =====================
+    function ahSite(h) {
+        h = ("" + h).toLowerCase().replace(/^www\./, "")
+        var p = h.split(".")
+        return p.length > 2 && !/^\d+$/.test(p[p.length - 1]) ? p.slice(-2).join(".") : h
+    }
+    function onAntiHijackMsg(view, m) {
+        if (m.indexOf("tap ") === 0) view.ahTap = { t: Date.now(), site: m.substring(4) }
+        else if (m.indexOf("blocked ") === 0 && view === currentView)
+            toast.show(t("Bloccato: ", "Blocked: ") + m.substring(8).replace(/^www\./, ""))
+    }
+    // salto della pagina principale verso un altro sito, fatto da uno script
+    // subito dopo un tocco che NON era un link verso quel sito
+    function antiHijackStop(view, request, u) {
+        if (!cfgAntiHijack || !/^https?:/i.test(u)) return false
+        if (view.ahAllow === u) { view.ahAllow = ""; return false }
+        if (request.isMainFrame === false) return false
+        var nt = request.navigationType
+        if (nt !== WebEngineNavigationRequest.OtherNavigation && nt !== WebEngineNavigationRequest.LinkClickedNavigation) return false
+        var tap = view.ahTap
+        if (!tap || Date.now() - tap.t > 2500) return false
+        var to = ahSite(histHost(u)), from = ahSite(histHost("" + view.url))
+        return to !== from && tap.site !== to
+    }
+    function antiHijackAsk(view, u) {
+        var host = histHost(u)
+        openChooser(t("La pagina vuole aprire ", "The page wants to open ") + host,
+                    [t("Resta qui", "Stay here"), t("Apri ", "Open ") + host], 0, function(i) {
+            if (i === 1) { view.ahAllow = u; view.url = u }
+        })
+    }
+
+    // «Apri con…»: le app adatte al tipo del file (libcontentaction), la
+    // predefinita segnata; il file si apre con quella scelta
+    function openWith(de) {
+        var acts = (de && typeof rtNative !== "undefined" && rtNative.openWithActions) ? rtNative.openWithActions(de.path) : []
+        if (!de || !acts.length) {
+            toast.show(de ? win.t("Nessuna app sa aprire questo file", "No app can open this file")
+                          : win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
+            return
+        }
+        var cur = -1
+        var labels = acts.map(function(a, i) {
+            if (a.def) cur = i
+            return a.def ? a.name + win.t(" (predefinita)", " (default)") : a.name
+        })
+        openChooser(win.t("Apri con…", "Open with…") + " " + de.name, labels, cur, function(i) {
+            if (!rtNative.openFileWith(de.path, acts[i].id))
+                toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
+        })
+    }
+
     function downloadsHtml() {
         var rows = [], seen = {}
         for (var i = 0; i < dlItems.length; i++) { rows.push(dlItems[i]); seen[dlItems[i].did] = true }
@@ -1819,6 +1988,7 @@ ${a.c}
             } else if (e.state === "done") {
                 sub = win.fmtBytes(e.received) + " · " + when
                 act = '<a class="dact" href="https://downloads.local/open?id=' + e.did + '">' + win.t("Apri", "Open") + '</a>'
+                    + '<a class="dact" href="https://downloads.local/openwith?id=' + e.did + '">' + win.t("Apri con…", "Open with…") + '</a>'
             } else {
                 sub = (e.state === "fail" ? win.t("Non riuscito", "Failed") : win.t("Annullato", "Cancelled")) + " · " + when
             }
@@ -1877,7 +2047,7 @@ ${body}
                  + "if(a){var d=a.querySelector('.rad');if(d)d.classList.add('on');}})();"
         }
         var bools = ["js","cookies","popups","dnt","cookies3p","noreferrer",
-                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide","homenewtab","anim","swipenav","barbottom","pushsites"]
+                     "storage3p","dark","startprivate","closetabs","farble","nocookie","barautohide","homenewtab","anim","swipenav","barbottom","pushsites","antihijack"]
         if (bools.indexOf(k) >= 0) {           // toggle: commuta .on e inverte l'href
             var on = v === "1"
             return "(function(){var a=document.getElementById('r_" + k + "');if(!a)return;"
@@ -1994,6 +2164,7 @@ ${sToggle("barautohide", cfgBarAutoHide, win.t("Nascondi scorrendo", "Hide while
 <h2>${win.t("Pagine web", "Web pages")}</h2>
 ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
 ${sToggle("swipenav", cfgSwipeNav, win.t("Swipe per Indietro e Avanti", "Swipe for Back and Forward"), win.t("Trascina dal centro della pagina: verso destra torni indietro, verso sinistra vai avanti", "Drag from the middle of the page: right goes back, left goes forward"))}
+${sToggle("antihijack", cfgAntiHijack, win.t("Blocca link nascosti e pubblicità a sorpresa", "Block hidden links and surprise ads"), win.t("Un tocco apre un altro sito solo se hai toccato un link visibile verso quel sito: niente popup o pagine pubblicitarie quando premi play su un video", "A tap opens another site only if you tapped a visible link to it: no popups or ad pages when you press play on a video"))}
 <h2>${win.t("Informazioni", "About")}</h2>
 <a class="srow" href="https://about.local/"><span class="sbody"><span class="st">${win.t("Informazioni su RooTitanium", "About RooTitanium")}</span><span class="sd">${win.t("Versione, crediti e licenza", "Version, credits and license")}</span></span><span class="chev">›</span></a>
 </body></html>`
@@ -3246,7 +3417,7 @@ ${histCss}
                : 0
             z: 2   // durante lo scivolamento passa SOPRA la pagina
             visible: !win.videoFS     // video a tutto schermo → via la toolbar
-            color: win.currentPrivate ? "#2a2233" : win.pal.bg
+            color: win.currentPrivate ? win.pal.incBar : win.pal.bg
 
             Item {
                 id: homeBtn
@@ -3353,7 +3524,7 @@ ${histCss}
                 anchors.left: reloadBtn.right; anchors.right: tabsBtn.left; anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 4 * win.u; anchors.rightMargin: 4 * win.u
                 height: 54 * win.u; radius: height / 2; clip: true
-                color: urlbar.activeFocus ? win.pal.card : (win.currentPrivate ? "#352b44" : win.pal.surface)
+                color: urlbar.activeFocus ? win.pal.card : (win.currentPrivate ? win.pal.incPill : win.pal.surface)
                 border.color: urlbar.activeFocus ? win.pal.focus : win.pal.border; border.width: 1
 
                 // icona: lucchetto (normale) o incognito (privata)
@@ -3626,6 +3797,10 @@ ${histCss}
                             request.reject()
                             var view = this
                             Qt.callLater(function() { win.internalNav(view, u) })
+                        } else if (win.antiHijackStop(this, request, u)) {
+                            request.reject()
+                            var hv = this
+                            Qt.callLater(function() { win.antiHijackAsk(hv, u) })
                         } else if (/^https:\/\/play\.google\.com\/store\/apps\/details/i.test(u)
                                    && (request.navigationType === WebEngineNavigationRequest.RedirectNavigation
                                        || (request.navigationType !== WebEngineNavigationRequest.TypedNavigation && request.userInitiated !== true))) {
@@ -3663,6 +3838,8 @@ ${histCss}
                     // barra, legata a url, restava sul sito precedente. Lo rileggiamo
                     // anche a ogni caricamento, quando il valore e' gia' quello giusto.
                     property string shownUrl: ""
+                    property var ahTap: null        // #5: ultimo tocco riferito dallo script ({t, site})
+                    property string ahAllow: ""     // #5: salto concesso dall'utente, una volta
                     onUrlChanged: { shownUrl = "" + url; localPage = ""; try { settings.forceDarkMode = win.cfgDark } catch(e) {} tabsModel.setProperty(index, "murl", "" + url); win.saveSession(); if (index === win.currentTab) win.barShow() }
                     onTitleChanged: {
                         tabsModel.setProperty(index, "mtitle", title && title.length ? "" + title : win.t("Nuova scheda", "New tab"))
@@ -3697,6 +3874,7 @@ ${histCss}
                     onJavaScriptConsoleMessage: function(level, message, lineNumber, sourceID) {
                         if (message === "__rtsel:open") { win.openSelectMenu(this); return }
                         if (message.indexOf("__rtswipe:") === 0) { win.onSwipeMsg(this, message.substring(10)); return }
+                        if (message.indexOf("__rtah:") === 0) { win.onAntiHijackMsg(this, message.substring(7)); return }
                         if (level >= WebEngineView.WarningMessageLevel)
                             console.warn("[js] " + sourceID + ":" + lineNumber + " " + message)
                     }
@@ -3932,7 +4110,7 @@ ${histCss}
         property bool open: false
         property bool showPrivate: false
         anchors.fill: parent
-        color: showPrivate ? "#17121f" : win.pal.bg
+        color: showPrivate ? win.pal.incBg : win.pal.bg
         visible: open || opacity > 0; z: 80
         opacity: open ? 1 : 0; enabled: open
         Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
@@ -3961,7 +4139,7 @@ ${histCss}
                 }
                 Rectangle {
                     width: 150*win.u; height: 50*win.u; radius: 25*win.u
-                    color: switcher.showPrivate ? "#3a3050" : "transparent"
+                    color: switcher.showPrivate ? win.pal.incTab : "transparent"
                     Text { anchors.centerIn: parent; text: "Incognito " + win.tabCount(true); color: win.pal.incAccent; font.pixelSize: 18*win.u }
                     MouseArea { anchors.fill: parent; onClicked: switcher.showPrivate = true }
                 }
@@ -3999,7 +4177,7 @@ ${histCss}
                             id: cardHead
                             anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                             height: 46 * win.u; radius: 12 * win.u
-                            color: model.priv ? "#2c2440" : win.pal.surface
+                            color: model.priv ? win.pal.incCard : win.pal.surface
                             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12*win.u; color: parent.color }  // squadra il basso
                             Text { anchors.left: parent.left; anchors.leftMargin: 12*win.u; anchors.right: closeX.left; anchors.rightMargin: 6*win.u
                                 anchors.verticalCenter: parent.verticalCenter; text: model.mtitle; color: win.pal.fg; font.pixelSize: 16*win.u; elide: Text.ElideRight }
