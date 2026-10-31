@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.8.1"
+    readonly property string appVersion: "2.9.1"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -404,9 +404,9 @@ Window {
     property bool cfgFarble: true           // anti-fingerprinting stile Brave/Cromite (rumore seedato)
     property bool cfgNoCookieBanner: true   // rifiuta/nascondi i banner cookie automaticamente
     // #5 richiesta utenti (24 ott): link trasparenti sopra i player, popup e
-    // salti a siti pubblicitari al tocco. SPENTO di default: l'utente ha chiesto
-    // «un toggle per attivare»
-    property bool cfgAntiHijack: false
+    // salti a siti pubblicitari al tocco. Nato SPENTO («un toggle per
+    // attivare»); ACCESO di default dalla 2.9.1 (decisione utente 31 ott)
+    property bool cfgAntiHijack: true
     property bool cfgForceZoom: true        // pinch anche dove il sito lo vieta col <meta viewport> (come Safari iOS; acceso di default, 31 ott)
     property bool cfgSwipeNav: true         // swipe orizzontale dal centro = Indietro/Avanti (acceso di default: scelta utente 19 set, dopo il collaudo)
     // --- task 1.3: hardening privacy. Erano tutti e tre spenti di default (20
@@ -550,7 +550,7 @@ Window {
         cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
         cfgSwipeNav     = kvGet("set_swipenav", "1") === "1"
         cfgForceZoom    = kvGet("set_forcezoom", "1") === "1"
-        cfgAntiHijack   = kvGet("set_antihijack", "0") === "1"
+        cfgAntiHijack   = kvGet("set_antihijack", "1") === "1"
         cfgPermCam      = kvGet("set_perm_cam", "1") === "1"
         cfgPermMic      = kvGet("set_perm_mic", "1") === "1"
         cfgPermLoc      = kvGet("set_perm_loc", "1") === "1"

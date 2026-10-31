@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9
-Release:    3
+Version:    2.9.1
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,16 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sat Oct 31 2026 RootGPT <emagiampa@gmail.com> - 2.9.1-1
+- Zoom su tutti i siti: il pinch funziona anche sulle pagine che lo
+  vietano (user-scalable=no, maximum-scale=1), come in Safari su iOS.
+- I siti pensati per il computer (senza viewport mobile, es.
+  openrepos.net) si aprono a pagina intera e si possono rimpicciolire;
+  prima restavano tagliati a destra senza modo di vederli interi.
+- Nuovo interruttore in Impostazioni > Pagine web, acceso di default.
+- "Blocca link nascosti e pubblicita' a sorpresa" ora e' acceso di
+  default (chi lo aveva spento a mano lo ritrova spento).
+
 * Sat Oct 24 2026 RootGPT <emagiampa@gmail.com> - 2.9-3
 - "Blocca link nascosti e pubblicita' a sorpresa": il video coperto da
   uno strato invisibile ora parte al primo tocco anche quando il player
