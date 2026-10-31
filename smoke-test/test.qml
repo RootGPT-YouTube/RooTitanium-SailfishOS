@@ -407,6 +407,7 @@ Window {
     // salti a siti pubblicitari al tocco. SPENTO di default: l'utente ha chiesto
     // «un toggle per attivare»
     property bool cfgAntiHijack: false
+    property bool cfgForceZoom: true        // pinch anche dove il sito lo vieta col <meta viewport> (come Safari iOS; acceso di default, 31 ott)
     property bool cfgSwipeNav: true         // swipe orizzontale dal centro = Indietro/Avanti (acceso di default: scelta utente 19 set, dopo il collaudo)
     // --- task 1.3: hardening privacy. Erano tutti e tre spenti di default (20
     // lug): sono le misure che possono rompere siti. Il 17 set i cookie di terze
@@ -548,6 +549,7 @@ Window {
         cfgFarble       = kvGet("set_farble", "1") === "1"
         cfgNoCookieBanner = kvGet("set_nocookie", "1") === "1"
         cfgSwipeNav     = kvGet("set_swipenav", "1") === "1"
+        cfgForceZoom    = kvGet("set_forcezoom", "1") === "1"
         cfgAntiHijack   = kvGet("set_antihijack", "0") === "1"
         cfgPermCam      = kvGet("set_perm_cam", "1") === "1"
         cfgPermMic      = kvGet("set_perm_mic", "1") === "1"
@@ -618,6 +620,7 @@ Window {
         else if (k === "farble")   { cfgFarble = on;   kvSet("set_farble", v); applyViewPrefs() }
         else if (k === "nocookie") { cfgNoCookieBanner = on; kvSet("set_nocookie", v); applyViewPrefs() }
         else if (k === "swipenav") { cfgSwipeNav = on; kvSet("set_swipenav", v); applyViewPrefs() }
+        else if (k === "forcezoom") { cfgForceZoom = on; kvSet("set_forcezoom", v); applyViewPrefs() }
         else if (k === "antihijack") { cfgAntiHijack = on; kvSet("set_antihijack", v); applyViewPrefs() }
         else if (k === "permcam")   { cfgPermCam = on;      kvSet("set_perm_cam", v) }
         else if (k === "permmic")   { cfgPermMic = on;      kvSet("set_perm_mic", v) }
@@ -934,6 +937,86 @@ Window {
   window.fetch = function(u, o){ if (poll(u && u.url || u, o && o.body)) return new Promise(function(){}); return f.apply(this, arguments); };
 })();`
 
+    // Zoom su tutti i siti (richiesta utenti 30 ott, m.gpnbonus.ru): il pinch
+    // va sulla page scale di Chromium (--enable-viewport), che rispetta il
+    // <meta viewport> del sito; user-scalable=no o maximum-scale=1 la
+    // bloccano. Chrome Android ha «Forza zoom» (prefs.force_enable_zoom), ma
+    // in Blink è sotto IS_ANDROID: niente da accendere senza patch al motore.
+    // Qui facciamo come Safari su iOS: togliamo dal meta solo i due divieti
+    // (e un minimum-scale > 1), larghezza e scala iniziale restano quelle del
+    // sito, quindi l'impaginazione non cambia. Blink rilegge il meta quando
+    // cambia l'attributo content, quindi basta correggerlo a pagina parsata:
+    // nessun costo durante il parsing; dopo si osserva solo <head> (figli
+    // diretti), per i siti che riscrivono il viewport da JS. Stessa cosa per
+    // touch-action su html/body se esclude solo il pinch (pan-x pan-y):
+    // «none» resta (giochi, mappe a tutta pagina gestiscono da sé i gesti).
+    // Senza nessun <meta viewport> (siti desktop da 960-980 px, es.
+    // openrepos.net) Blink tiene la scala minima a 1: la pagina più larga
+    // dello schermo non si rimpicciolisce mai. Gli diamo «width=device-width»,
+    // come un sito mobile: il layout si allarga al contenuto e il minimo
+    // scende fino a tutta la larghezza nello schermo (0,43 su openrepos,
+    // misurato 31 ott). Va messo al DOMContentLoaded: aggiunto a pagina già
+    // caricata Blink non ricalcola il minimo. E si aprono a pagina intera,
+    // come Chrome Android coi siti desktop: initial-scale = schermo/pagina
+    // (Blink riapplica la scala iniziale quando cambia nel meta); ricalcolato
+    // al load se intanto la pagina si è allargata e l'utente non ha zoomato.
+    // Solo per i siti SENZA meta: un sito mobile che sfora di pochi px resta 1.
+    // Le pagine interne (*.local) restano non zoomabili.
+    readonly property string forceZoomJs: `(function(){
+  if (window.__rtZoom) return; window.__rtZoom = true;
+  var h = location.hostname;
+  if (h.slice(-6) === '.local') return;
+  function fixMeta(m){
+    if (!m || m.nodeName !== 'META' || String(m.getAttribute('name') || '').toLowerCase() !== 'viewport') return;
+    var c = m.getAttribute('content') || '';
+    var out = c.split(/[,;]/).filter(function(p){
+      var kv = p.split('='), k = kv[0].trim().toLowerCase();
+      if (!k) return false;
+      if (k === 'user-scalable' || k === 'maximum-scale') return false;
+      if (k === 'minimum-scale' && parseFloat(kv[1]) > 1) return false;
+      return true;
+    }).map(function(p){ return p.trim(); }).join(', ');
+    if (out !== c) m.setAttribute('content', out);
+    if (!m.__rtZoomObs) { m.__rtZoomObs = true;
+      new MutationObserver(function(){ fixMeta(m); }).observe(m, { attributes: true, attributeFilter: ['content', 'name'] }); }
+  }
+  function fixTouch(el){
+    if (!el) return;
+    var ta = getComputedStyle(el).touchAction || 'auto';
+    if (ta === 'auto' || ta === 'manipulation' || ta === 'none' || ta.indexOf('pinch-zoom') >= 0) return;
+    el.style.setProperty('touch-action', ta + ' pinch-zoom', 'important');
+  }
+  function run(){
+    var ms = document.getElementsByTagName('meta'), vp = false;
+    for (var i = 0; i < ms.length; i++) { fixMeta(ms[i]);
+      if (String(ms[i].getAttribute('name') || '').toLowerCase() === 'viewport') vp = true; }
+    if (!vp && document.head) { var m = document.createElement('meta'), set = 0, tries = 0;
+      m.setAttribute('name', 'viewport'); m.setAttribute('content', 'width=device-width');
+      document.head.appendChild(m);
+      // larghezza schermo in px CSS = larghezza visibile × scala (vale a ogni
+      // layout); sulle pagine piccole e veloci al DOMContentLoaded la finestra
+      // non ha ancora dimensioni (innerWidth = 0, misurato): si riprova
+      var fit = function(){
+        var vv = window.visualViewport, w = vv ? vv.width * vv.scale : 0;
+        if (!w || !document.documentElement.scrollWidth) { if (tries++ < 30) requestAnimationFrame(fit); return; }
+        if (set && Math.abs(vv.scale - set) > 0.01) return;   // l'utente ha già zoomato
+        var r = Math.floor(w / document.documentElement.scrollWidth * 1000) / 1000;
+        if (!(r < 0.98) || r === set) return;
+        set = Math.max(r, 0.25); m.setAttribute('content', 'width=device-width, initial-scale=' + set);
+      };
+      requestAnimationFrame(fit);
+      window.addEventListener('load', fit, { once: true }); }
+    fixTouch(document.documentElement); fixTouch(document.body);
+    if (document.head && !document.head.__rtZoomObs) { document.head.__rtZoomObs = true;
+      new MutationObserver(function(rs){
+        for (var i = 0; i < rs.length; i++) for (var j = 0; j < rs[i].addedNodes.length; j++) fixMeta(rs[i].addedNodes[j]);
+      }).observe(document.head, { childList: true }); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run, { once: true });
+  else run();
+  window.addEventListener('load', function(){ fixTouch(document.documentElement); fixTouch(document.body); }, { once: true });
+})();`
+
     readonly property string farbleJs: `(function(){
   if (window.__rtFarble) return; window.__rtFarble = true;
   function h(s){var x=2166136261>>>0;for(var i=0;i<s.length;i++){x^=s.charCodeAt(i);x=Math.imul(x,16777619);}return x>>>0;}
@@ -1153,6 +1236,13 @@ Window {
             injectionPoint: WebEngineScript.DocumentCreation,
             worldId: WebEngineScript.MainWorld,
             runsOnSubFrames: false   // solo il frame principale: è lui che ha la cronologia
+        })
+        if (cfgForceZoom) s.push({
+            name: "rtForceZoom",
+            sourceCode: forceZoomJs,
+            injectionPoint: WebEngineScript.DocumentCreation,
+            worldId: WebEngineScript.MainWorld,
+            runsOnSubFrames: false   // la page scale è del frame principale
         })
         s.push({
             name: "rtSiteQuirks",
@@ -2249,6 +2339,7 @@ ${sToggle("barautohide", cfgBarAutoHide, win.t("Nascondi scorrendo", "Hide while
 <h2>${win.t("Pagine web", "Web pages")}</h2>
 ${sToggle("dark", cfgDark, win.t("Forza pagine scure", "Force dark web pages"), win.t("Scurisce anche i siti dal tema chiaro (indipendente dal tema dell'app)", "Also darkens light-themed sites (independent of the app theme)"))}
 ${sToggle("swipenav", cfgSwipeNav, win.t("Swipe per Indietro e Avanti", "Swipe for Back and Forward"), win.t("Trascina dal centro della pagina: verso destra torni indietro, verso sinistra vai avanti", "Drag from the middle of the page: right goes back, left goes forward"))}
+${sToggle("forcezoom", cfgForceZoom, win.t("Zoom su tutti i siti", "Zoom on all websites"), win.t("Allarga e rimpicciolisci con due dita anche le pagine che lo vietano", "Pinch to zoom in and out even on pages that block it"))}
 ${sToggle("antihijack", cfgAntiHijack, win.t("Blocca link nascosti e pubblicità a sorpresa", "Block hidden links and surprise ads"), win.t("Un tocco apre un altro sito solo se hai toccato un link visibile verso quel sito: niente popup o pagine pubblicitarie quando premi play su un video", "A tap opens another site only if you tapped a visible link to it: no popups or ad pages when you press play on a video"))}
 <h2>${win.t("Informazioni", "About")}</h2>
 <a class="srow" href="https://about.local/"><span class="sbody"><span class="st">${win.t("Informazioni su RooTitanium", "About RooTitanium")}</span><span class="sd">${win.t("Versione, crediti e licenza", "Version, credits and license")}</span></span><span class="chev">›</span></a>
