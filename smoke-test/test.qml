@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.9.1"
+    readonly property string appVersion: "2.9.2"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
