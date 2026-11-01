@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9.1
+Version:    2.9.2
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -138,6 +138,13 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Sun Nov 01 2026 RootGPT <emagiampa@gmail.com> - 2.9.2-1
+- Menu in orizzontale: le voci che non entrano nello schermo ora
+  scorrono (prima "Ruota in orizzontale", Impostazioni ed Esci
+  restavano fuori schermo, irraggiungibili).
+- "Nascondi scorrendo": sulle pagine appena piu' alte dello schermo
+  la barra non lampeggia piu' e la pagina non torna in cima da sola.
+
 * Sat Oct 31 2026 RootGPT <emagiampa@gmail.com> - 2.9.1-1
 - Zoom su tutti i siti: il pinch funziona anche sulle pagine che lo
   vietano (user-scalable=no, maximum-scale=1), come in Safari su iOS.
