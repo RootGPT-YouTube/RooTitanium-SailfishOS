@@ -459,8 +459,25 @@ Window {
         if (y <= 4) { barAutoHidden = false; barLastScrollY = y; return }
         var d = y - barLastScrollY
         if (Math.abs(d) < 24) return
+        if (d > 0 && !barAutoHidden && !barRoomToHide(y)) { barLastScrollY = y; return }
         barAutoHidden = d > 0
         barLastScrollY = y
+    }
+    // Pagina corta (tipico in orizzontale): nascondere la barra allunga la
+    // pagina di un'altezza-barra, il massimo di scroll cala e Chromium riporta
+    // indietro la posizione → «scroll in su» finto → la barra ricompare → la
+    // pagina si riaccorcia… (barra che lampeggia), oppure la pagina ci sta
+    // tutta e non si può più scorrere in su per riavere la barra. Si nasconde
+    // solo se, a barra nascosta, la posizione attuale resta raggiungibile.
+    // scrollPosition e contentsSize sono nelle stesse unità della pagina; la
+    // scala verso i px QML si ricava dalle larghezze (pagina larga = stima
+    // prudente: al più la barra resta su).
+    function barRoomToHide(y) {
+        var v = currentView
+        if (!v || !(v.contentsSize.width > 0) || !(v.width > 0)) return true
+        var k = v.contentsSize.width / v.width
+        var maxAfter = v.contentsSize.height - (v.height + toolbar.height) * k
+        return y + 8 * k <= maxAfter
     }
     function barShow() { barAutoHidden = false; barLastScrollY = 0 }
     property string cfgDlDir: "downloads"   // destinazione download (token in dlDirs)
