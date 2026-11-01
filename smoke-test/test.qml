@@ -4145,16 +4145,33 @@ ${histCss}
         // sorella: «Cannot anchor to an item that isn't a parent or sibling»)
         anchors.right: parent.right
         y: win.cfgBarBottom ? toolbar.y - height : toolbar.y + toolbar.height
-        width: 340 * win.u; height: menuCol.height + 16 * win.u
+        // In orizzontale la lista intera (~950 px) non ci sta: l'altezza si ferma
+        // allo spazio tra la barra e il bordo dello schermo e le voci scorrono
+        // dentro menuFlick (prima «Ruota in orizzontale», Impostazioni ed Esci
+        // restavano fuori schermo, irraggiungibili). Idea dalla prova di DeepSeek.
+        readonly property real fullH: menuCol.height + 16 * win.u
+        readonly property real roomH: Math.max(120 * win.u, win.cfgBarBottom
+            ? toolbar.y - 8 * win.u
+            : parent.height - (toolbar.y + toolbar.height) - 8 * win.u)
+        width: 340 * win.u; height: Math.min(fullH, roomH)
         color: win.pal.card; border.color: win.pal.border; border.width: 1
         visible: open || opacity > 0; z: 50
         opacity: open ? 1 : 0; enabled: open
+        onOpenChanged: if (open) menuFlick.contentY = 0
         Behavior on opacity { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
         scale: open || !win.cfgAnim ? 1 : 0.9
         transformOrigin: win.cfgBarBottom ? Item.BottomRight : Item.TopRight
         Behavior on scale { enabled: win.cfgAnim; NumberAnimation { duration: win.animMs; easing.type: Easing.OutCubic } }
+        Flickable {
+            id: menuFlick
+            anchors.fill: parent; anchors.margins: 1   // il bordo resta visibile
+            clip: true
+            contentWidth: width; contentHeight: menu.fullH
+            interactive: menu.fullH > menu.height
+            flickableDirection: Flickable.VerticalFlick
+            boundsBehavior: Flickable.StopAtBounds
         Column {
-            id: menuCol; width: parent.width; y: 8 * win.u
+            id: menuCol; width: menuFlick.width; y: 8 * win.u
             Repeater {
                 model: win.menuModel
                 delegate: Loader {
@@ -4163,6 +4180,15 @@ ${histCss}
                     onLoaded: if (modelData.t !== "sep") { item.entry = modelData }
                 }
             }
+        }
+        }
+        // barretta che dice «c'è altro sotto/sopra»
+        Rectangle {
+            visible: menuFlick.interactive; z: 2
+            anchors.right: parent.right; anchors.rightMargin: 3 * win.u
+            width: 4 * win.u; radius: width / 2; color: win.pal.muted; opacity: 0.6
+            height: Math.max(24 * win.u, menu.height * menu.height / menu.fullH)
+            y: (menu.height - height) * (menuFlick.contentY / Math.max(1, menu.fullH - menu.height))
         }
     }
 
