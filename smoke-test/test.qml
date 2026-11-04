@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.9.2"
+    readonly property string appVersion: "2.9.3"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -2371,7 +2371,8 @@ ${sToggle("antihijack", cfgAntiHijack, win.t("Blocca link nascosti e pubblicità
         if (st === "nodistributor") return win.t("Serve Foghorn, che non è installato: vedi Istruzioni", "Foghorn is needed and is not installed: see Instructions")
         var d = st.replace(/^ready:/, "")
         return cfgPushSites ? win.t("Attive: le consegna " + d + ", anche ad app chiusa", "On: delivered by " + d + ", even with the app closed")
-                            : win.t(d + " è installato: accendi per ricevere le notifiche dei siti anche ad app chiusa", d + " is installed: turn on to get site notifications even with the app closed")
+                            : win.t(d + " è installato: accendi per ricevere le notifiche dei siti anche ad app chiusa. Da spento le push non compaiono, ma le iscrizioni già fatte restano e ogni push avvia brevemente l'app; i siti aperti possono comunque inviare notifiche. Per fermare un sito: Revoca in Permessi siti. Per zittirli tutti: Notifiche in Permessi App",
+                                    d + " is installed: turn on to get site notifications even with the app closed. While off, pushes don't show, but existing subscriptions stay and each push briefly starts the app; open sites can still send notifications. To stop a site: Revoke in Site Permissions. To silence them all: Notifications in App Permissions")
     }
     function pushHelpHtml() {
         var T = function(it, en) { return win.t(it, en) }
@@ -2413,7 +2414,8 @@ table{border-collapse:collapse;width:100%;font-size:14px} td{border-top:1px soli
 <tr><td>${T("App aperta o in cover", "App open or minimized")}</td><td>${T("La notifica compare come sempre.", "The notification shows up as usual.")}</td></tr>
 <tr><td>${T("App chiusa", "App closed")}</td><td>${T("Foghorn avvia RooTitanium senza finestra e senza schede, il sito mostra la sua notifica e l'app si richiude da sola pochi secondi dopo. Toccando la notifica RooTitanium si apre normalmente e resta aperto.", "Foghorn starts RooTitanium without a window and without tabs, the site shows its notification and the app closes again by itself a few seconds later. Tapping the notification opens RooTitanium normally, and it stays open.")}</td></tr>
 <tr><td>${T("Tocchi la notifica", "You tap the notification")}</td><td>${T("Si apre la pagina scelta dal sito. Se l'app era chiusa parte da zero, quindi ci mette qualche secondo in più.", "The page chosen by the site opens. If the app was closed it starts from scratch, so it takes a few seconds longer.")}</td></tr>
-<tr><td>${T("Interruttore spento", "Switch off")}</td><td>${T("I siti non possono iscriversi e le push in arrivo vengono ignorate. Le iscrizioni già fatte restano: riaccendendo tornano a funzionare.", "Sites can't subscribe and incoming pushes are ignored. Existing subscriptions are kept: turning it back on makes them work again.")}</td></tr>
+<tr><td>${T("Interruttore spento", "Switch off")}</td><td>${T("I siti non possono iscriversi e le push non compaiono. Le iscrizioni già fatte restano: Foghorn continua a riceverle e a contarle, ogni push avvia brevemente l'app e riaccendendo tornano a funzionare. Un sito aperto in una scheda può comunque inviare notifiche: per zittirli tutti spegni Notifiche in Permessi App.", "Sites can't subscribe and pushes don't show. Existing subscriptions stay: Foghorn keeps receiving and counting them, each push briefly starts the app, and turning it back on makes them work again. A site open in a tab can still send notifications: to silence them all, turn off Notifications in App Permissions.")}</td></tr>
+<tr><td>${T("Non vuoi più un sito", "You no longer want a site")}</td><td>${T("Impostazioni → Permessi siti → Revoca: l'iscrizione sparisce subito da Foghorn. Se il sito richiede il permesso alla visita successiva, rifiuta. Togliere solo la voce da Foghorn non basta: il permesso resta e il sito può iscriversi di nuovo.", "Settings → Site Permissions → Revoke: the subscription disappears from Foghorn right away. If the site asks again on your next visit, refuse. Removing only the entry in Foghorn is not enough: the permission stays and the site can subscribe again.")}</td></tr>
 <tr><td>${T("Navigazione anonima", "Private browsing")}</td><td>${T("Niente notifiche, come in Chrome.", "No notifications, as in Chrome.")}</td></tr>
 </table>
 
@@ -2584,6 +2586,9 @@ h2{color:var(--accent);font-size:14px;font-weight:600;margin:28px 0 12px}
         try {
             var p = normalProfile.queryPermission(origin, type)
             if (p.isValid) p.reset()
+            // notifiche: anche l'iscrizione push va tolta subito da Foghorn
+            if (type === WebEnginePermission.PermissionType.Notifications && typeof rtPush !== "undefined")
+                rtPush.revokeOrigin("" + origin)
         } catch(e) { console.warn("queryPermission/reset: " + e) }
     }
     // true = l'origine di u ha il permesso Notifiche concesso (e l'interruttore

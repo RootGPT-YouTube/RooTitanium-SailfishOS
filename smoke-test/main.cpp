@@ -46,6 +46,7 @@
 #include <QtWebEngineCore/QWebEngineCookieStore>
 #include <QtWebEngineQuick/qquickwebengineprofile.h>
 #include <QtWebEngineCore/QWebEngineNotification>
+#include <QtWebEngineCore/QWebEnginePermission>
 #include <QLocale>
 #include <QQmlEngine>
 #include <QDBusPendingCallWatcher>
@@ -347,6 +348,7 @@ public:
     void attach(QQuickWebEngineProfile *p)
     {
         connect(p, &QQuickWebEngineProfile::presentNotification, this, &RtNotifier::present);
+        m_profiles.append(p);
     }
 
     // Tocco su una notifica di un processo precedente (patch 0310 del motore):
@@ -383,6 +385,12 @@ public:
         const qint64 t = QDateTime::currentMSecsSinceEpoch();
         QTimer::singleShot(10000, this, [this, o, t]() {
             if (m_lastShown.value(o) >= t) return;
+            // permesso revocato: il motore ha scartato la push di proposito, e
+            // la notifica generica sarebbe proprio quella che l'utente ha tolto
+            if (!notificationsGranted(o)) {
+                qInfo("[rt] push di %s senza permesso: nessuna notifica", qPrintable(o));
+                return;
+            }
             qWarning("[rt] push di %s senza notifica del sito: mostro quella generica", qPrintable(o));
             presentGeneric(o);
         });
@@ -508,6 +516,18 @@ private slots:
 private:
     struct Item { QPointer<QWebEngineNotification> n; QString origin; uint id = 0; };
 
+    // permesso Notifiche dell'origine nel profilo su disco (quello normale:
+    // l'incognito non riceve push). Si guarda al momento di mostrare, non
+    // all'arrivo: una revoca nel frattempo deve valere
+    bool notificationsGranted(const QString &origin) const
+    {
+        for (const QPointer<QQuickWebEngineProfile> &p : m_profiles)
+            if (p && !p->isOffTheRecord())
+                return p->queryPermission(QUrl(origin), QWebEnginePermission::PermissionType::Notifications).state()
+                       == QWebEnginePermission::State::Granted;
+        return false;
+    }
+
     static QString bareOrigin(QString o)
     {
         while (o.endsWith(QLatin1Char('/'))) o.chop(1);
@@ -607,6 +627,7 @@ private:
 
     QString m_busName, m_objPath;
     QHash<QString, Item> m_items;
+    QList<QPointer<QQuickWebEngineProfile>> m_profiles;
     QHash<QString, qint64> m_lastShown;   // origine (senza / finale) → ms dell'ultima notifica
     quint64 m_seq = 0;
     const char *(*m_currentId)() = (const char *(*)())dlsym(RTLD_DEFAULT, "rtpush_notification_current_id");
@@ -757,6 +778,13 @@ public:
     void message(const QString &token, const QByteArray &body, const QString &encoding = QString(),
                  const QString &encryption = QString(), const QString &cryptoKey = QString())
     {
+        // registrazione orfana: Foghorn la conosce e il motore no. Senza
+        // togliela sveglierebbe l'app a ogni push, per sempre
+        if (isOrphan(token)) {
+            qInfo("[rtpush] push per %s, token sconosciuto: lo tolgo dal distributore", qPrintable(token));
+            doUnregister(token);
+            return;
+        }
         if (!isEnabled()) {
             qInfo("[rtpush] push per %s scartata: interruttore spento", qPrintable(token));
             return;
@@ -774,15 +802,47 @@ public:
     }
     // sito di una registrazione: il motore tiene token → app_id in rtpush.json,
     // e l'app_id di Chromium e' «wp:<origine>#<guid>»
-    static QString originOf(const QString &token)
+    static QJsonObject registrations(bool *ok = nullptr)
     {
         QFile f(QDir::homePath() + QStringLiteral("/.rootitanium/GCM Store/rtpush.json"));
-        if (!f.open(QIODevice::ReadOnly)) return QString();
-        const QString app = QJsonDocument::fromJson(f.readAll()).object()
-            .value(QLatin1String("registrations")).toObject()
-            .value(token).toObject().value(QLatin1String("app_id")).toString();
+        const QJsonObject root = f.open(QIODevice::ReadOnly)
+            ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
+        if (ok) *ok = root.contains(QLatin1String("registrations"));
+        return root.value(QLatin1String("registrations")).toObject();
+    }
+    static QString originOfApp(const QString &app)
+    {
         if (!app.startsWith(QLatin1String("wp:"))) return QString();
         return app.mid(3).section(QLatin1Char('#'), 0, 0);
+    }
+    static QString originOf(const QString &token)
+    {
+        return originOfApp(registrations().value(token).toObject().value(QLatin1String("app_id")).toString());
+    }
+    // file illeggibile = non si sa: mai togliere una registrazione nel dubbio
+    static bool isOrphan(const QString &token)
+    {
+        bool ok = false;
+        const QJsonObject regs = registrations(&ok);
+        return ok && !regs.contains(token);
+    }
+    static QString trimSlash(QString o)
+    {
+        while (o.endsWith(QLatin1Char('/'))) o.chop(1);
+        return o;
+    }
+
+    // «Revoca» in Permessi siti: il motore se ne accorgerebbe solo alla push
+    // successiva, e a interruttore spento mai. Si toglie subito da Foghorn; la
+    // sua conferma (Unregistered) aggiorna il motore
+    Q_INVOKABLE void revokeOrigin(const QString &origin)
+    {
+        if (!m_started) return;
+        const QString wanted = trimSlash(origin);
+        const QJsonObject regs = registrations();
+        for (auto it = regs.constBegin(); it != regs.constEnd(); ++it)
+            if (trimSlash(originOfApp(it.value().toObject().value(QLatin1String("app_id")).toString())) == wanted)
+                doUnregister(it.key());
     }
 
     void unregistered(const QString &token)
@@ -838,7 +898,10 @@ private:
         QVariantMap args;
         args.insert(QStringLiteral("service"), QLatin1String(SERVICE));
         args.insert(QStringLiteral("token"), token);
-        args.insert(QStringLiteral("description"), description);
+        // in Foghorn ogni iscrizione e' una voce: col solo «RooTitanium» non si
+        // capirebbe di quale sito (il motore salva il file prima di chiamarci)
+        const QString site = QUrl(originOf(token)).host();
+        args.insert(QStringLiteral("description"), site.isEmpty() ? description : description + QStringLiteral(" - ") + site);
         // la chiave VAPID del sito: con Mozilla l'endpoint accetta solo lui
         if (!vapid.isEmpty()) args.insert(QStringLiteral("vapid"), vapid);
         QDBusMessage call = QDBusMessage::createMethodCall(distributor, QStringLiteral("/org/unifiedpush/Distributor"),

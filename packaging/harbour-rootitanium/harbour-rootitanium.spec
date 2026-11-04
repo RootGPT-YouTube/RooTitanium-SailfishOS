@@ -17,8 +17,8 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9.2
-Release:    2
+Version:    2.9.3
+Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
 # Codice app (GPL-3.0-or-later) + Qt6/QtWebEngine bundled (LGPLv3) + Chromium (BSD).
@@ -138,6 +138,16 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Wed Nov 04 2026 RootGPT <emagiampa@gmail.com> - 2.9.3-1
+- Revoking a site's permission now removes its push subscription from
+  Foghorn right away, even with the push switch off.
+- No more generic notification from a site whose permission was revoked.
+- Subscriptions unknown to the app are removed from Foghorn at the next
+  push, instead of waking the app forever.
+- New subscriptions show the site name in Foghorn.
+- The push switch and the help page explain what switching off does and
+  how to stop one site or all of them.
+
 * Sun Nov 01 2026 RootGPT <emagiampa@gmail.com> - 2.9.2-2
 - La pagina Informazioni mostra la versione giusta (2.9.2; la 2.9.2-1
   diceva ancora 2.9.1).
