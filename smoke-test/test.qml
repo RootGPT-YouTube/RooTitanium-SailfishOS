@@ -272,6 +272,72 @@ Window {
         }
     }
 
+    // --- YouTube in background: video al livello più basso, audio intatto ---
+    // Con l'app in cover o a display spento la scheda resta attiva e il video si
+    // decodifica per nessuno. L'audio è un flusso separato e non segue la qualità
+    // del video. Stessa soluzione di RooTheater 1.1.0; usa solo le funzioni del
+    // player, senza dipendere dal DOM: se YouTube le toglie, non succede nulla.
+    readonly property string ytBgOutJs:
+        "(function(){var p=document.getElementById('movie_player'),v=document.querySelector('video');" +
+        "if(!p||!v||v.paused||typeof p.setPlaybackQualityRange!=='function')return;" +
+        "var a=p.getAvailableQualityLevels().filter(function(x){return x!=='auto'});if(!a.length)return;" +
+        "var low=a[a.length-1],q=p.getPlaybackQuality();" +
+        "var s=window.__rtYtBg;" +
+        "if(s){clearTimeout(s.timer);s.timer=0;s.back=false}" +
+        "if(q===low)return;" +
+        "if(!s)window.__rtYtBg={q:q,pref:p.getPreferredQuality(),back:false,timer:0};" +
+        "p.setPlaybackQualityRange(low,low);p.setPlaybackQuality(low)})()"
+    // Il solo «auto» lascerebbe l'immagine a 144p finché dura il buffer (misurato: oltre
+    // 40 s): una qualità esplicita svuota il buffer e risale in pochi secondi, poi si
+    // torna alla preferenza di prima, così il player riprende a scegliere da solo.
+    readonly property string ytBgBackJs:
+        "(function(){var s=window.__rtYtBg,p=document.getElementById('movie_player');" +
+        "if(!s||s.back)return;" +
+        "if(!p||typeof p.setPlaybackQualityRange!=='function'){window.__rtYtBg=null;return}" +
+        "function set(q){p.setPlaybackQualityRange(q,q);p.setPlaybackQuality(q)}" +
+        // preferenza nostra o «auto»: via libera e ytCapJs rimette il tetto; a mano: quella
+        "function end(){window.__rtYtBg=null;" +
+        "if(!s.pref||s.pref==='auto'||s.pref===window.__rtYtCapQ){set('auto');window.__rtYtCapId=''}else set(s.pref)}" +
+        "if(p.getAvailableQualityLevels().indexOf(s.q)<0){end();return}" +
+        "s.back=true;set(s.q);s.timer=setTimeout(end,5000)})()"
+    readonly property bool ytOnCurrent: !!currentView
+        && /^https?:\/\/([a-z0-9-]+\.)?youtube\.com\//i.test("" + currentView.url)
+    property var ytBgView: null
+    readonly property bool appIsActive: Qt.application.active
+    onAppIsActiveChanged: {
+        if (appIsActive && ytBgView) { ytBgView.runJavaScript(ytBgBackJs); ytBgView = null }
+    }
+    // niente calo per un'uscita di pochi secondi; poi ricontrolla, così vale anche per
+    // il video successivo di una playlist e per quello ripreso da fermo
+    Timer {
+        interval: 10000
+        repeat: true
+        running: !Qt.application.active && win.ytOnCurrent
+        onTriggered: { win.ytBgView = win.currentView; win.currentView.runJavaScript(win.ytBgOutJs) }
+    }
+    // --- YouTube: 720p come predefinito ---
+    // Di suo il player resta a 360p, perché la pagina è larga solo 412 px CSS. Una volta
+    // per video, come intervallo (minimo..720p) e mai come valore fisso: su RooTheater il
+    // valore fisso impediva di scendere quando la rete calava, e l'immagine si bloccava.
+    // Una qualità scelta a mano dal menù di YouTube non si tocca.
+    readonly property string ytCapJs:
+        "(function(){var p=document.getElementById('movie_player');" +
+        "if(!p||window.__rtYtBg||typeof p.setPlaybackQualityRange!=='function'||typeof p.getVideoData!=='function')return;" +
+        "var id=p.getVideoData().video_id;if(!id||id===window.__rtYtCapId)return;" +
+        "var pref=p.getPreferredQuality();" +
+        "if(pref!=='auto'&&pref!==window.__rtYtCapQ){window.__rtYtCapId=id;return}" +
+        "var a=p.getAvailableQualityLevels().filter(function(x){return x!=='auto'});if(!a.length)return;" +
+        "var l=['hd720','large','medium','small','tiny'],top='';" +
+        "for(var i=0;i<l.length&&!top;i++)if(a.indexOf(l[i])>=0)top=l[i];if(!top)return;" +
+        "window.__rtYtCapId=id;window.__rtYtCapQ=top;" +
+        "p.setPlaybackQualityRange(a[a.length-1],top);p.setPlaybackQuality(top)})()"
+    Timer {
+        interval: 3000
+        repeat: true
+        running: Qt.application.active && win.ytOnCurrent
+        onTriggered: win.currentView.runJavaScript(win.ytCapJs)
+    }
+
     // --- schede ---
     property int currentTab: 0
     // stato "Cerca nella pagina" (la barra findBar vive dentro appRoot)
