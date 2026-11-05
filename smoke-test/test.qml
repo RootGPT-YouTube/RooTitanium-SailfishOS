@@ -1777,6 +1777,10 @@ Window {
         fileReq = req
         filePicker.multi = (req.mode === FileDialogRequest.FileModeOpenMultiple)
         filePicker.chosen = []
+        // rileggi le memorie esterne: se la cartella non esisteva quando il modello è
+        // nato, una scheda inserita dopo non genererebbe nessun avviso
+        sdModel.folder = "file:///run/media"
+        sdModel.folder = sdModel.base
         // riparti sempre dai Download: è la cartella di sbarco tipica degli upload
         fileModel.folder = "file:///home/defaultuser/Downloads"
         filePicker.open = true
@@ -4515,6 +4519,16 @@ ${histCss}
         sortField: FolderListModel.Name
         folder: "file:///home/defaultuser/Downloads"
     }
+    // Schede SD e memorie esterne: ognuna è una sottocartella di /run/media/<utente>,
+    // col nome dell'UUID o dell'etichetta, quindi non si possono scrivere fisse.
+    FolderListModel {
+        id: sdModel
+        readonly property string base: "file:///run/media/defaultuser"
+        showFiles: false
+        showDotAndDotDot: false
+        sortField: FolderListModel.Name
+        folder: base
+    }
     // ===================== FOGLIO MENÙ A TENDINA =====================
     // Sostituisce il popup nativo dei <select>. Foglio dal basso: va bene per tre
     // voci come per le centinaia di una tendina di marche auto (lista scrollabile,
@@ -4657,6 +4671,18 @@ ${histCss}
         }
 
         // --- scorciatoie ---
+        component FpChip: Rectangle {
+            required property string label
+            required property string path
+            anchors.verticalCenter: parent.verticalCenter
+            width: scTxt.paintedWidth + 32*win.u; height: 40*win.u; radius: 20*win.u
+            property bool sel: filePicker.curPath === path
+            color: scMa.pressed ? win.pal.accentPress : (sel ? win.pal.accent : win.pal.card)
+            border.color: win.pal.border; border.width: sel ? 0 : 1
+            Text { id: scTxt; anchors.centerIn: parent; text: parent.label
+                color: parent.sel ? "white" : win.pal.fg2; font.pixelSize: 17*win.u }
+            MouseArea { id: scMa; anchors.fill: parent; onClicked: fileModel.folder = "file://" + parent.path }
+        }
         Flickable {
             id: fpShortRow
             anchors.top: fpHeader.bottom; width: parent.width; height: 58*win.u
@@ -4665,17 +4691,22 @@ ${histCss}
                 id: fpShortInner
                 height: parent.height; spacing: 8*win.u
                 leftPadding: 16*win.u; rightPadding: 16*win.u
+                // davanti alle cartelle fisse: in fondo finirebbero fuori schermo
+                Repeater {
+                    model: sdModel
+                    FpChip {
+                        required property string fileName
+                        required property string filePath
+                        label: sdModel.count === 1 ? win.t("Scheda SD", "SD card") : fileName
+                        path: filePath
+                    }
+                }
                 Repeater {
                     model: filePicker.shortcuts
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: scTxt.paintedWidth + 32*win.u; height: 40*win.u; radius: 20*win.u
-                        property bool sel: filePicker.curPath === modelData.p
-                        color: scMa.pressed ? win.pal.accentPress : (sel ? win.pal.accent : win.pal.card)
-                        border.color: win.pal.border; border.width: sel ? 0 : 1
-                        Text { id: scTxt; anchors.centerIn: parent; text: modelData.l
-                            color: sel ? "white" : win.pal.fg2; font.pixelSize: 17*win.u }
-                        MouseArea { id: scMa; anchors.fill: parent; onClicked: fileModel.folder = "file://" + modelData.p }
+                    FpChip {
+                        required property var modelData
+                        label: modelData.l
+                        path: modelData.p
                     }
                 }
             }
