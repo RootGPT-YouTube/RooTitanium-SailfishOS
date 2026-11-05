@@ -33,6 +33,12 @@
 #include <sys/prctl.h>
 #include <QDBusConnectionInterface>
 #include <QWindow>
+#include <QPointer>
+#include <QScreen>
+#include <QEventPoint>
+#include <QInputDevice>
+#include <QPointingDevice>
+#include <qpa/qwindowsysteminterface.h>
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1220,6 +1226,46 @@ public:
     void setMaliitContainer(RtMaliitContainer *c) { m_maliit = c; }
     // Chiamata dal QML a ogni cambio di orientamento della UI. L'angolo e' quello
     // di cui e' ruotato il CONTENUTO (0 o 90), non il telefono.
+    // Un tocco vero sulla finestra, in coordinate di finestra. Solo un gesto dell'utente
+    // apre il fullscreen di Chromium (requestFullscreen da runJavaScript: «Permissions
+    // check failed», misurato sul POCO il 5 nov 2026), e un .click() da script non conta:
+    // serve per il video che RooTheater manda qui perche' parta a tutto schermo.
+    Q_INVOKABLE bool tapAt(qreal x, qreal y)
+    {
+        QWindow *w = QGuiApplication::focusWindow();
+        if (!w) {
+            const auto all = QGuiApplication::topLevelWindows();
+            for (QWindow *c : all) if (c->isVisible()) { w = c; break; }
+        }
+        const QPointingDevice *dev = nullptr;
+        const auto devices = QInputDevice::devices();
+        for (const QInputDevice *d : devices)
+            if (d->type() == QInputDevice::DeviceType::TouchScreen) {
+                dev = static_cast<const QPointingDevice *>(d);
+                break;
+            }
+        if (!w || !dev) return false;
+        // Dalla porta dei tocchi veri: un QTouchEvent spedito alla finestra viene scartato
+        // da Qt 6 («point is not in activePoints»), perche' nessuno ha registrato il punto.
+        const QPointF global = w->mapToGlobal(QPointF(x, y));
+        QWindowSystemInterface::TouchPoint tp;
+        tp.id = 1;
+        tp.pressure = 1;
+        tp.area = QRectF(global.x() - 4, global.y() - 4, 8, 8);
+        tp.normalPosition = QPointF(global.x() / w->screen()->geometry().width(),
+                                    global.y() / w->screen()->geometry().height());
+        tp.state = QEventPoint::Pressed;
+        QWindowSystemInterface::handleTouchEvent(w, dev, { tp });
+        QPointer<QWindow> win(w);
+        QTimer::singleShot(60, this, [win, dev, tp]() mutable {
+            if (!win) return;
+            tp.state = QEventPoint::Released;
+            tp.pressure = 0;
+            QWindowSystemInterface::handleTouchEvent(win, dev, { tp });
+        });
+        return true;
+    }
+
     Q_INVOKABLE void setKeyboardOrientation(int angle)
     {
         if (!m_maliit) return;

@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.9.4"
+    readonly property string appVersion: "2.9.5"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -336,6 +336,56 @@ Window {
         repeat: true
         running: Qt.application.active && win.ytOnCurrent
         onTriggered: win.currentView.runJavaScript(win.ytCapJs)
+    }
+
+    // --- Video aperto da RooTheater: a tutto schermo da solo ---
+    // RooTheater apre il video con il segno #rt-autofullscreen, e l'utente si aspetta il
+    // fullscreen come nel suo player. Chromium lo concede solo a un gesto vero, e YouTube
+    // ha bisogno di passare dal SUO tasto per impaginarsi: quindi facciamo quello che
+    // farebbe un dito, con rtNative.tapAt. Un tocco sul video fa comparire i controlli, il
+    // successivo va sul tasto. Finisce appena arriva la richiesta di fullscreen.
+    property bool ytAutoFs: false
+    property int ytAutoFsTries: 0
+    function takeAutoFs(url) {
+        var s = "" + url
+        var i = s.indexOf("#rt-autofullscreen")
+        if (i < 0) return s
+        ytAutoFs = true
+        ytAutoFsTries = 0
+        return s.substring(0, i)
+    }
+    readonly property string ytAutoFsJs:
+        "(function(){var p=document.getElementById('movie_player');if(!p)return '';" +
+        "var v=document.querySelector('video');" +
+        "var b=document.querySelector('button.fullscreen-icon');" +
+        "var c=document.querySelector('.player-controls-background');" +
+        "var on=!!(b&&c&&getComputedStyle(c).opacity==='1');" +
+        "var r=(on?b:p).getBoundingClientRect();" +
+        "return JSON.stringify({started:!!(v&&v.videoWidth),on:on,x:r.left+r.width/2,y:r.top+r.height/2,w:innerWidth});})()"
+    Timer {
+        interval: 800
+        repeat: true
+        running: win.ytAutoFs && Qt.application.active && win.ytOnCurrent
+        onTriggered: {
+            var view = win.currentView
+            if (win.videoFS) {
+                // il tocco che ha fatto comparire i controlli puo' averlo lasciato fermo
+                view.runJavaScript("(function(){var p=document.getElementById('movie_player');if(p&&p.playVideo)p.playVideo();})()")
+                win.ytAutoFs = false
+                return
+            }
+            if (++win.ytAutoFsTries > 30) { win.ytAutoFs = false; return }
+            view.runJavaScript(win.ytAutoFsJs, function(res) {
+                if (!res || !win.ytAutoFs || win.videoFS) return
+                var o = JSON.parse(res)
+                // aspetta il video, ma poco: su un'apertura a freddo non parte da solo, e
+                // resterebbe fermo senza che succeda niente finche' non lo tocchiamo
+                if (!o.started && win.ytAutoFsTries < 4) return
+                var k = view.width / o.w
+                var p = view.mapToItem(null, o.x * k, o.y * k)
+                if (typeof rtNative !== "undefined" && rtNative.tapAt) rtNative.tapAt(p.x, p.y)
+            })
+        }
     }
 
     // --- schede ---
@@ -3551,6 +3601,7 @@ ${histCss}
         function onWakeShow() { win.wakeUp() }
         function onOpenRequested(url) {
             if (!url) return
+            url = win.takeAutoFs(url)
             win.wakeUp()
             // il sito apre una pagina (clients.openWindow dopo un tocco sulla
             // notifica): basta questa, niente salto alla scheda dell'origine. Di
@@ -3646,7 +3697,7 @@ ${histCss}
         if (!cfgFirstRunSeen) Qt.callLater(function() { firstRunDlg.open = true })
         // URL passato dal chooser di sistema (main.cpp → rtOpenUrl via .desktop %u).
         // typeof: la property manca se il binario è più vecchio del test.qml (scp).
-        var initUrl = (typeof rtOpenUrl !== "undefined" && rtOpenUrl) ? "" + rtOpenUrl : ""
+        var initUrl = (typeof rtOpenUrl !== "undefined" && rtOpenUrl) ? takeAutoFs(rtOpenUrl) : ""
         if (cfgStartPrivate && initUrl === "") { newTab(true); return }
         var urls = []
         if (!cfgCloseTabs) { try { urls = JSON.parse(kvGet("session_tabs", "[]")) } catch(e) { urls = [] } }

@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9.4
+Version:    2.9.5
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -138,6 +138,9 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Nov 05 2026 RootGPT <emagiampa@gmail.com> - 2.9.5-1
+- A YouTube video sent by RooTheater goes fullscreen and plays by itself.
+
 * Thu Nov 05 2026 RootGPT <emagiampa@gmail.com> - 2.9.4-1
 - The file picker for uploads shows the SD card and other external
   memory as a shortcut.
