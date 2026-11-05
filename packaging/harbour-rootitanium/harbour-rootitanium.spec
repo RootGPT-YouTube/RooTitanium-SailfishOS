@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9.3
+Version:    2.9.4
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -138,6 +138,15 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Thu Nov 05 2026 RootGPT <emagiampa@gmail.com> - 2.9.4-1
+- The file picker for uploads shows the SD card and other external
+  memory as a shortcut.
+- YouTube: with the app in the cover or the display off, the video drops
+  to the lowest quality after 10 seconds and comes back on return. The
+  audio track stays the same.
+- YouTube: 720p by default in the foreground. The player can still go
+  lower on a slow link, and a quality picked by hand is left alone.
+
 * Wed Nov 04 2026 RootGPT <emagiampa@gmail.com> - 2.9.3-1
 - Revoking a site's permission now removes its push subscription from
   Foghorn right away, even with the push switch off.
