@@ -426,6 +426,53 @@ Window {
         Qt.callLater(refreshCurrent)
     }
     function switchTab(i) { currentTab = i; switcher.open = false; Qt.callLater(refreshCurrent) }
+    // Renderer ucciso (segnalazione XA2 6/11: con AppSupport acceso il killer di
+    // memoria di Android chiude i processi di Chromium): senza questo la scheda
+    // restava nera per sempre, con la sola barra viva. Si ricarica da soli una
+    // volta; se muore di nuovo entro 20 s (memoria che non basta, oppure zygote
+    // morto: Chromium non sa più creare renderer) si avvisa e ci si ferma.
+    // Le schede in secondo piano si curano quando tornano davanti.
+    onCurrentViewChanged: if (currentView && currentView.renderDead) Qt.callLater(renderRecover, currentView)
+    function onRenderDead(view, status) {
+        console.warn("[rt] renderer terminato, stato " + status + (view === currentView ? " (scheda attiva)" : ""))
+        view.renderDead = true
+        if (view === currentView) Qt.callLater(renderRecover, view)
+    }
+    function renderRecover(view) {
+        if (!view || !view.renderDead) return
+        if (Date.now() - view.renderRecoverAt < 20000) {
+            toast.show(win.t("La pagina si è chiusa di nuovo per mancanza di memoria. Chiudi altre app (es. Android) o riavvia RooTitanium.",
+                             "The page closed again due to low memory. Close other apps (e.g. Android) or restart RooTitanium."))
+            return
+        }
+        view.renderRecoverAt = Date.now()
+        view.renderDead = false
+        toast.show(win.t("Pagina ricaricata: il sistema l'aveva chiusa per liberare memoria",
+                         "Page reloaded: the system had closed it to free memory"))
+        var k = view.localPage
+        if (k === "home") goHome(view)
+        else if (k === "incognito") loadInternal(view, "incognito", incognitoHtml(), "about:blank")
+        else if (k === "settings" || k === "about") loadInternalStart(view, k)
+        else if (k === "reader") view.goBack()
+        else if (k !== "" && k !== "probe") internalNav(view, "https://" + k + ".local/")
+        else view.reload()
+        renderCheck.view = view
+        renderCheck.restart()
+    }
+    // Zygote morto (il caso dello XA2: «Failed to send GetTerminationStatus
+    // message to zygote» nel log): Chromium non crea più renderer, la ricarica
+    // non parte e la pagina resta nera senza altri segnali. Lo si vede dal pid.
+    Timer {
+        id: renderCheck
+        property var view: null
+        interval: 6000
+        onTriggered: {
+            if (!view || view.renderProcessPid !== 0) return
+            console.warn("[rt] nessun renderer dopo la ricarica: motore da riavviare")
+            toast.show(win.t("Il sistema ha chiuso una parte del browser per mancanza di memoria: riavvia RooTitanium per vedere di nuovo le pagine.",
+                             "The system closed part of the browser due to low memory: restart RooTitanium to see pages again."))
+        }
+    }
     function tabCount(priv) { var n = 0; for (var i=0;i<tabsModel.count;i++) if (tabsModel.get(i).priv === priv) n++; return n }
 
     // --- user agent per toggle Versione desktop ---
@@ -440,7 +487,7 @@ Window {
     // anche col passaggio a Chromium 140. Lo UA ridotto porta solo la major
     // ("140.0.0.0"), come Chrome vero; la completa va nei Client Hints.
     property bool desktopMode: false
-    readonly property string chromeFull: (typeof rtNative !== "undefined" && rtNative.chromiumVersion) ? rtNative.chromiumVersion() : "140.0.0.0"
+    readonly property string chromeFull: (typeof rtNative !== "undefined" && rtNative && rtNative.chromiumVersion) ? rtNative.chromiumVersion() : "140.0.0.0"
     readonly property string chromeMajor: chromeFull.split(".")[0]
     readonly property string uaMobile: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Mobile Safari/537.36"
     readonly property string uaDesktop: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeMajor + ".0.0.0 Safari/537.36"
@@ -1499,6 +1546,7 @@ Window {
             var mOpen = u.match(/^https:\/\/downloads\.local\/open\?id=(.*)$/)
             var mWith = u.match(/^https:\/\/downloads\.local\/openwith\?id=(.*)$/)
             var mCanc = u.match(/^https:\/\/downloads\.local\/cancel\?id=(.*)$/)
+            var mRetry = u.match(/^https:\/\/downloads\.local\/retry\?id=(.*)$/)
             if (mOpen) {
                 // niente reload: l'app handler si apre sopra la pagina
                 var de = win.dlFind(mOpen[1])
@@ -1506,6 +1554,8 @@ Window {
                     toast.show(win.t("File non trovato (spostato o cancellato?)", "File not found (moved or deleted?)"))
             } else if (mWith) {
                 win.openWith(win.dlFind(mWith[1]))
+            } else if (mRetry) {
+                win.dlRetry(view, mRetry[1])
             } else {
                 if (mCanc) win.dlCancel(mCanc[1])
                 else if (u === "https://downloads.local/clear") win.dlClear()
@@ -2131,6 +2181,11 @@ ${a.c}
         }
         dlItems.unshift(e)
         toast.show(win.t("Download avviato: ", "Download started: ") + e.name)
+        if (dlRetryView) {
+            var rv = dlRetryView
+            dlRetryView = null
+            Qt.callLater(function() { win.loadInternal(rv, "downloads", win.downloadsHtml(), "https://downloads.local/") })
+        }
         download.receivedBytesChanged.connect(function() { e.received = download.receivedBytes })
         download.totalBytesChanged.connect(function() { e.total = download.totalBytes })
         download.stateChanged.connect(function() {
@@ -2145,13 +2200,21 @@ ${a.c}
             } else if (download.state === WebEngineDownloadRequest.DownloadInterrupted) {
                 e.state = "fail"
                 toast.show(win.t("Download fallito: ", "Download failed: ") + e.name)
+            } else if (download.state === WebEngineDownloadRequest.DownloadInProgress && e.state === "fail") {
+                // ripreso con Riprova (resume): torna in corso
+                // (su disco resta «fail» fino all'esito: se l'app muore a metà,
+                // al riavvio la voce offre di nuovo Riprova)
+                e.state = "run"
+                win.dlRefreshPage()
+                return
             } else return
-            if (e.state !== "done" && typeof rtNative !== "undefined") {
+            if (e.state === "cancel" && typeof rtNative !== "undefined") {
                 // Chromium lascia il parziale su disco (verificato): via anche il .download
                 rtNative.removeFile(e.path)
                 rtNative.removeFile(e.path + ".download")
             }
-            e.item = null
+            // fallito: parziale e oggetto restano, Riprova riparte da dove si era fermato
+            if (e.state !== "fail") e.item = null
             win.dlPersist(e)
             win.dlRefreshPage()
         })
@@ -2184,7 +2247,48 @@ ${a.c}
         var e = dlFind(did)
         if (e && e.item) e.item.cancel()   // stateChanged fa persist+refresh
     }
+    // Riprova (segnalazione XA2 6/11): con l'oggetto ancora vivo resume() riprende
+    // dal parziale (Chromium chiede al server il resto; se non può, riparte da
+    // zero da solo). Dopo un riavvio dell'app l'oggetto non c'è più: si toglie
+    // il parziale e si riscarica dall'URL, la voce vecchia lascia il posto alla nuova.
+    function dlRetry(view, did) {
+        var e = dlFind(did)
+        if (!e || e.state !== "fail") return
+        if (e.item && e.item.state === WebEngineDownloadRequest.DownloadInterrupted) {
+            e.item.resume()
+            toast.show(win.t("Download ripreso: ", "Download resumed: ") + e.name)
+            return
+        }
+        if (!/^https?:\/\//i.test(e.url)) {
+            toast.show(win.t("Questo download non si può riprendere: riscaricalo dalla pagina", "This download can't be resumed: download it again from the page"))
+            return
+        }
+        dlForget(e)
+        // la navigazione verso il file azzera localPage: la pagina Download
+        // si ridisegna a mano quando il download riparte (handleDownload)
+        dlRetryView = view
+        view.url = e.url
+    }
+    property var dlRetryView: null
+    // via voce e parziale di un download fallito
+    function dlForget(e) {
+        if (typeof rtNative !== "undefined") {
+            rtNative.removeFile(e.path)
+            rtNative.removeFile(e.path + ".download")
+        }
+        e.item = null
+        try { histDb().transaction(function(tx) { dlEnsure(tx); tx.executeSql("DELETE FROM downloads WHERE did=?", [e.did]) }) } catch(err) {}
+        dlItems = dlItems.filter(function(x) { return x.did !== e.did })
+    }
     function dlClear() {
+        // i falliti tengono il parziale per Riprova: con l'elenco se ne vanno anche quelli
+        var all = dlItems.concat(dlHistory())
+        for (var i = 0; i < all.length; i++)
+            if (all[i].state === "fail" && typeof rtNative !== "undefined") {
+                rtNative.removeFile(all[i].path)
+                rtNative.removeFile(all[i].path + ".download")
+                all[i].item = null
+            }
         try { histDb().transaction(function(tx) { dlEnsure(tx); tx.executeSql("DELETE FROM downloads") }) } catch(err) {}
         dlItems = dlItems.filter(function(e) { return e.state === "run" })
     }
@@ -2303,6 +2407,8 @@ ${a.c}
                     + '<a class="dact" href="https://downloads.local/openwith?id=' + e.did + '">' + win.t("Apri con…", "Open with…") + '</a>'
             } else {
                 sub = (e.state === "fail" ? win.t("Non riuscito", "Failed") : win.t("Annullato", "Cancelled")) + " · " + when
+                if (e.state === "fail")
+                    act = '<a class="dact" href="https://downloads.local/retry?id=' + e.did + '">' + win.t("Riprova", "Retry") + '</a>'
             }
             var bar = (e.state === "run" && e.total > 0)
                 ? '<span class="bar"><span class="fill" id="b' + e.did + '" style="width:' + Math.round(e.received * 100 / Math.max(e.total, 1)) + '%"></span></span>' : ''
@@ -3980,6 +4086,16 @@ ${histCss}
                     // proprietà url (niente urlChanged, verificato su 6.8.3),
                     // quindi lo stato va tracciato a parte. "" = pagina web vera.
                     property string localPage: ""
+                    // renderer ucciso (vedi win.renderRecover)
+                    property bool renderDead: false
+                    property real renderRecoverAt: 0
+                    onRenderProcessTerminated: function(status, code) {
+                        // anche lo stato «normale»: a zygote morto Chromium non sa
+                        // leggere l'uscita e la dichiara normale (misurato 7/11)
+                        // scheda scartata dal lifecycle: Qt la ricarica da sé al ritorno
+                        if (lifecycleState === WebEngineView.LifecycleState.Discarded) return
+                        win.onRenderDead(this, status)
+                    }
                     onScrollPositionChanged: if (index === win.currentTab) win.barOnScroll(scrollPosition.y)
                     profile: priv ? incognitoProfile : normalProfile
                     // Zoom sul lato corto dello SCHERMO, non della finestra: la
@@ -4100,6 +4216,7 @@ ${histCss}
                         // su una pagina che non scorre non tornerebbe più
                         if (li.status !== WebEngineView.LoadStartedStatus && index === win.currentTab) win.barShow()
                         if (li.status === WebEngineView.LoadSucceededStatus) {
+                            renderDead = false
                             if (win.orient !== 0)
                                 runJavaScript("window.__rtSetLandscape && window.__rtSetLandscape(true)")
                             if (!priv) win.histAdd(url, title)   // cronologia: solo schede normali
