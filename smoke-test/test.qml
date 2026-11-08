@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.9.6"
+    readonly property string appVersion: "2.9.7"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -429,7 +429,7 @@ Window {
     // Renderer ucciso (segnalazione XA2 6/11: con AppSupport acceso il killer di
     // memoria di Android chiude i processi di Chromium): senza questo la scheda
     // restava nera per sempre, con la sola barra viva. Si ricarica da soli una
-    // volta; se muore di nuovo entro 20 s (memoria che non basta, oppure zygote
+    // volta; se muore di nuovo entro 2 minuti (memoria che non basta, oppure zygote
     // morto: Chromium non sa più creare renderer) si avvisa e ci si ferma.
     // Le schede in secondo piano si curano quando tornano davanti.
     onCurrentViewChanged: if (currentView && currentView.renderDead) Qt.callLater(renderRecover, currentView)
@@ -440,7 +440,8 @@ Window {
     }
     function renderRecover(view) {
         if (!view || !view.renderDead) return
-        if (Date.now() - view.renderRecoverAt < 20000) {
+        // 20 s non bastavano: sullo XA2 il killer colpiva ogni 22-23 s = ricarica infinita
+        if (Date.now() - view.renderRecoverAt < 120000) {
             toast.show(win.t("La pagina si è chiusa di nuovo per mancanza di memoria. Chiudi altre app (es. Android) o riavvia RooTitanium.",
                              "The page closed again due to low memory. Close other apps (e.g. Android) or restart RooTitanium."))
             return
@@ -846,6 +847,31 @@ Window {
     // Se la scheda non ha mai mostrato una pagina la chiudiamo e torniamo
     // a quella che l'ha aperta.
     property int popupOpener: -1
+    // Popup di login adottato (openIn): resta legato alla pagina che l'ha aperto
+    // e risponde via window.opener. Finché vive, quella pagina non va congelata
+    property var adoptOpener: null
+    property var adoptPopup: null
+    function adoptLoginPopup(view, request, u) {
+        tabsModel.append({ priv: view.priv, start: "adopt:", murl: u, mtitle: "…" })
+        var v = tabsRepeater.itemAt(tabsModel.count - 1)
+        if (!v) { tabsModel.remove(tabsModel.count - 1); return false }
+        adoptOpener = view
+        adoptPopup = v
+        request.openIn(v)
+        menu.open = false
+        currentTab = tabsModel.count - 1
+        switcher.open = false
+        Qt.callLater(refreshCurrent)
+        return true
+    }
+    function closeAdopted(view) {
+        var back = adoptOpener
+        adoptOpener = adoptPopup = null
+        for (var i = 0; i < tabsModel.count; i++)
+            if (tabsRepeater.itemAt(i) === view) { closeTab(i); break }
+        for (var j = 0; back && j < tabsModel.count; j++)
+            if (tabsRepeater.itemAt(j) === back) { switchTab(j); break }
+    }
     function dropEmptyTab(view) {
         if (!view || view.canGoBack || view.localPage !== "" || tabsModel.count < 2) return
         for (var i = 0; i < tabsModel.count; i++) {
@@ -971,6 +997,11 @@ Window {
     //  - al QML arriva «__rtah:tap <sito>» a ogni tocco (sito del link toccato,
     //    «-» se non era un link): con quello onNavigationRequested riconosce il
     //    salto della pagina principale fatto da uno script (anche da un iframe).
+    // Eccezione: i provider di login. «Accedi con Google» è spesso un iframe del
+    // provider: il tocco non arriva al pointerdown della pagina, ma l'attivazione
+    // utente sì (navigator.userActivation). Host esatti, non il sito intero
+    readonly property var loginHosts: ["accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com"]
+    function isLoginHost(h) { return loginHosts.indexOf(("" + h).toLowerCase()) >= 0 }
     readonly property string antiHijackJs: `(function(){
   if (window.__rtAH) return; window.__rtAH = true;
   var site = function(h){ h = (h || '').toLowerCase().replace(/^www\\./, ''); var p = h.split('.');
@@ -1081,9 +1112,12 @@ Window {
   }, true);
   var fake = new Proxy(function(){}, { get: function(t, k){ return k === 'closed' ? false : fake; }, set: function(){ return true; }, apply: function(){ return fake; } });
   var wopen = window.open;
+  var loginHosts = ${JSON.stringify(win.loginHosts)};
+  var loginTap = function(U){ return U.protocol === 'https:' && loginHosts.indexOf(U.hostname.toLowerCase()) >= 0
+    && !!navigator.userActivation && navigator.userActivation.isActive; };
   window.open = function(u){
     var U = urlOf(u || 'about:blank');
-    if (foreign(U) && !intent(U)) {
+    if (foreign(U) && !intent(U) && !loginTap(U)) {
       say('blocked ' + U.hostname);
       if (last.el && Date.now() - last.t < 1500 && emptyVeil(last.el)) passThrough(last.el, last.x, last.y);
       return fake;
@@ -2353,6 +2387,7 @@ ${a.c}
         if (!cfgAntiHijack || !/^https?:/i.test(u)) return false
         if (view.ahAllow === u) { view.ahAllow = ""; return false }
         if (request.isMainFrame === false) return false
+        if (isLoginHost(histHost(u))) return false
         var nt = request.navigationType
         if (nt !== WebEngineNavigationRequest.OtherNavigation && nt !== WebEngineNavigationRequest.LinkClickedNavigation) return false
         var tap = view.ahTap
@@ -4161,7 +4196,8 @@ ${histCss}
                         userScripts.collection = win.buildScripts()
                         // REVISION(6,7): guardia come in applyViewPrefs
                         try { settings.forceDarkMode = win.cfgDark } catch(e) {}
-                        if (model.start === "incognito") win.loadInternal(this, "incognito", win.incognitoHtml(), "about:blank")
+                        if (model.start === "adopt:") { /* la pagina arriva da request.openIn */ }
+                        else if (model.start === "incognito") win.loadInternal(this, "incognito", win.incognitoHtml(), "about:blank")
                         else if (model.start === "home") win.goHome(this)
                         else if (("" + model.start).indexOf("internal:") === 0) win.loadInternalStart(this, ("" + model.start).substring(9))
                         else url = model.start
@@ -4184,6 +4220,8 @@ ${histCss}
                         } else if (!priv && localPage === "" && win.notifKeepAlive(url)) {
                             // sito autorizzato alle notifiche (task 2.7 #1): congelato
                             // non potrebbe piu' mandarne → resta attivo in background
+                        } else if (win.adoptPopup && win.adoptOpener === webView) {
+                            // aspetta la risposta del popup di login
                         } else {
                             lifecycleState = WebEngineView.LifecycleState.Frozen
                             if (localPage === "") discardTimer.restart()
@@ -4204,10 +4242,12 @@ ${histCss}
                     onNewWindowRequested: function(request) {
                         var u = "" + request.requestedUrl
                         if (u === "" || u === "about:blank") return
+                        if (win.cfgPopups && win.isLoginHost(win.histHost(u)) && win.adoptLoginPopup(webView, request, u)) return
                         if (win.cfgPopups) { win.popupOpener = index; win.newTabUrl(priv, u) }
                         else if (request.userInitiated) url = u
                         else toast.show(win.t("Popup bloccato: ", "Popup blocked: ") + win.histHost(u))
                     }
+                    onWindowCloseRequested: if (win.adoptPopup === webView) { var cv = webView; Qt.callLater(function() { win.closeAdopted(cv) }) }
                     // pagine caricate mentre siamo già in landscape: sincronizza lo spoof
                     onLoadingChanged: function(li) {
                         shownUrl = "" + url
