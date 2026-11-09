@@ -4352,7 +4352,9 @@ ${histCss}
                         if (message === "__rtsel:open") { win.openSelectMenu(this); return }
                         if (message.indexOf("__rtswipe:") === 0) { win.onSwipeMsg(this, message.substring(10)); return }
                         if (message.indexOf("__rtah:") === 0) { win.onAntiHijackMsg(this, message.substring(7)); return }
-                        if (level >= WebEngineView.WarningMessageLevel)
+                        // con la diagnostica attiva anche i console.log: spesso e' li'
+                        // che i siti scrivono il motivo di un errore
+                        if (rtDiag || level >= WebEngineView.WarningMessageLevel)
                             console.warn("[js] " + sourceID + ":" + lineNumber + " " + message)
                     }
                     onFindTextFinished: function(result) {

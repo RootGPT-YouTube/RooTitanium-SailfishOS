@@ -1809,6 +1809,10 @@ int main(int argc, char **argv)
     // di QtVirtualKeyboard, che altrimenti si affianca a quella di sistema.
     const bool useMaliit = (qgetenv("QT_IM_MODULE") == "maliit");
     engine.rootContext()->setContextProperty(QStringLiteral("rtMaliit"), useMaliit);
+    // Diagnostica attiva: il launcher imposta questa variabile solo se trova il
+    // file DEBUG. Il QML la usa per scrivere nel log anche i console.log dei siti.
+    engine.rootContext()->setContextProperty(QStringLiteral("rtDiag"),
+                                             qgetenv("QT_FORCE_STDERR_LOGGING") == "1");
     native.setMaliitContainer(maliitContainer ? maliitContainer->adaptor() : nullptr);
     engine.load(QUrl::fromLocalFile(base + "/test.qml"));
     if (engine.rootObjects().isEmpty())
