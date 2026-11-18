@@ -169,7 +169,7 @@ Window {
 
     // versione mostrata nella pagina «Informazioni». ⚠️ Tenere allineata al campo
     // Version dello spec RPM (packaging/harbour-rootitanium/harbour-rootitanium.spec).
-    readonly property string appVersion: "2.9.7"
+    readonly property string appVersion: "2.9.8"
 
     // --- Accept-Language dei profili: derivato dal locale reale ---
     // Era fisso su italiano: siccome pilota anche navigator.languages, i siti
@@ -2203,6 +2203,7 @@ ${a.c}
             return
         }
         download.downloadDirectory = downloadDirPath()
+        dlFixImageExt(download)
         download.accept()
         // nome definitivo DOPO accept (Chromium deduplica "file (1).ext")
         var e = {
@@ -2253,6 +2254,49 @@ ${a.c}
             win.dlRefreshPage()
         })
         dlRefreshPage()
+    }
+
+    // Salva immagine: Qt prende il nome dall'ultimo pezzo dell'URL e NON aggiunge
+    // l'estensione (…/media/abc?format=jpg → «abc»). Qui la si ricava dal MIME.
+    // Col nome dato a mano Qt non deduplica più («file (1).ext»): lo facciamo noi,
+    // controllando l'esistenza con un GET sincrono su file:// (il launcher
+    // abilita QML_XHR_ALLOW_FILE_READ; HEAD su file locale = «Invalid state»,
+    // misurato 18/11: esiste → status 200 / Content-Length, manca → 0 e vuoto) e i download della sessione ancora in corso.
+    readonly property var dlImageExts: ({
+        "image/jpeg": ["jpg", "jpeg", "jpe", "jfif"], "image/pjpeg": ["jpg", "jpeg"],
+        "image/png": ["png"], "image/apng": ["png", "apng"], "image/gif": ["gif"],
+        "image/webp": ["webp"], "image/bmp": ["bmp"], "image/x-ms-bmp": ["bmp"],
+        "image/x-bmp": ["bmp"], "image/svg+xml": ["svg", "svgz"], "image/avif": ["avif"],
+        "image/x-icon": ["ico"], "image/vnd.microsoft.icon": ["ico"],
+        "image/tiff": ["tif", "tiff"], "image/heic": ["heic"], "image/heif": ["heif"],
+        "image/jxl": ["jxl"]
+    })
+    function dlPathTaken(path) {
+        for (var i = 0; i < dlItems.length; i++)
+            if (dlItems[i].path === path && dlItems[i].state === "run") return true
+        try {
+            var x = new XMLHttpRequest()
+            x.open("GET", "file://" + path.split("/").map(encodeURIComponent).join("/"), false)
+            x.send()
+            return x.status === 200 || !!x.getResponseHeader("Content-Length")
+        } catch (err) { return false }
+    }
+    function dlFixImageExt(download) {
+        var mime = ("" + download.mimeType).toLowerCase().split(";")[0].trim()
+        var exts = dlImageExts[mime]
+        if (!exts) return
+        var name = "" + download.downloadFileName
+        var m = name.match(/\.([A-Za-z0-9]{1,5})$/)
+        if (m && exts.indexOf(m[1].toLowerCase()) >= 0) return   // estensione già giusta
+        // il nome che arriva può già avere « (1)» di Qt: ripartiamo dal suggerito
+        var base = ("" + download.suggestedFileName) || name
+        var mb = base.match(/\.([A-Za-z0-9]{1,5})$/)
+        if (mb && exts.indexOf(mb[1].toLowerCase()) >= 0) return
+        var dir = "" + download.downloadDirectory
+        var cand = base + "." + exts[0]
+        for (var n = 1; n < 1000 && dlPathTaken(dir + "/" + cand); n++)
+            cand = base + " (" + n + ")." + exts[0]
+        download.downloadFileName = cand
     }
 
     function dlEnsure(tx) { tx.executeSql("CREATE TABLE IF NOT EXISTS downloads(did TEXT PRIMARY KEY, name TEXT, path TEXT, url TEXT, state TEXT, size INTEGER, ts INTEGER)") }

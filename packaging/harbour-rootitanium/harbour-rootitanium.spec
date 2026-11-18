@@ -17,7 +17,7 @@
 %define __brp_strip_comment_note %{nil}
 
 Name:       harbour-rootitanium
-Version:    2.9.7
+Version:    2.9.8
 Release:    1
 Summary:    RooTitanium — browser Qt6 WebEngine per SailfishOS
 License:    GPLv3+ and LGPLv3 and BSD
@@ -138,6 +138,10 @@ install -m0644 %{stagingdir}/NOTICE.md %{buildroot}%{_defaultlicensedir}/%{name}
 %{_datadir}/icons/hicolor/*/apps/harbour-rootitanium.png
 
 %changelog
+* Wed Nov 18 2026 RootGPT <emagiampa@gmail.com> - 2.9.8-1
+- Saved images keep their file extension (jpg, png, webp...) even when the link has none
+- A second copy of the same image is saved as "name (1).jpg" instead of overwriting the first
+
 * Sun Nov 08 2026 RootGPT <emagiampa@gmail.com> - 2.9.7-1
 - Sign-in popups from Google, Apple and Microsoft are no longer blocked and stay linked to the page that opened them
 - Stop reloading a page forever when the system keeps closing it for lack of memory
